@@ -1,0 +1,118 @@
+{
+  "timestamp": "2026-07-20T18:58:50.345Z",
+  "url": "http://localhost:4173",
+  "viewport": "1440x900",
+  "loadMetrics": {
+    "domContentLoaded": 184.59999999403954,
+    "loadComplete": 186.09999999403954,
+    "domInteractive": 12.5,
+    "firstPaint": 344,
+    "firstContentfulPaint": 344,
+    "largestContentfulPaint": 712
+  },
+  "cls": 0,
+  "scrollFps": {
+    "avgFrameMs": 42.08,
+    "avgFps": 23.8,
+    "minFps": 12,
+    "maxFps": 60.2,
+    "p95Fps": 15,
+    "p99Fps": 15,
+    "framesCaptured": 120
+  },
+  "scrollTiming": [
+    {
+      "scrollPos": 864,
+      "elapsedMs": 0.1
+    },
+    {
+      "scrollPos": 1728,
+      "elapsedMs": 0
+    },
+    {
+      "scrollPos": 2592,
+      "elapsedMs": 0.1
+    },
+    {
+      "scrollPos": 3457,
+      "elapsedMs": 0
+    },
+    {
+      "scrollPos": 4321,
+      "elapsedMs": 0
+    },
+    {
+      "scrollPos": 5185,
+      "elapsedMs": 0
+    },
+    {
+      "scrollPos": 6049,
+      "elapsedMs": 0
+    },
+    {
+      "scrollPos": 6913,
+      "elapsedMs": 0
+    }
+  ],
+  "scrollHeight": 6913,
+  "browserMetrics": {
+    "jsHeap": 0,
+    "nodes": 0,
+    "layoutDuration": 0,
+    "recalcStyleDuration": 0,
+    "taskDuration": 0
+  },
+  "animElements": {
+    "[data-hero-mask]": {
+      "willChange": "clip-path",
+      "opacity": "1",
+      "transform": false
+    },
+    "[data-banner-content]": {
+      "willChange": "transform, opacity",
+      "opacity": "0",
+      "transform": true
+    },
+    "[data-reveal=\"title\"]": {
+      "willChange": "auto",
+      "opacity": "1",
+      "transform": false
+    },
+    "[data-reveal=\"btn\"]": {
+      "willChange": "transform, opacity",
+      "opacity": "1",
+      "transform": true
+    },
+    "[data-stat-card]": {
+      "willChange": "auto",
+      "opacity": "0.459252",
+      "transform": true
+    },
+    "[data-section-overlay]": {
+      "willChange": "clip-path",
+      "opacity": "1",
+      "transform": false
+    },
+    "[data-reveal-direction]": {
+      "willChange": "transform, opacity",
+      "opacity": "0.7995",
+      "transform": true
+    },
+    "[data-burst-img]": {
+      "willChange": "transform",
+      "opacity": "0.9094",
+      "transform": true
+    },
+    "[data-move-img]": {
+      "willChange": "transform",
+      "opacity": "0.9094",
+      "transform": true
+    },
+    "[data-move-rings]": {
+      "willChange": "transform, opacity",
+      "opacity": "0.3333",
+      "transform": true
+    }
+  },
+  "consoleErrors": []
+}

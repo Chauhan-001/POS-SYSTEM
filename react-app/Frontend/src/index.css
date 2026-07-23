@@ -1,0 +1,1022 @@
+@import 'tailwindcss';
+
+/* ============================================================
+   Chaish Boutique Loyalty — Design System (Tailwind v4 @theme)
+   ============================================================ */
+@theme {
+  /* Brand palette — warm chai café (clay, saffron, brass, coffee) */
+  --color-rich-black: #1a120b;
+  --color-warm-cream: #fdf6ea;
+  --color-sunset-orange: #e2601e;
+  --color-deep-teal: #2f5d3a; /* deep leaf green (used sparingly) */
+
+  --color-primary: #b23a0e; /* warm chai orange / burnt saffron */
+  --color-on-primary: #fff6ed;
+  --color-primary-container: #e8924b; /* golden amber */
+  --color-on-primary-container: #3a1c08;
+  --color-primary-fixed: #f6d9b8;
+  --color-primary-fixed-dim: #e8b27e;
+  --color-on-primary-fixed: #3a1c08;
+  --color-on-primary-fixed-variant: #7a300f;
+  --color-inverse-primary: #f0b27a;
+
+  --color-secondary: #6b4226; /* clay brown / rustic wood */
+  --color-on-secondary: #f7ebdd;
+  --color-secondary-container: #e0a43b; /* brass gold */
+  --color-on-secondary-container: #3a2410;
+  --color-secondary-fixed: #f3d9a6;
+  --color-secondary-fixed-dim: #ddb15a;
+  --color-on-secondary-fixed: #2b1c08;
+  --color-on-secondary-fixed-variant: #5e4200;
+
+  --color-tertiary: #2f5d3a; /* deep green (leaf branding) */
+  --color-on-tertiary: #f2f7f2;
+  --color-tertiary-container: #5c8c66;
+  --color-on-tertiary-container: #eaf4ec;
+  --color-tertiary-fixed: #c7e6cc;
+  --color-tertiary-fixed-dim: #9fcba6;
+  --color-on-tertiary-fixed: #0e2a16;
+  --color-on-tertiary-fixed-variant: #1c4327;
+
+  --color-error: #9b3a1f;
+  --color-on-error: #fff6ed;
+  --color-error-container: #f3d2c5;
+  --color-on-error-container: #4a160a;
+
+  --color-surface: #fbf3e7; /* textured cream */
+  --color-on-surface: #3b2417; /* espresso text */
+  --color-on-surface-variant: #7a5a45;
+  --color-surface-dim: #ead9c5;
+  --color-surface-bright: #fcf6ec;
+  --color-surface-container-lowest: #fffdf9;
+  --color-surface-container-low: #f6ebda;
+  --color-surface-container: #f0e2cd;
+  --color-surface-container-high: #ebdac2;
+  --color-surface-container-highest: #e5d2b8;
+  --color-surface-variant: #e5d2b8;
+  --color-surface-tint: #c97a3a;
+  --color-inverse-surface: #3b2417;
+  --color-inverse-on-surface: #f6ead9;
+
+  --color-background: #faf1e3; /* warm beige */
+  --color-on-background: #3b2417;
+
+  --color-outline: #b89b85;
+  --color-outline-variant: #e2cdb4;
+
+  /* ============================================================
+     PREMIUM DESIGN SYSTEM v2 — Strict palette
+     ============================================================ */
+  --bg-primary: #1F140F;
+  --bg-secondary: #2C1B14;
+  --bg-surface: #352117;
+  --accent-primary: #D89B45;
+  --accent-secondary: #E7B86D;
+  --cream: #F7F1E8;
+  --mint: #5A8C61;
+  --lemon: #EBCB4C;
+  --text-primary: #F8F5F1;
+  --text-secondary: #C8B6A5;
+  --divider: rgba(255, 255, 255, 0.08);
+
+  /* Typography — local + CDN fonts */
+  --font-sans: 'Manosque', 'Plus Jakarta Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Manosque', 'Georgia', serif;
+  --font-accent: 'ShadowHand', cursive;
+
+  /* Spacing scale used across pages */
+  --spacing-container-margin: 16px;
+  --spacing-gutter: 12px;
+  --spacing-base: 8px;
+  --spacing-section-gap: 32px;
+
+  /* Animations */
+  --animate-float: float 7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  --animate-pulse-slow: pulse 3.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-liquid: liquid 2s ease-in-out infinite;
+  --animate-stagger-fade: staggerFade 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  --animate-spin-slow: spin-slow 12s linear infinite;
+  --animate-drift: drift 120s linear infinite;
+  --animate-shine: shine 3s infinite;
+  --animate-pulse-gentle: pulse-gentle 4s ease-in-out infinite;
+  --animate-shake: shake 0.5s ease-in-out;
+  --animate-slide-up: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-light-sweep: light-sweep 4s ease-in-out infinite;
+}
+
+/* ---- Font-size + weight tokens (originally Tailwind fontSize config) ---- */
+@utility font-headline-xl {
+  font-family: var(--font-headline-xl);
+  font-size: clamp(28px, 8vw, 40px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+@utility font-headline-lg {
+  font-family: var(--font-headline-lg);
+  font-size: clamp(24px, 6vw, 32px);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  font-weight: 700;
+}
+@utility font-headline-lg-mobile {
+  font-family: var(--font-headline-lg-mobile);
+  font-size: clamp(22px, 5.5vw, 28px);
+  line-height: 1.3;
+  font-weight: 700;
+}
+@utility font-title-md {
+  font-family: var(--font-title-md);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+@utility font-body-lg {
+  font-family: var(--font-body-lg);
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 400;
+}
+@utility font-body-md {
+  font-family: var(--font-body-md);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+}
+@utility font-label-md {
+  font-family: var(--font-label-md);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+}
+@utility font-label-sm {
+  font-family: var(--font-label-sm);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 700;
+}
+
+/* Landing page font utilities — using local Manosque font */
+@utility font-display-lg {
+  font-family: var(--font-display);
+  font-size: 72px;
+  line-height: 80px;
+  letter-spacing: -0.04em;
+  font-weight: 900;
+}
+@utility font-label-bold {
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
+}
+@utility font-price-display {
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 700;
+}
+
+/* ============================================================
+   @font-face — local fonts from src/assets/fonts
+   ============================================================ */
+@font-face {
+  font-family: 'Manosque';
+  src: url('./assets/fonts/manosque/fonts/web/Manosque-Regular.woff2') format('woff2'),
+       url('./assets/fonts/manosque/fonts/web/Manosque-Regular.woff') format('woff'),
+       url('./assets/fonts/manosque/fonts/ttf/Manosque-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ShadowHand';
+  src: url('./assets/fonts/ShadowHand.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ============================================================
+   Keyframes
+   ============================================================ */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+@keyframes liquid {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+@keyframes staggerFade {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes drift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 1024px 1024px;
+  }
+}
+@keyframes shine {
+  0% {
+    transform: translateX(-100%) rotate(45deg);
+  }
+  100% {
+    transform: translateX(100%) rotate(45deg);
+  }
+}
+@keyframes pulse-gentle {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(183, 0, 26, 0);
+  }
+  50% {
+    box-shadow: 0 0 18px 2px rgba(183, 0, 26, 0.35);
+  }
+}
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(8px);
+  }
+  60% {
+    transform: translateX(-6px);
+  }
+  80% {
+    transform: translateX(6px);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes light-sweep {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}/* Hero scroll indicator dot — compositor-friendly: only transform, opacity */
+@keyframes scrollDot {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  50% { transform: translateY(6px); opacity: 1; }
+}
+
+
+
+/* ============================================================
+   Base
+   ============================================================ */
+@layer base {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  body {
+    margin: 0;
+    background: #1F140F;
+    color: #F8F5F1;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  #root {
+    width: 100%;
+    max-width: 100%;
+    margin: 0 auto;
+    text-align: left;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-sans);
+  }
+}
+
+/* ============================================================
+   Component classes (mirror Stitch inline <style> blocks)
+   ============================================================ */
+@layer components {
+  /* Shared glassmorphism — warm cream tint */
+  .glass-card {
+    background: rgba(255, 250, 240, 0.72);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow:
+      0 10px 25px -5px rgba(107, 66, 38, 0.16),
+      0 8px 10px -6px rgba(107, 66, 38, 0.1);
+  }
+
+  .glass {
+    background: rgba(255, 250, 240, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+  }
+
+  .premium-shadow {
+    box-shadow:
+      0 20px 40px -12px rgba(178, 58, 14, 0.18),
+      0 8px 16px -8px rgba(107, 66, 38, 0.1);
+  }
+
+  .hover-lift {
+    transition:
+      transform 0.35s ease,
+      opacity 0.35s ease,
+      box-shadow 0.35s ease;
+    will-change: transform;
+  }
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow:
+      0 24px 48px -12px rgba(178, 58, 14, 0.2),
+      0 10px 20px -8px rgba(107, 66, 38, 0.12);
+  }
+
+  .icon-fill {
+    font-variation-settings: 'FILL' 1;
+  }
+
+  /* Sparkle accent dots (dashboard milestone) */
+  .sparkle-dot {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: #ffffff;
+    box-shadow: 0 0 6px 2px rgba(255, 255, 255, 0.8);
+    animation: sparkle 1.8s ease-in-out infinite;
+  }
+  @keyframes sparkle {
+    0%,
+    100% {
+      transform: scale(0.6);
+      opacity: 0.5;
+    }
+    50% {
+      transform: scale(1.25);
+      opacity: 1;
+    }
+  }
+
+  .metallic-gold {
+    background: linear-gradient(135deg, #f3d9a6 0%, #e0a43b 50%, #f3d9a6 100%);
+    box-shadow: 0 6px 18px rgba(224, 164, 59, 0.32);
+  }
+
+  /* Sunburst / mandala pattern background (login/otp) */
+  .sunburst-bg {
+    background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCZPJllUJplGVkgMFCaAxZiQYRoDuV2aX0n6HmWb-0I5A1Euv5huAJYVQJcMVIX5dv0gYzSHa8Jt1xVk1vatlQQDHfJKRFqC00Xs2FZLeM0EgXH2qyJPnByV5pf18XWqA8nX2FVh-8tmVaON1UzqeEPypGOcpeKp2kS82zu54NFU5dpBCC_Rz65a22JPyB50zQgnenai4iOAQPl-UZFDwTv9snqDdVq9_mea24lA2GLO9Cd8pjZScZSWcGm0OAPrfKoKQ2u-faG5g1A');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+  }
+
+  /* Comic pop-art pattern (menu) */
+  .comic-bg {
+    background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBMwnmMTUoNc54jOA7BOPQDzrqFoc6u5JfnaA8ycOuRpF-klig1cVfSz3Ffi4ZwdRdizOrmNuTZM0O1iGNKhthp2BKhjF6fnf2ql1gMq1RtkUNXoEYU6UVwoy8gFc7mep8PuvFhPF6Eu0ZxlP-f2So5-xLgZYefoOM7JPzTskJ_TARKhmL9Zq0Xo-0Sf8X9wUX-R-uQgc8wLubPb2FRMGd6_-XblGIXa74PW3MfTwqO-E7E9xVYbdMHu7nZ9GW0NrA1qeZwcB5MsUVP');
+    background-attachment: fixed;
+    background-size: 400px;
+    opacity: 0.05;
+  }
+
+  /* Drifting pattern (ultimate-qr) */
+  .bg-pattern {
+    background-image: url('https://lh3.googleusercontent.com/aida/AP1WRLu3xo7CGjU2hgbJfa-7JFhr6GMFVhu7sP2sn3DYEh0Wh6V20aC3IoinDuKnEYsJzlx-U3lgu_yb-N_C1zissxabsa7Zriul4O7tqqJUttuvukp8iTVZGCI6eblwhYkD4HLLWMehZKQMgKWbE1oyCBVCAuekJvir5kUZukZeYLnxu6iQ5TCxTKwrpUkfL6ob2b6Bu4_e0lNpfT0HkoV4DWiOkHVIlnCLiGAMfSknPQkM7rH2rm9gXKLjTBe-');
+    background-repeat: repeat;
+    animation: drift 120s linear infinite;
+    opacity: 0.15;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .stagger-item,
+  .stagger-in {
+    opacity: 0;
+    animation: fadeInUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .reward-card-pop {
+    animation: rewardPop 0.5s ease-out both;
+  }
+  @keyframes rewardPop {
+    0% {
+      opacity: 0;
+      transform: scale(0.96) translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  /* Liquid shimmer overlay for progress bars */
+  .liquid-progress {
+    position: relative;
+    overflow: hidden;
+  }
+  .liquid-progress::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.4),
+      transparent
+    );
+    animation: liquid 2s infinite;
+  }
+
+  /* Receipt torn edge (ultimate-qr hero) */
+  .receipt-edge {
+    background:
+      linear-gradient(-45deg, transparent 10px, white 0),
+      linear-gradient(45deg, transparent 10px, white 0);
+    background-size: 20px 20px;
+    background-repeat: repeat-x;
+    background-position: bottom left;
+    padding-bottom: 20px;
+  }
+
+  .shine-effect {
+    position: relative;
+    overflow: hidden;
+  }
+  .shine-effect::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      45deg,
+      transparent,
+      rgba(255, 255, 255, 0.3),
+      transparent
+    );
+    transform: rotate(45deg);
+    animation: shine 3s infinite;
+  }
+
+  .gauge-svg {
+    transform: rotate(-90deg);
+  }
+
+  .cup-fill {
+    transition: transform 1s ease-out, opacity 1s ease-out;
+    will-change: transform, opacity;
+  }
+
+  .pulse-animate {
+    animation: pulse-gentle 4s ease-in-out infinite;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2.4s ease-in-out infinite;
+  }
+
+  .glow-hover:active,
+  .glow-hover:hover {
+    box-shadow: 0 0 22px rgba(232, 164, 75, 0.45);
+    transform: scale(0.98);
+  }
+
+  /* Subtle warm radial glow (cinematic lighting, used sparingly) */
+  .warm-glow {
+    position: relative;
+  }
+  .warm-glow::before {
+    content: '';
+    position: absolute;
+    inset: -20%;
+    background: radial-gradient(
+      50% 50% at 50% 40%,
+      rgba(232, 164, 75, 0.22) 0%,
+      rgba(232, 164, 75, 0) 70%
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+  .warm-glow > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Soft organic paper grain — pure CSS, no image, performant */
+  .paper-grain {
+    background-image:
+      radial-gradient(
+        rgba(107, 66, 38, 0.04) 1px,
+        transparent 1px
+      ),
+      radial-gradient(rgba(178, 58, 14, 0.03) 1px, transparent 1px);
+    background-size:
+      7px 7px,
+      11px 11px;
+    background-position:
+      0 0,
+      3px 4px;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar,
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar,
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* ============================================================
+   Landing page ("Saffron & Stone" street feast) — scoped styles.
+   Kept isolated from the loyalty app palette/typography.
+   ============================================================ */
+@layer components {
+  /* Typography — local Manosque replaces Anybody */
+  .land-display {
+    font-family: var(--font-display);
+    line-height: 80px;
+    letter-spacing: 0.08em;
+    font-weight: 900;
+  }
+  .land-headline-lg {
+    font-family: var(--font-display);
+    line-height: 56px;
+    letter-spacing: -0.02em;
+    font-weight: 800;
+  }
+  .land-headline-md {
+    font-family: var(--font-display);
+    line-height: 40px;
+    font-weight: 700;
+  }
+  .land-body-lg {
+    font-family: var(--font-display);
+    font-size: 18px;
+    line-height: 28px;
+  }
+  .land-body-md {
+    font-family: var(--font-display);
+    font-size: 16px;
+    line-height: 24px;
+  }
+  .land-label-bold {
+    font-family: var(--font-display);
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 700;
+  }
+  .land-price {
+    font-family: var(--font-display);
+    font-size: 24px;
+    line-height: 32px;
+    font-weight: 700;
+  }
+
+  /* Entrance */
+  .land-fade-up {
+    opacity: 0;
+    transform: translateY(24px);
+    will-change: transform, opacity;
+    transition:
+      opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .land-fade-up.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .land-fade-up.delay-100 {
+    transition-delay: 0.1s;
+  }
+  .land-fade-up.delay-200 {
+    transition-delay: 0.2s;
+  }
+  .land-fade-up.delay-300 {
+    transition-delay: 0.3s;
+  }
+
+  /* Rotating chutney swirl rings */
+  .land-chutney-swirl {
+    animation: landSpin 16s linear infinite;
+    will-change: transform;
+  }
+  .land-chutney-swirl.reverse {
+    animation: landSpin 12s linear infinite reverse;
+    will-change: transform;
+  }
+
+  /* GSAP-animated reveal buttons get will-change hint */
+  [data-reveal="btn"] {
+    will-change: transform, opacity;
+  }
+
+  /* GSAP-animated decorative rings get will-change hint */
+  [data-move-rings] {
+    will-change: transform, opacity;
+  }
+
+  /* GSAP-animated directional content gets will-change hint */
+  [data-reveal-direction] {
+    will-change: transform, opacity;
+  }
+  @keyframes landSpin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Hover wiggle (cards) */
+  .land-hover-wiggle:hover {
+    animation: landWiggle 0.4s ease;
+  }
+  @keyframes landWiggle {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    25% {
+      transform: rotate(-3deg);
+    }
+    75% {
+      transform: rotate(3deg);
+    }
+  }
+
+  /* Hover splash (drinks) */
+  .land-hover-splash:hover img {
+    animation: landSplash 0.6s ease;
+  }
+  @keyframes landSplash {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.06);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* Steam particles */
+  .land-steam-particle {
+    position: absolute;
+    background: radial-gradient(
+      circle,
+      rgba(255, 255, 255, 0.85) 0%,
+      rgba(255, 255, 255, 0) 70%
+    );
+    border-radius: 9999px;
+    filter: blur(4px);
+    opacity: 0;
+    animation-name: landSteam;
+    animation-timing-function: ease-in;
+    animation-iteration-count: infinite;
+  }
+  @keyframes landSteam {
+    0% {
+      transform: translateY(0) scale(0.6);
+      opacity: 0;
+    }
+    30% {
+      opacity: 0.7;
+    }
+    100% {
+      transform: translateY(-160px) scale(1.4);
+      opacity: 0;
+    }
+  }
+
+  /* ────────────────────────────────────────────────
+     Heavy Scroll-Reveal Animations
+     ──────────────────────────────────────────────── */
+
+  /* Section reveal overlay — a colored panel that clips away
+     horizontally from the center to reveal content underneath */
+  .land-reveal-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #231a13 0%, #3b2417 100%);
+    z-index: 20;
+    pointer-events: none;
+    will-change: clip-path;
+  }
+  .land-reveal-overlay.light {
+    background: linear-gradient(135deg, #f1dfd3 0%, #e8d5c5 100%);
+  }
+  .land-reveal-overlay.warm {
+    background: linear-gradient(135deg, #8f4e00 0%, #c97a3a 100%);
+  }
+
+  /* Content entrance — directional slides */
+  .land-content-left {
+    opacity: 0;
+    transform: translateX(-80px) scale(0.95);
+    will-change: transform, opacity;
+  }
+  .land-content-right {
+    opacity: 0;
+    transform: translateX(80px) scale(0.95);
+    will-change: transform, opacity;
+  }
+  .land-content-up {
+    opacity: 0;
+    transform: translateY(60px);
+    will-change: transform, opacity;
+  }
+  .land-content-down {
+    opacity: 0;
+    transform: translateY(-40px);
+    will-change: transform, opacity;
+  }
+  .land-content-scale {
+    opacity: 0;
+    transform: scale(0.7);
+    will-change: transform, opacity;
+  }
+
+  /* Image burst reveal */
+  .land-img-burst {
+    opacity: 0;
+    transform: scale(0.8);
+    will-change: transform, opacity;
+  }
+
+  /* Split slide panels for alternating section reveals */
+  .land-split-panel {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    z-index: 15;
+    pointer-events: none;
+  }
+  .land-split-panel .split-half {
+    flex: 1;
+    background: #231a13;
+    will-change: transform;
+  }
+  .land-split-panel .split-half.right {
+    background: #3b2417;
+  }
+
+  /* Stagger children entrance helpers */
+  [data-stagger-children] > * {
+    opacity: 0;
+    transform: translateY(30px);
+    will-change: transform, opacity;
+  }
+
+  /* Hero dramatic overlay — diagonal slash reveal */
+  .land-hero-mask {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      135deg,
+      #1a0f08 0%,
+      #231a13 25%,
+      #3b2417 50%,
+      #5a3a28 75%,
+      #6d4226 100%
+    );
+    z-index: 10;
+    pointer-events: none;
+    will-change: clip-path;
+  }
+
+  /* Hero accent overlay — warm diagonal reveal layer behind main mask */
+  .land-hero-mask-accent {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      60deg,
+      rgba(255, 153, 51, 0.25) 0%,
+      rgba(255, 153, 51, 0.1) 30%,
+      rgba(232, 164, 75, 0.05) 60%,
+      transparent 100%
+    );
+    z-index: 9;
+    pointer-events: none;
+    will-change: clip-path;
+    mix-blend-mode: overlay;
+  }
+
+  /* Revealed banner content wrapper */
+  .land-hero-revealed {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+
+  /* Scroll-triggered scale + bounce keyframe (compositor-friendly) */
+  @keyframes landBurstIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.05);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes landSlideUpBurst {
+    0% {
+      opacity: 0;
+      transform: translateY(80px) scale(0.9);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(-8px) scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes landSlideLeft {
+    0% {
+      opacity: 0;
+      transform: translateX(-60px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes landSlideRight {
+    0% {
+      opacity: 0;
+      transform: translateX(60px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  /* Hard offset "sticker" shadow used on primary buttons */
+  .land-hard-shadow {
+    box-shadow: 4px 4px 0 0 #2f1400;
+  }
+  .land-hard-shadow-sm {
+    box-shadow: 2px 2px 0 0 #6d3a00;
+  }
+  .land-hard-shadow-saffron {
+    box-shadow: 4px 4px 0 0 #693800;
+  }
+  .land-hard-shadow-clay {
+    box-shadow: 4px 4px 0 0 #753c00;
+  }
+}
+
+/* ============================================================
+   Accessibility — Respect user motion preferences
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .land-hero-mask,
+  .land-hero-mask-accent,
+  .land-reveal-overlay {
+    display: none;
+  }
+
+  [data-hero-mask],
+  [data-hero-mask-accent] {
+    display: none;
+  }
+
+  [data-scroll-indicator] {
+    display: none;
+  }
+
+  .land-fade-up {
+    opacity: 1;
+    transform: translateY(0);
+    transition: none;
+  }
+
+  .stagger-item,
+  .stagger-in {
+    opacity: 1;
+    animation: none;
+  }
+
+  [data-parallax],
+  [data-move-img],
+  [data-bg-layer],
+  [data-float] {
+    transform: none !important;
+  }
+
+  .land-hover-wiggle:hover,
+  .land-hover-splash:hover img {
+    animation: none;
+  }
+
+  .land-chutney-swirl {
+    animation: none;
+  }
+}
