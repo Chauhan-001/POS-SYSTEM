@@ -757,6 +757,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
     enableOnlineOrders: true,
     enableKitchenDisplay: true,
     enableLoyalty: true,
+    showImagesInBilling: true,
   },
 };
 

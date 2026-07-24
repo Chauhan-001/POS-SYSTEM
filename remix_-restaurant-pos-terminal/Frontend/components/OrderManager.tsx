@@ -9,9 +9,10 @@ import {
   ShoppingBag, Package, UtensilsCrossed, Bike, Globe,
   RefreshCw, AlertCircle, ChevronRight, MoreHorizontal, Printer,
   CreditCard, Wallet, CheckCircle, XCircle, Edit3, Eye, Receipt,
-  Timer, LayoutGrid, List, Layers, Coffee, Trash
+  Timer, LayoutGrid, List, Layers, Coffee, Trash, Map
 } from 'lucide-react';
 import { Order, OrderStatus, TableInfo, TakeawayOrder, TableStatus, CartItem, Employee } from '../src/types';
+import RestaurantFloorPlan from './RestaurantFloorPlan';
 
 interface OrderManagerProps {
   orders: Order[];
@@ -67,7 +68,7 @@ export default function OrderManager({
   onOpenBilling, onOpenReceiptPreview, employees, settings, currentEmployee, showToast,
   onAddTable, onUpdateTable, onDeleteTable
 }: OrderManagerProps) {
-  // Section filter state for table view
+  // Section filter for grid view
   const [activeSection, setActiveSection] = useState<string>('All');
   const getUniqueSections = (): string[] => {
     const sections = new Set(tables.map(t => t.section).filter(Boolean));
@@ -76,7 +77,7 @@ export default function OrderManager({
 
   const [activeTab, setActiveTab] = useState<'tables' | 'takeaway' | 'online' | 'all'>('tables');
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'floorplan'>('grid');
   const moduleSettings = settings?.moduleSettings || {};
   const isTableServiceEnabled = moduleSettings.enableTableService !== false;
 
@@ -203,7 +204,7 @@ export default function OrderManager({
   const waitingPaymentCount = orders.filter(o => o.status === 'Waiting Payment').length;
   const occupiedTablesCount = tables.filter(t => t.status !== 'Available').length;
 
-  // Filter tables by active section
+  // Filter tables by active section (only used in grid view)
   const filteredTables = useMemo(() => {
     if (activeSection === 'All') return tables;
     return tables.filter(t => t.section === activeSection);
@@ -506,28 +507,34 @@ export default function OrderManager({
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={openAddTableModal}
-              className="flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add Table
-            </button>
-            <button
               onClick={() => setIsTableModalOpen(true)}
               className="flex items-center gap-1.5 bg-white border border-gray-200 hover:border-gray-400 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
               Manage Tables
             </button>
-            <button
-              onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-              className={`p-2 rounded-lg transition-colors cursor-pointer ${
-                viewMode === 'list' ? 'bg-gray-200 text-gray-800' : 'hover:bg-gray-100 text-gray-500'
-              }`}
-              title={viewMode === 'grid' ? 'List view' : 'Grid view'}
-            >
-              {viewMode === 'grid' ? <List className="w-4 h-4" /> : <LayoutGrid className="w-4 h-4" />}
-            </button>
+            {/* View mode toggle buttons */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setViewMode('grid')}
+                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                  viewMode === 'grid' ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title="Grid view"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => setViewMode('floorplan')}
+                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                  viewMode === 'floorplan' ? 'bg-emerald-700 text-white' : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title="Floor plan view"
+              >
+                <Map className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -620,50 +627,68 @@ export default function OrderManager({
         {/* TABLES VIEW */}
         {activeTab === 'tables' && isTableServiceEnabled && (
           <div>
-            {/* Section Filter Tabs */}
-            <div className="flex gap-2 mb-4 flex-wrap">
-              {getUniqueSections().map((section) => (
-                <button
-                  key={section}
-                  onClick={() => setActiveSection(section)}
-                  className={`px-3.5 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeSection === section
-                      ? 'bg-gray-900 text-white shadow-sm'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:text-gray-800'
-                  }`}
-                >
-                  {section === 'All' ? (
-                    <LayoutGrid className="w-3 h-3" />
-                  ) : (
-                    <Layers className="w-3 h-3" />
-                  )}
-                  {section}
-                  {section !== 'All' && (
-                    <span className={`text-[8px] ml-0.5 ${
-                      activeSection === section ? 'text-white/70' : 'text-gray-400'
-                    }`}>
-                      ({tables.filter(t => t.section === section).length})
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+            {/* Section Filter Tabs (grid view only) */}
+            {viewMode !== 'floorplan' && (
+              <div className="flex gap-2 mb-4 flex-wrap">
+                {getUniqueSections().map((section) => (
+                  <button
+                    key={section}
+                    onClick={() => setActiveSection(section)}
+                    className={`px-3.5 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      activeSection === section
+                        ? 'bg-gray-900 text-white shadow-sm'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:text-gray-800'
+                    }`}
+                  >
+                    {section === 'All' ? (
+                      <LayoutGrid className="w-3 h-3" />
+                    ) : (
+                      <Layers className="w-3 h-3" />
+                    )}
+                    {section}
+                    {section !== 'All' && (
+                      <span className={`text-[8px] ml-0.5 ${
+                        activeSection === section ? 'text-white/70' : 'text-gray-400'
+                      }`}>
+                        ({tables.filter(t => t.section === section).length})
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
 
-            {/* Table Grid */}
-            <div className={viewMode === 'grid'
-              ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3'
-              : 'grid grid-cols-1 gap-2'
-            }>
-              {filteredTables.length === 0 ? (
-                <div className="col-span-full text-center py-16 text-gray-400">
-                  <LayoutGrid className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                  <p className="font-semibold text-gray-500">No tables in this section</p>
-                  <p className="text-xs mt-1">Switch sections or create a new order to get started</p>
-                </div>
-              ) : (
-                filteredTables.map(renderTableCard)
-              )}
-            </div>
+            {/* Floor Plan View */}
+            {viewMode === 'floorplan' ? (
+              <RestaurantFloorPlan
+                tables={tables}
+                orders={orders}
+                settings={settings}
+                onCreateOrder={onCreateOrder}
+                onOpenBilling={onOpenBilling}
+                onOpenReceiptPreview={onOpenReceiptPreview}
+                onAddTable={onAddTable}
+                onUpdateTable={onUpdateTable}
+                onDeleteTable={onDeleteTable}
+                showToast={showToast}
+              />
+            ) : (
+              /* Table Grid / List View */
+              <div className={viewMode === 'grid'
+                ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3'
+                : 'grid grid-cols-1 gap-2'
+              }>
+                {filteredTables.length === 0 ? (
+                  <div className="col-span-full text-center py-16 text-gray-400">
+                    <LayoutGrid className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                    <p className="font-semibold text-gray-500">No tables in this section</p>
+                    <p className="text-xs mt-1">Switch sections or create a new order to get started</p>
+                  </div>
+                ) : (
+                  filteredTables.map(renderTableCard)
+                )}
+              </div>
+            )}
           </div>
         )}
 

@@ -15,7 +15,6 @@ interface ReceiptModalProps {
 }
 
 export default function ReceiptModal({ bill, settings, onClose, onNewOrder }: ReceiptModalProps) {
-  console.log("DEBUG: ReceiptModal bill object:", bill);
   const receiptRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
@@ -150,13 +149,12 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder }: Re
           {/* Thermal Paper Emulation */}
           <div 
             ref={receiptRef}
-            className={`bg-white shadow-lg border border-gray-200 w-full font-mono text-gray-800 leading-normal flex flex-col items-center print-receipt-only transition-all duration-300 h-fit ${
+            className={`bg-white border-2 border-dashed border-gray-300 w-full font-mono text-gray-800 leading-normal flex flex-col items-center print-receipt-only transition-all duration-300 h-fit ${
               settings.printSize === '58mm'
                 ? 'max-w-[210px] p-3 text-[8.5px]'
                 : 'max-w-[280px] p-5 text-[10px]'
             }`}
             style={{ 
-              boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
               wordBreak: 'break-word'
             }}
           >
@@ -315,7 +313,7 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder }: Re
 
             {/* Loyalty summary box */}
             {settings.showCustomerNameOnReceipt !== false && settings.showLoyaltyPointsOnReceipt !== false && bill.customerPhone && (
-              <div className="w-full border border-black p-2 rounded text-center my-2 space-y-1 bg-gray-50 text-[8px]">
+              <div className="w-full border-2 border-dashed border-gray-300 p-2 rounded text-center my-2 space-y-1 bg-gray-50 text-[8px]">
                 <p className="font-bold tracking-wide">LOYALTY REWARDS SUMMARY</p>
                 <div className="flex justify-between text-[8px] px-1">
                   <span>Points Redeemed:</span>

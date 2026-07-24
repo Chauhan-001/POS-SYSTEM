@@ -242,11 +242,11 @@ export function createSteamRise(
     ease: 'power1.inOut',
   })
 
-  const originalKill = tween.kill.bind(tween) as any
-  tween.kill = () => {
+  const originalKill = tween.kill.bind(tween)
+  tween.kill = ((target, propertiesList) => {
     element.style.willChange = ''
-    originalKill()
-  }
+    return originalKill(target, propertiesList)
+  }) as typeof tween.kill
 
   return tween
 }

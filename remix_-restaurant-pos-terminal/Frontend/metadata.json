@@ -1,8 +1,0 @@
-{
-  "name": "Remix: Restaurant POS Terminal",
-  "description": "A high-velocity, modern Windows POS application for restaurants, featuring billing, loyalty rewards, customer history, reports, and receipt printing.",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}

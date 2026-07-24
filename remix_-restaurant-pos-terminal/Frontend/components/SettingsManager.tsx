@@ -46,7 +46,7 @@ export default function SettingsManager({ settings, onUpdateSettings }: Settings
   const [activeSubTab, setActiveSubTab] = useState<'billing' | 'kitchen' | 'modules'>('billing');
 
   // Module Settings State — which restaurant features are enabled
-  const [moduleSettings, setModuleSettings] = useState(settings.moduleSettings || {
+  const defaultModuleSettings = {
     enableTableService: true,
     enableWaiterManagement: true,
     enableReservations: false,
@@ -55,7 +55,9 @@ export default function SettingsManager({ settings, onUpdateSettings }: Settings
     enableOnlineOrders: true,
     enableKitchenDisplay: true,
     enableLoyalty: true,
-  });
+    showImagesInBilling: true,
+  };
+  const [moduleSettings, setModuleSettings] = useState({ ...defaultModuleSettings, ...(settings.moduleSettings || {}) });
 
   // Toggle helper for module switches
   const toggleModule = (key: keyof typeof moduleSettings) => {
@@ -311,16 +313,7 @@ export default function SettingsManager({ settings, onUpdateSettings }: Settings
     setShowLoyaltyPointsEarned(settings.showLoyaltyPointsEarnedOnReceipt ?? true);
     setReceiptFooterMessage(settings.receiptFooterMessage ?? 'THANK YOU FOR DINING WITH US!');
     setReceiptFooterImageUrl(settings.receiptFooterImageUrl ?? '');
-    setModuleSettings(settings.moduleSettings || {
-      enableTableService: true,
-      enableWaiterManagement: true,
-      enableReservations: false,
-      enableQROrdering: false,
-      enableDeliveryModule: true,
-      enableOnlineOrders: true,
-      enableKitchenDisplay: true,
-      enableLoyalty: true,
-    });
+    setModuleSettings({ ...defaultModuleSettings, ...(settings.moduleSettings || {}) });
     showToastNotification('Changes discarded. Resetting to active configurations.');
   };
 
@@ -1168,32 +1161,6 @@ export default function SettingsManager({ settings, onUpdateSettings }: Settings
                     </button>
                   </div>
 
-                  {/* Toggle 4: Round-off Total */}
-                  <div className="flex justify-between items-center py-2.5 pt-4 border-t border-gray-50">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-full bg-blue-50 text-[#004ac6]">
-                        <FileSignature className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-gray-900">Round-off Grand Total</p>
-                        <p className="text-[10px] text-gray-400 font-medium">Round final bill payable to nearest integer</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setRoundOffTotal(!roundOffTotal)}
-                      className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none cursor-pointer ${
-                        roundOffTotal ? 'bg-[#004ac6]' : 'bg-gray-200'
-                      }`}
-                    >
-                      <div
-                        className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${
-                          roundOffTotal ? 'left-6' : 'left-1'
-                        }`}
-                      />
-                    </button>
-                  </div>
-
                   {/* Select Print Size (58mm vs 80mm) */}
                   <div className="flex flex-col sm:flex-row justify-between sm:items-center py-3 pt-4 border-t border-gray-50 gap-3">
                     <div className="flex items-center gap-3">
@@ -1776,6 +1743,26 @@ export default function SettingsManager({ settings, onUpdateSettings }: Settings
                       <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${moduleSettings.enableLoyalty ? 'left-6' : 'left-1'}`} />
                     </button>
                   </div>
+
+                  {/* Product Images in Billing */}
+                  <div className="flex justify-between items-center py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-full bg-blue-50 text-[#004ac6]">
+                        <Monitor className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-900">Product Images in Billing</p>
+                        <p className="text-[10px] text-gray-400">Show product images on billing grid cards</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleModule('showImagesInBilling')}
+                      className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none cursor-pointer shrink-0 ${moduleSettings.showImagesInBilling ? 'bg-[#004ac6]' : 'bg-gray-200'}`}
+                    >
+                      <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${moduleSettings.showImagesInBilling ? 'left-6' : 'left-1'}`} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-center gap-2.5 text-xs text-amber-800 mt-2">
@@ -1815,7 +1802,7 @@ export default function SettingsManager({ settings, onUpdateSettings }: Settings
                     <p className="mt-1">
                       {Object.entries(moduleSettings)
                         .filter(([, v]) => v)
-                        .map(([key]) => key.replace('enable', '').replace(/([A-Z])/g, ' $1').trim())
+                        .map(([key]) => key.replace(/^enable/, '').replace(/([A-Z])/g, ' $1').replace(/^./, m => m.toUpperCase()).trim())
                         .join(', ') || 'None'}
                     </p>
                   </div>

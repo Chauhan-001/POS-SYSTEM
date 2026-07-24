@@ -39,6 +39,8 @@ import SettingsManager from '../components/SettingsManager';
 import OrderManager from '../components/OrderManager';
 import KOTModal from '../components/KOTModal';
 import OrderTimeline from '../components/OrderTimeline';
+import AddOnModal, { hasCustomizationOptions, getAddOnsForCategory } from '../components/AddOnModal';
+import InventoryManager from '../components/inventory/InventoryManager';
 
 // Module-level seed data for restaurant floor tables (no component dependency)
 const DEFAULT_TABLES: TableInfo[] = (() => {
@@ -68,7 +70,7 @@ export default function App() {
   const [bills, setBills] = useState<Bill[]>(() => getDBData('pos_bills', DEFAULT_BILLS));
 
   // Module settings — which features are enabled/disabled
-  const moduleSettings = settings.moduleSettings || {
+  const moduleSettings = {
     enableTableService: true,
     enableWaiterManagement: true,
     enableReservations: false,
@@ -77,6 +79,8 @@ export default function App() {
     enableOnlineOrders: true,
     enableKitchenDisplay: true,
     enableLoyalty: true,
+    showImagesInBilling: true,
+    ...(settings.moduleSettings || {}),
   };
 
   // Sync state
@@ -189,8 +193,10 @@ export default function App() {
   const [isKOTPreviewOpen, setIsKOTPreviewOpen] = useState(false);
   const [kotPreviewData, setKotPreviewData] = useState<{
     items: CartItem[];
+    allItems?: CartItem[];
     kotType: KOTType;
     onConfirm: () => void;
+    onConfirmMerge?: () => void;
   } | null>(null);
   
   // Timeline Modal state
@@ -207,7 +213,7 @@ export default function App() {
   });
 
   // Current Active Module / View
-  const [activeWorkspace, setActiveWorkspace] = useState<'Orders' | 'Billing' | 'Products' | 'Customers' | 'Offers' | 'Reports' | 'Staff' | 'Settings' | 'More'>('Orders');
+  const [activeWorkspace, setActiveWorkspace] = useState<'Orders' | 'Billing' | 'Products' | 'Customers' | 'Offers' | 'Reports' | 'Staff' | 'Settings' | 'More' | 'Inventory'>('Orders');
 
   // Active Billing Order States
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -309,17 +315,20 @@ export default function App() {
     });
   };
 
+  // Add-On Modal state
+  const [isAddOnModalOpen, setIsAddOnModalOpen] = useState(false);
+  const [addOnModalProduct, setAddOnModalProduct] = useState<Product | null>(null);
+  const [addOnModalVariant, setAddOnModalVariant] = useState<ProductVariant | undefined>(undefined);
+
   // Search filter inside Billing Category
   const [billingCategory, setBillingCategory] = useState('All');
   const [billingSearch, setBillingSearch] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const [selectedCardVariants, setSelectedCardVariants] = useState<Record<string, string>>({});
 
   // References for keyboard focus binding
   const billingSearchRef = useRef<HTMLInputElement>(null);
   const loyaltyPhoneRef = useRef<HTMLInputElement>(null);
   const quickFireRef = useRef<HTMLInputElement>(null);
-  const autoKotRef = useRef(false);
   const [isQuickFireActive, setIsQuickFireActive] = useState(false);
   const [quickFireInput, setQuickFireInput] = useState('');
 
@@ -488,6 +497,7 @@ export default function App() {
         setIsPaymentConfirmOpen(false);
         setIsZReportOpen(false);
         setIsVoidReasonOpen(false);
+        setIsAddOnModalOpen(false);
         // Navigate to Orders if in Billing view
         if (activeWorkspace === 'Billing') {
           setActiveWorkspace('Orders');
@@ -748,14 +758,49 @@ export default function App() {
       return;
     }
     
+    const hasPreviousKOT = activeOrder.kotRecords.length > 0;
+    const allKotItems = activeOrder.kotRecords.flatMap(kot => kot.items);
+    
     setKotPreviewData({
       items: pendingItems,
-      kotType: activeOrder.kotRecords.length === 0 ? 'Original' as const : 'Additional' as const,
+      allItems: hasPreviousKOT ? allKotItems : undefined,
+      kotType: hasPreviousKOT ? 'Additional' as const : 'Original' as const,
       onConfirm: () => handleConfirmKOT(pendingItems),
+      onConfirmMerge: hasPreviousKOT ? () => handleMergeKOT(allKotItems, pendingItems) : undefined,
     });
     setIsKOTPreviewOpen(true);
   };
   
+  // Print a merged KOT combining all existing KOT items + pending items
+  const handleMergeKOT = (existingItems: CartItem[], pendingItems: CartItem[]) => {
+    if (!activeOrder) return;
+
+    const allMerged = [...existingItems, ...pendingItems];
+    const kotNumber = activeOrder.kotRecords.length + 1;
+    const newKOT: KOTRecord = {
+      id: `kot_${Date.now()}`,
+      kotNumber,
+      type: 'Additional' as const,
+      items: allMerged,
+      printedAt: new Date().toLocaleTimeString(),
+      printedBy: currentEmployee?.name || 'System',
+    };
+
+    const updatedOrder = {
+      ...activeOrder,
+      kotRecords: [...activeOrder.kotRecords, newKOT],
+      updatedAt: new Date().toISOString(),
+    };
+
+    setOrders(orders.map(o => o.id === activeOrder.id ? updatedOrder : o));
+    setActiveOrder(updatedOrder);
+    setKotOrder(updatedOrder);
+    setIsKOTPreviewOpen(false);
+    setIsKOTOpen(true);
+
+    showToast(`Merged KOT #${kotNumber} sent to kitchen (${allMerged.length} items)`, 'success');
+  };
+
   // Execute KOT print after preview confirmation
   const handleConfirmKOT = (items: CartItem[]) => {
     if (!activeOrder) return;
@@ -947,7 +992,78 @@ export default function App() {
     }
   };
 
-  // Add Product to checkout Cart
+  // Open Add-On Modal for product customization
+  const handleOpenAddOnModal = (product: Product, variant?: ProductVariant) => {
+    // Skip modal if no customization options (no variants, no category add-ons)
+    if (!hasCustomizationOptions(product)) {
+      handleAddProductToCart(product, variant);
+      return;
+    }
+    setAddOnModalProduct(product);
+    setAddOnModalVariant(variant);
+    setIsAddOnModalOpen(true);
+  };
+
+  // Handle confirm from AddOnModal — adds product to cart with selected options
+  const handleAddOnModalConfirm = (product: Product, variant: ProductVariant | undefined, quantity: number, notes: string, addOns: string[]) => {
+    setIsAddOnModalOpen(false);
+    setAddOnModalProduct(null);
+    setAddOnModalVariant(undefined);
+
+    if (!product.availability) {
+      showToast(`${product.name} is sold out!`, 'warning');
+      return;
+    }
+
+    const rowId = variant ? `${product.id}_${variant.name}` : `${product.id}_none`;
+    const isNewItem = !cartItems.some((item) => item.id === rowId);
+    const existingIdx = cartItems.findIndex((item) => item.id === rowId);
+
+    const itemPrice = variant ? variant.price : product.price;
+    const productAddOns = getAddOnsForCategory(product.category);
+    const addOnTotal = addOns.reduce((sum, id) => {
+      const found = productAddOns.find(o => o.id === id);
+      return sum + (found?.price || 0);
+    }, 0);
+    const finalPrice = itemPrice + addOnTotal;
+
+    if (existingIdx > -1) {
+      const updated = [...cartItems];
+      updated[existingIdx].quantity += quantity;
+      if (notes) updated[existingIdx].notes = notes;
+      setCartItems(updated);
+    } else {
+      const newCartItem: CartItem = {
+        id: rowId,
+        product,
+        selectedVariant: variant,
+        quantity,
+        price: finalPrice,
+        notes: notes || undefined,
+      };
+      setCartItems([...cartItems, newCartItem]);
+    }
+    showToast(`${product.name}${variant ? ` (${variant.name})` : ''} added to current bill.`, 'success');
+
+    // Add timeline event
+    if (activeOrder && isNewItem) {
+      const desc = `${product.name}${variant ? ` (${variant.name})` : ''}${notes ? ` - ${notes}` : ''} added to order`;
+      const itemEvent = createTimelineEvent('item_added', desc);
+      const updatedTimeline = [...activeOrder.timeline, itemEvent];
+      setActiveOrder(prev => prev ? { 
+        ...prev, 
+        timeline: updatedTimeline,
+        updatedAt: new Date().toISOString() 
+      } : null);
+      setOrders(prev => prev.map(o => 
+        o.id === activeOrder.id 
+          ? { ...o, timeline: updatedTimeline, updatedAt: new Date().toISOString() }
+          : o
+      ));
+    }
+  };
+
+  // Add Product to checkout Cart (direct, used by quick-fire mode)
   const handleAddProductToCart = (product: Product, selectedVariant?: ProductVariant) => {
     if (!product.availability) {
       showToast(`${product.name} is sold out!`, 'warning');
@@ -977,16 +1093,6 @@ export default function App() {
     }
     showToast(`${product.name} added to current bill.`, 'success');
 
-    // Phase 8: Auto-KOT on first item add — if cart was empty and no KOT printed yet, auto-send to kitchen
-    if (activeOrder && cartItems.length === 0 && isNewItem && activeOrder.kotRecords.length === 0 && !autoKotRef.current) {
-      autoKotRef.current = true;
-      setTimeout(() => {
-        handlePrintKOT('Original');
-        showToast('Auto KOT sent to kitchen.', 'success');
-        autoKotRef.current = false;
-      }, 400);
-    }
-    
     // Add timeline event for item addition and sync to orders state
     if (activeOrder && isNewItem) {
       const itemEvent = createTimelineEvent('item_added', `${product.name}${selectedVariant ? ` (${selectedVariant.name})` : ''} added to order`);
@@ -1326,10 +1432,12 @@ export default function App() {
     setIsPaymentConfirmOpen(true);
   };
   
-  // Actually process payment after confirmation
+  // Process payment and navigate to table view
   const handleConfirmPayment = () => {
     setIsPaymentConfirmOpen(false);
     handleCheckoutPayment();
+    // Navigate to table view
+    setActiveWorkspace("Orders");
   };
 
   // Complete Payment and generate receipt
@@ -1557,22 +1665,15 @@ export default function App() {
     // Refresh daily stats
     refreshDailyStats(newBill);
 
-    // Reset billing state and show receipt, then navigate to Orders
+    // Reset billing state
     setCartItems([]);
     setCustomerPhone("");
     setSearchedCustomer(null);
     setAppliedReward(null);
-    setSelectedCardVariants({});
     setBillingSearch("");
-    setActiveReceipt(newBill);
     setActiveOrder(null);
     
     showToast(`Payment of ${settings.currencySymbol}${grandTotal.toFixed(2)} received!`, "success");
-    
-    // Navigate back to Orders workspace after payment
-    setTimeout(() => {
-      setActiveWorkspace("Orders");
-    }, 300);
   };
 
   return (
@@ -1742,43 +1843,73 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* Compact Daily Sales strip */}
+                    <div className="flex items-center gap-4 mb-3 px-1 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-100">
+                      <div className="flex items-center gap-1.5">
+                        <DollarSign className="w-3 h-3 text-green-600" />
+                        <span className="text-[10px] font-bold text-green-800">{settings.currencySymbol}{dailySales.totalRevenue.toFixed(2)}</span>
+                      </div>
+                      <div className="w-px h-4 bg-green-200" />
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] text-green-700 font-semibold">{dailySales.totalOrders} orders</span>
+                      </div>
+                      <div className="w-px h-4 bg-green-200" />
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] text-green-600">{dailySales.totalItemsSold} items</span>
+                      </div>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => setIsDailySalesOpen(true)}
+                        className="text-[8px] text-green-600 hover:text-green-800 font-semibold underline underline-offset-2 cursor-pointer"
+                      >
+                        Details
+                      </button>
+                    </div>
+
                     {/* Product grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                       {products
                         .filter(p => billingCategory === "All" || p.category === billingCategory)
                         .filter(p => !billingSearch || p.name.toLowerCase().includes(billingSearch.toLowerCase()) || p.code.toLowerCase().includes(billingSearch.toLowerCase()))
                         .filter(p => !showFavoritesOnly || p.favorite)
                         .filter(p => p.availability)
                         .map((product) => {
-                          const selectedVar = product.variants?.length === 1 ? product.variants[0] : undefined;
-                          const currVariantName = selectedCardVariants[product.id];
-                          const currVariant = product.variants?.find(v => v.name === currVariantName);
+                          const currVariant = undefined;
+                          const displayPrice = product.price;
                           return (
                             <div
                               key={product.id}
-                              className="bg-white rounded-xl border border-[#e1e2ed] p-3 hover:shadow-md hover:border-[#004ac6]/30 transition-all cursor-pointer group"
-                              onClick={() => handleAddProductToCart(product, currVariant)}
+                              className="bg-white rounded-lg border border-[#e1e2ed] hover:border-[#004ac6]/40 hover:shadow-sm transition-all cursor-pointer group relative flex flex-col"
+                              onClick={() => handleOpenAddOnModal(product, currVariant)}
                             >
-                              <div className="relative w-full h-20 rounded-lg overflow-hidden bg-gray-100 mb-2">
-                                <img src={product.image} alt={product.name} className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-                                {product.favorite && <Star className="absolute top-1 right-1 w-3 h-3 text-amber-400 fill-amber-400" />}
-                              </div>
-                              <h4 className="text-xs font-bold text-[#191b23] line-clamp-1">{product.name}</h4>
-                              <p className="text-[10px] text-gray-400 font-mono mt-0.5">{settings.currencySymbol}{product.price.toFixed(2)}</p>
-                              {product.variants && product.variants.length > 1 && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {product.variants.map((v) => (
-                                    <button
-                                      key={v.name}
-                                      onClick={(e) => { e.stopPropagation(); setSelectedCardVariants(prev => ({ ...prev, [product.id]: v.name })); }}
-                                      className={`text-[8px] px-1.5 py-0.5 rounded font-semibold cursor-pointer ${
-                                        currVariantName === v.name ? "bg-[#004ac6] text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                                      }`}
-                                    >
-                                      {v.name}
-                                    </button>
-                                  ))}
+                              {/* Product image — shown only when setting is enabled */}
+                              {moduleSettings.showImagesInBilling !== false && (
+                                <div className="w-full h-20 rounded-t-lg overflow-hidden bg-gray-50 flex-shrink-0">
+                                  <img
+                                    src={product.image}
+                                    alt={product.name}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                  />
                                 </div>
+                              )}
+                              <div className="p-2.5 flex-1 flex flex-col justify-between gap-1.5">
+                                <div className="flex items-start justify-between gap-1.5">
+                                  <h4 className="text-[11px] font-bold text-[#191b23] truncate leading-tight flex-1">{product.name}</h4>
+                                  {product.favorite && moduleSettings.showImagesInBilling === false && (
+                                    <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400 shrink-0" />
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-between gap-1">
+                                  <p className="text-[11px] font-mono font-bold text-[#004ac6]">{settings.currencySymbol}{displayPrice.toFixed(2)}</p>
+                                  <div className="w-6 h-6 rounded-full bg-[#004ac6] text-white flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity shadow-sm flex-shrink-0">
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </div>
+                                </div>
+                              </div>
+                              {product.favorite && moduleSettings.showImagesInBilling !== false && (
+                                <Star className="absolute top-1.5 right-1.5 w-3 h-3 text-amber-400 fill-amber-400" />
                               )}
                             </div>
                           );
@@ -1893,10 +2024,13 @@ export default function App() {
                     {/* Cart items */}
                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
                       {cartItems.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-gray-400 py-12">
-                          <ShoppingCart className="w-12 h-12 text-gray-200 mb-3" />
-                          <p className="text-xs font-semibold">Empty Bill</p>
-                          <p className="text-[10px]">Tap items above to add</p>
+                        <div className="flex flex-col items-center justify-center h-full text-gray-400 py-8 px-4">
+                          <ShoppingCart className="w-10 h-10 text-gray-200 mb-3" />
+                          <p className="text-xs font-semibold text-gray-500">Empty Bill</p>
+                          <p className="text-[10px] mt-1">Tap items above or use <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-[9px] font-mono font-bold text-gray-600 border border-gray-200">F1</kbd> to search</p>
+                          <p className="text-[9px] mt-3 text-gray-300 leading-relaxed text-center">
+                            Tip: Type product codes with <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-[8px] font-mono font-bold text-gray-500 border border-gray-200">F3</kbd> Quick-Fire mode
+                          </p>
                         </div>
                       ) : (
                         cartItems.map((item) => (
@@ -2124,10 +2258,20 @@ export default function App() {
                   onUpdateSettings={setSettings}
                 />
               )}
+              {activeWorkspace === "Inventory" && (
+                <div className="flex flex-col h-full">
+                  <InventoryManager onBack={() => setActiveWorkspace("More")} />
+                </div>
+              )}
               {activeWorkspace === "More" && (
                 <div className="p-6 space-y-4">
                   <h2 className="text-xl font-bold">More Options</h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <button onClick={() => setActiveWorkspace("Inventory")} className="p-6 bg-white rounded-xl border border-[#e1e2ed] hover:shadow-md hover:border-[#004ac6]/30 transition-all text-left cursor-pointer">
+                      <Layers className="w-8 h-8 text-[#004ac6] mb-2" />
+                      <p className="text-sm font-bold">Inventory</p>
+                      <p className="text-xs text-gray-500">Stock & purchase management</p>
+                    </button>
                     <button onClick={() => setActiveWorkspace("Products")} className="p-6 bg-white rounded-xl border border-[#e1e2ed] hover:shadow-md transition-all text-left cursor-pointer">
                       <Layers className="w-8 h-8 text-orange-600 mb-2" />
                       <p className="text-sm font-bold">Products</p>
@@ -2323,7 +2467,7 @@ export default function App() {
             </div>
 
             {/* Receipt Preview — matches the formatted receipt from ReceiptModal, respecting all settings */}
-            <div className="p-5 max-h-[55vh] overflow-y-auto flex justify-center">
+            <div className="px-5 pb-2 pt-3 flex justify-center">
               {(() => {
                 const is58mm = settings.printSize === '58mm';
                 const currency = settings.currencySymbol || '₹';
@@ -2340,7 +2484,8 @@ export default function App() {
                 const splitTaxAmount = gst / 2;
                 
                 return (
-                  <div className={`bg-white border-2 border-dashed border-gray-300 font-mono text-gray-800 leading-normal ${is58mm ? 'max-w-[210px] p-3 text-[8.5px]' : 'max-w-[280px] p-5 text-[10px]'}`} style={{ wordBreak: 'break-word' }}>
+                  <div className={`bg-white border-2 border-dashed border-gray-300 font-mono text-gray-800 leading-normal ${is58mm ? 'max-w-[210px]' : 'max-w-[280px]'}`} style={{ wordBreak: 'break-word' }}>
+                    <div className={`${is58mm ? 'p-3 text-[8.5px]' : 'p-5 text-[10px]'} max-h-[52vh] overflow-y-auto`}>
                     {/* Header */}
                     <div className="text-center space-y-1 w-full">
                       <div className="border-b border-dashed border-gray-300 pb-1 mb-2"></div>
@@ -2560,6 +2705,7 @@ export default function App() {
                     </div>
 
                     <div className="border-t border-dashed border-gray-300 pt-1 mt-2 w-full"></div>
+                    </div>
                   </div>
                 );
               })()}
@@ -2569,10 +2715,10 @@ export default function App() {
             <div className="px-5 py-4 border-t border-gray-200 bg-gray-50 space-y-2">
               <button
                 onClick={handleConfirmPayment}
-                className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold transition-all cursor-pointer shadow-md flex items-center justify-center gap-2"
+                className="w-full py-3 bg-[#004ac6] hover:bg-[#003ea8] text-white rounded-xl text-sm font-bold transition-all cursor-pointer shadow-md flex items-center justify-center gap-2"
               >
-                <DollarSign className="w-4 h-4" />
-                Pay {settings.currencySymbol}{calculateCartGrandTotal().toFixed(2)}
+                <Printer className="w-4 h-4" />
+                Print & Pay — {settings.currencySymbol}{calculateCartGrandTotal().toFixed(2)}
               </button>
               <div className="flex gap-2">
                 <button
@@ -2585,7 +2731,7 @@ export default function App() {
                   onClick={() => setIsPaymentConfirmOpen(false)}
                   className="flex-1 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-500 hover:bg-white transition-colors cursor-pointer"
                 >
-                  Close for Now
+                  Cancel
                 </button>
               </div>
             </div>
@@ -2665,7 +2811,10 @@ export default function App() {
                   {kotPreviewData.kotType === 'Original' ? 'ORIGINAL KOT' : 'ADDITIONAL KOT'}
                 </span>
                 <span className="text-[10px] text-gray-400">
-                  {kotPreviewData.items.length} item{kotPreviewData.items.length !== 1 ? 's' : ''}
+                  {kotPreviewData.items.length} new item{kotPreviewData.items.length !== 1 ? 's' : ''}
+                  {kotPreviewData.allItems && (
+                    <span className="ml-1.5">— {kotPreviewData.allItems.length} item{kotPreviewData.allItems.length !== 1 ? 's' : ''} in merge view</span>
+                  )}
                 </span>
               </div>
 
@@ -2714,6 +2863,15 @@ export default function App() {
               >
                 Cancel
               </button>
+              {kotPreviewData.onConfirmMerge && (
+                <button
+                  onClick={() => kotPreviewData.onConfirmMerge!()}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+                >
+                  <Layers className="w-3.5 h-3.5 inline mr-1" />
+                  Print All (Merge)
+                </button>
+              )}
               <button
                 onClick={() => kotPreviewData.onConfirm()}
                 className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
@@ -2737,6 +2895,17 @@ export default function App() {
           onReprintKOT={(kotId) => { showToast(`KOT ${kotId} reprinted`, "info"); }}
           settings={settings}
           currentEmployee={currentEmployee}
+        />
+      )}
+
+      {/* Add-On Modal */}
+      {isAddOnModalOpen && addOnModalProduct && (
+        <AddOnModal
+          product={addOnModalProduct}
+          selectedVariant={addOnModalVariant}
+          currencySymbol={settings.currencySymbol}
+          onConfirm={handleAddOnModalConfirm}
+          onCancel={() => { setIsAddOnModalOpen(false); setAddOnModalProduct(null); setAddOnModalVariant(undefined); }}
         />
       )}
 

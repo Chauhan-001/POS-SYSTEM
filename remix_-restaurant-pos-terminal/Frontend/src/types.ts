@@ -334,6 +334,7 @@ export interface ModuleSettings {
   enableOnlineOrders: boolean;
   enableKitchenDisplay: boolean;
   enableLoyalty: boolean;
+  showImagesInBilling?: boolean;
 }
 
 export interface SystemSettings {
