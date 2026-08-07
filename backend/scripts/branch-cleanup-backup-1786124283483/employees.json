@@ -1,0 +1,62 @@
+[
+  {
+    "_id": "6a75a01aa4e38db95a8e3c07",
+    "username": "mfe_owner",
+    "name": "Kabir Malhotra",
+    "role": "Owner",
+    "pin": "$2b$10$5GfEjP19lD4EgRiT.Xc4o.Xb7Mgb3pydglHp.C7vPIQl3b8mTPfkK",
+    "status": "Active",
+    "restaurantId": "6a75a016d42d685df9b307aa",
+    "branchId": "6a75a016d42d685df9b307ad",
+    "isDeleted": false,
+    "deletedAt": null,
+    "lastLogin": "2026-08-07T12:21:06.977Z",
+    "createdAt": "2026-08-07T09:06:34.137Z",
+    "updatedAt": "2026-08-07T12:21:06.980Z"
+  },
+  {
+    "_id": "6a75a01aa4e38db95a8e3c08",
+    "username": "mfe_manager",
+    "name": "Simran Kaur",
+    "role": "Manager",
+    "pin": "$2b$10$8/EKSCVhDu4ua7zoymjN.eJpOTdQ4yL0PVjn24YYRkiODSuY9iome",
+    "status": "Active",
+    "restaurantId": "6a75a016d42d685df9b307aa",
+    "branchId": "6a75a016d42d685df9b307ad",
+    "isDeleted": false,
+    "deletedAt": null,
+    "lastLogin": "2026-08-07T12:00:07.814Z",
+    "createdAt": "2026-08-07T09:06:34.137Z",
+    "updatedAt": "2026-08-07T12:00:07.814Z"
+  },
+  {
+    "_id": "6a75a01aa4e38db95a8e3c09",
+    "username": "mfe_cashier1",
+    "name": "Ravi Shetty",
+    "role": "Cashier",
+    "pin": "$2b$10$.PJCUk2jXwlVOQY0WmzVk.XXgOoePgmwqUelENRKgX3wYCPMOHBnG",
+    "status": "Active",
+    "restaurantId": "6a75a016d42d685df9b307aa",
+    "branchId": "6a75a016d42d685df9b307ad",
+    "isDeleted": false,
+    "deletedAt": null,
+    "lastLogin": "2026-08-07T12:00:07.943Z",
+    "createdAt": "2026-08-07T09:06:34.137Z",
+    "updatedAt": "2026-08-07T12:00:07.943Z"
+  },
+  {
+    "_id": "6a75a01aa4e38db95a8e3c0a",
+    "username": "mfe_cashier2",
+    "name": "Anita Desai",
+    "role": "Cashier",
+    "pin": "$2b$10$AJuo78jQEU7wbx/RdbVjz.ZvFg.O..bCLuZGyQV.w1HAUlLArMi/6",
+    "status": "Active",
+    "restaurantId": "6a75a016d42d685df9b307aa",
+    "branchId": "6a75a019d42d685df9b307b7",
+    "isDeleted": false,
+    "deletedAt": null,
+    "lastLogin": null,
+    "createdAt": "2026-08-07T09:06:34.137Z",
+    "updatedAt": "2026-08-07T09:06:34.137Z"
+  }
+]

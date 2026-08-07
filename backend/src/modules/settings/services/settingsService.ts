@@ -304,7 +304,20 @@ export class SettingsService {
 
   /** List tenant-scoped settings audit entries (newest first). */
   async listAudit(restaurantId: string, page = 1, limit = 50) {
-    const filter: Record<string, any> = { restaurantId, entityType: 'RestaurantSettings' };
+    // Match every writer that records settings changes: the settings module
+    // itself (writeAudit → 'RestaurantSettings'), the request logger (path-
+    // derived 'settings'), and any legacy lowercase rows ('restaurantsettings').
+    // A single case-sensitive equality on 'RestaurantSettings' silently misses
+    // most real entries, so the Audit Trail panel renders empty.
+    const filter: Record<string, any> = {
+      restaurantId,
+      $or: [
+        { entityType: 'RestaurantSettings' },
+        { entityType: 'restaurantsettings' },
+        { entityType: 'settings' },
+        { action: { $regex: /^SETTINGS_/ } },
+      ],
+    };
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       AuditLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),

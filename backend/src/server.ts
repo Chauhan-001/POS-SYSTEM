@@ -196,7 +196,14 @@ app.use('/api/sessions', sessionsRouter);
 // global apiLimiter so the platform console is never left uncapped.
 // Chained in ONE app.use so the limiter runs exactly once per request (two
 // separate mounts would double-count every /api/admin/reports/* request).
-app.use('/api', adminApiLimiter, adminRouter, adminReportsRouter);
+// CRITICAL: the limiter is only applied to /api/admin/* paths — mounting it
+// on the bare '/api' prefix would count EVERY business request (POS polling,
+// settings sync, etc.) against the admin window and 429 legit traffic when
+// several terminals share one IP (e.g. 127.0.0.1 in dev / NAT in production).
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/admin')) return adminApiLimiter(req, res, next);
+  return next();
+}, adminRouter, adminReportsRouter);
 
 // Health check — public endpoint
 // Not cached because dbConnected must always be fresh per-request

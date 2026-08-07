@@ -97,6 +97,8 @@ interface OrdersConfig {
   products: any[];
   refreshDailyStats: (bill?: Bill) => void;
   showToast: (msg: string, type?: 'success' | 'info' | 'warning') => void;
+  /** Optional confirmation-dialog helper — used when the cart holds items from another active order. */
+  askConfirmation?: (title: string, message: string, onConfirm: () => void) => void;
   setIsKOTOpen: (v: boolean) => void;
   setKotOrder: (order: Order | null) => void;
   setIsKOTPreviewOpen: (v: boolean) => void;
@@ -120,6 +122,7 @@ export function useOrders(config: OrdersConfig) {
     splitDetails, setSplitDetails,
     settings, currentEmployee, products,
     moduleSettings, refreshDailyStats, showToast,
+    askConfirmation,
     setIsKOTOpen, setKotOrder, setIsKOTPreviewOpen,
     setActiveWorkspace,
   } = config;
@@ -128,18 +131,11 @@ export function useOrders(config: OrdersConfig) {
 
   const handleCreateOrder = useCallback((type: Order['type'], tableId?: string) => {
     const orderAlreadyActive = !!activeOrder && activeOrder.status !== 'Paid' && activeOrder.status !== 'Closed' && activeOrder.status !== 'Cancelled';
-    // If there are cart items attached to an ACTIVE order, the user must
-    // pay/hold/clear before starting a new order. But leftover/stale cart
-    // items with no active order (e.g. after payment, navigation, or a
-    // reload) must NOT block the creation of a new table order.
-    if (cartItems.length > 0 && orderAlreadyActive) {
-      showToast('Current cart has items. Pay, hold, or clear before creating new order.', 'warning');
-      return;
-    }
-    // Clear any stale leftover cart items so the new order starts fresh.
-    if (cartItems.length > 0) {
-      setCartItems([]);
-    }
+
+    // Shared creation routine — invoked directly when the cart is free, or
+    // from the confirmation dialog when the user opts to discard the current
+    // cart (which belongs to a different active order/table) and start fresh.
+    const createOrderNow = (): Order => {
     const orderNumber = getNextOrderNumber();
     const now = new Date().toISOString();
     const orderId = `order_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -206,7 +202,35 @@ export function useOrders(config: OrdersConfig) {
     setActiveWorkspace('Billing');
     showToast(`Order #${orderNumber} created (${type})`, 'success');
     return newOrder;
-  }, [orders, tables, currentEmployee, setOrders, setActiveOrder, setTables, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails]);
+    };
+
+    // Guard: cart items tied to an ACTIVE order must not be silently dropped.
+    // Ask the user first — items stay saved on the existing order, so
+    // confirming just switches to a fresh, empty cart for the new order.
+    if (cartItems.length > 0 && orderAlreadyActive) {
+      if (askConfirmation) {
+        const itemCount = cartItems.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0);
+        const tableNum = activeOrder?.tableNumber ?? (activeOrder?.tableId ? tables.find(t => t.id === activeOrder.tableId || t.orderId === activeOrder.id)?.number : undefined);
+        const sourceLabel = tableNum != null ? `Table #${tableNum}` : 'the current order';
+        const targetLabel = tableId
+          ? `Table #${tables.find(t => t.id === tableId)?.number ?? tableId}`
+          : 'a new order';
+        askConfirmation(
+          'Start a new order?',
+          `The current cart has ${itemCount} item(s) from ${sourceLabel}. Start ${targetLabel} with an empty cart? Items remain saved on the current order.`,
+          () => createOrderNow()
+        );
+      } else {
+        showToast('Current cart has items. Pay, hold, or clear before creating new order.', 'warning');
+      }
+      return null;
+    }
+    // Leftover/stale cart items with no active order must NOT block — clear them.
+    if (cartItems.length > 0) {
+      setCartItems([]);
+    }
+    return createOrderNow();
+  }, [orders, tables, currentEmployee, setOrders, setActiveOrder, setTables, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation]);
 
   const handleOpenOrder = useCallback((order: Order) => {
     const { cartItems: rebuiltCartItems, activeOrder: normalizedOrder } = buildOrderOpenState(order);
@@ -217,16 +241,10 @@ export function useOrders(config: OrdersConfig) {
   }, [setActiveOrder, setCartItems, setActiveWorkspace, showToast]);
 
   const handleCreateTakeawayOrder = useCallback(() => {
-    // Same stale-cart handling as handleCreateOrder: only block if items
-    // belong to an active order. Otherwise clear leftovers and proceed.
     const orderAlreadyActive = !!activeOrder && activeOrder.status !== 'Paid' && activeOrder.status !== 'Closed' && activeOrder.status !== 'Cancelled';
-    if (cartItems.length > 0 && orderAlreadyActive) {
-      showToast('Current cart has items. Pay, hold, or clear before creating new order.', 'warning');
-      return;
-    }
-    if (cartItems.length > 0) {
-      setCartItems([]);
-    }
+
+    // Shared creation routine — same pattern as handleCreateOrder.
+    const createTakeawayNow = (): Order => {
     const orderNumber = getNextOrderNumber();
     const now = new Date().toISOString();
     const newOrder: Order = {
@@ -294,7 +312,30 @@ export function useOrders(config: OrdersConfig) {
     setActiveWorkspace('Billing');
     showToast(`Takeaway Order #${orderNumber} created`, 'success');
     return newOrder;
-  }, [orders, currentEmployee, setOrders, setActiveOrder, setTakeawayOrders, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails]);
+    };
+
+    // Guard: same as handleCreateOrder — confirm before discarding active cart.
+    if (cartItems.length > 0 && orderAlreadyActive) {
+      if (askConfirmation) {
+        const itemCount = cartItems.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0);
+        const tableNum = activeOrder?.tableNumber ?? (activeOrder?.tableId ? tables.find(t => t.id === activeOrder.tableId || t.orderId === activeOrder.id)?.number : undefined);
+        const sourceLabel = tableNum != null ? `Table #${tableNum}` : 'the current order';
+        askConfirmation(
+          'Start a takeaway order?',
+          `The current cart has ${itemCount} item(s) from ${sourceLabel}. Start a takeaway order with an empty cart? Items remain saved on the current order.`,
+          () => createTakeawayNow()
+        );
+      } else {
+        showToast('Current cart has items. Pay, hold, or clear before creating new order.', 'warning');
+      }
+      return null;
+    }
+    // Leftover/stale cart items with no active order must NOT block — clear them.
+    if (cartItems.length > 0) {
+      setCartItems([]);
+    }
+    return createTakeawayNow();
+  }, [orders, currentEmployee, setOrders, setActiveOrder, setTakeawayOrders, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation]);
 
   const handleAddTable = useCallback((table: Omit<TableInfo, 'id'>) => {
     const newTable: TableInfo = { ...table, id: `table_${Date.now()}_${Math.random().toString(36).substring(2, 9)}` };

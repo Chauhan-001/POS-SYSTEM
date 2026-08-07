@@ -664,16 +664,6 @@ export interface SystemSettings {
     happyHours?: Array<{ id: string; label: string; start: string; end: string; discountPct: number; daysOfWeek: number[] }>;
     allowStacking?: boolean;
   };
-  // Receipt template configuration
-  receiptTemplate?: {
-    header?: string;
-    footer?: string;
-    watermark?: string;
-    showGstin?: boolean;
-    showFssai?: boolean;
-    fssai?: string;
-    customFields?: Array<{ id: string; label: string; value: string }>;
-  };
   // Theme system
   theme?: {
     mode: 'dark' | 'light' | 'system';
@@ -705,13 +695,6 @@ export interface SystemSettings {
     pinPolicy?: { minLength?: number; requireNumbers?: boolean };
     failedLoginLockThreshold?: number;
     twoFactorEnabled?: boolean;
-  };
-  // AI configuration (restaurant-level overrides)
-  ai?: {
-    enabled?: boolean;
-    dailyLimit?: number;
-    model?: string;
-    fallbackModel?: string;
   };
   // Integrations (secrets stored encrypted server-side)
   integrations?: {

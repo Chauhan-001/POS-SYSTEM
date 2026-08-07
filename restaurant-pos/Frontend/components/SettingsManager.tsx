@@ -18,9 +18,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RotateCcw, Printer, Trash2, Plus, Info, FileText, CheckCircle,
-  Utensils, User, Check, Save, X, Upload, QrCode, Layers, Shield, Brain, Cloud,
+  Utensils, User, Check, Save, X, Upload, QrCode, Layers, Shield, Cloud,
   Moon, Sun, Monitor, Keyboard, Bell, Lock, Database, Plug, History, RefreshCw,
-  AlertTriangle, CreditCard, Palette, Settings2, ScrollText, TestTube2,
+  AlertTriangle, CreditCard, Palette, Settings2, TestTube2,
   Image as ImageIcon, Award, Coins, Clock, ListFilter, SlidersHorizontal,
   ArrowDownUp, BadgePercent, ReceiptText, Combine,
 } from 'lucide-react';
@@ -46,9 +46,9 @@ interface SettingsManagerProps {
 }
 
 type TabId =
-  | 'billing' | 'kitchen' | 'modules' | 'roles' | 'printers' | 'receipt'
+  | 'billing' | 'kitchen' | 'modules' | 'roles' | 'printers'
   | 'theme' | 'shortcuts' | 'notifications' | 'security' | 'backup'
-  | 'ai' | 'integrations' | 'history' | 'subscription';
+  | 'integrations' | 'history' | 'subscription';
 
 const DEFAULT_MODULES: ModuleSettings = {
   enableTableService: true, enableWaiterManagement: true, enableReservations: false,
@@ -151,14 +151,12 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
   const [rolePermissions, setRolePermissions] = useState<RolePermissions>({ ...DEFAULT_ROLE_PERMISSIONS, ...(settings.rolePermissions || {}) });
 
   // ─── Phase 1.9 sections ──
-  const [receiptTemplate, setReceiptTemplate] = useState<NonNullable<SystemSettings['receiptTemplate']>>(settings.receiptTemplate || { header: '', footer: '', watermark: '', showGstin: true, showFssai: true, fssai: '', customFields: [] });
   const [theme, setTheme] = useState<NonNullable<SystemSettings['theme']>>(settings.theme || { mode: 'system', brandColor: settings.brandingColor || '#004ac6', accentColor: '#10b981', density: 'comfortable', borderRadius: 12 });
   const [shortcuts, setShortcuts] = useState<Record<string, string>>({ ...DEFAULT_SHORTCUTS, ...(settings.shortcuts || {}) });
   const [newShortcutAction, setNewShortcutAction] = useState('');
   const [newShortcutKey, setNewShortcutKey] = useState('');
   const [notifications, setNotifications] = useState<NonNullable<SystemSettings['notifications']>>(settings.notifications || { lowStock: true, orders: true, sales: false, backups: true, printerErrors: true, syncFailures: true, employeeAlerts: false, channels: ['desktop'] });
   const [security, setSecurity] = useState<NonNullable<SystemSettings['security']>>(settings.security || { passwordMinLength: 8, sessionTimeoutMinutes: 60, autoLogout: true, failedLoginLockThreshold: 5, twoFactorEnabled: false });
-  const [ai, setAi] = useState<NonNullable<SystemSettings['ai']>>(settings.ai || { enabled: true, dailyLimit: 100, model: 'llama-3.3-70b-versatile' });
   const [integrations, setIntegrations] = useState<NonNullable<SystemSettings['integrations']>>(settings.integrations || { webhook: { enabled: false, url: '', secret: '' } });
   const [discount, setDiscount] = useState<NonNullable<SystemSettings['discount']>>(settings.discount || { maxDiscountPct: 20, managerApprovalAbove: 10, ownerApprovalAbove: 25, reasons: ['Festival offer', 'Customer complaint', 'Complimentary'], allowStacking: false });
 
@@ -243,12 +241,10 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
       receiptFooterImageUrl: receiptFooterImageUrl.trim(),
       moduleSettings,
       rolePermissions,
-      receiptTemplate,
       theme,
       shortcuts,
       notifications,
       security,
-      ai,
       integrations,
       discount,
     };
@@ -293,7 +289,6 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
     setShortcuts({ ...DEFAULT_SHORTCUTS, ...(settings.shortcuts || {}) });
     setNotifications(settings.notifications || { channels: ['desktop'] });
     setSecurity(settings.security || { passwordMinLength: 8, sessionTimeoutMinutes: 60, autoLogout: true, failedLoginLockThreshold: 5, twoFactorEnabled: false });
-    setAi(settings.ai || { enabled: true, dailyLimit: 100, model: 'llama-3.3-70b-versatile' });
     setIntegrations(settings.integrations || { webhook: { enabled: false, url: '', secret: '' } });
     setRoutingRules(settings.printerRoutingRules ?? []);
     showToast('Changes discarded');
@@ -592,13 +587,11 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
     { id: 'modules', label: 'MODULES', icon: Layers },
     { id: 'roles', label: 'ROLE PERMISSIONS', icon: Shield },
     { id: 'printers', label: 'PRINTERS', icon: Printer },
-    { id: 'receipt', label: 'RECEIPT TEMPLATE', icon: ScrollText },
     { id: 'theme', label: 'THEME', icon: Palette },
     { id: 'shortcuts', label: 'SHORTCUTS', icon: Keyboard },
     { id: 'notifications', label: 'NOTIFICATIONS', icon: Bell },
     { id: 'security', label: 'SECURITY', icon: Lock },
     { id: 'backup', label: 'BACKUP & RESTORE', icon: Database },
-    { id: 'ai', label: 'AI SETTINGS', icon: Brain },
     { id: 'integrations', label: 'INTEGRATIONS', icon: Plug },
     { id: 'history', label: 'HISTORY & AUDIT', icon: History },
     { id: 'subscription', label: 'SUBSCRIPTION', icon: CreditCard },
@@ -1026,49 +1019,6 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
             </div>
           )}
 
-          {/* ── RECEIPT TEMPLATE ── */}
-          {activeTab === 'receipt' && (
-            <div className="max-w-3xl bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs space-y-4">
-              <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">
-                <div className="w-2.5 h-2.5 rounded-full bg-[#004ac6]" />
-                <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Receipt Template</h3>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div><label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Header Line</label><input type="text" value={receiptTemplate.header || ''} onChange={(e) => setReceiptTemplate((p) => ({ ...p, header: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold" placeholder="Welcome message shown at top" /></div>
-                <div><label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Watermark</label><input type="text" value={receiptTemplate.watermark || ''} onChange={(e) => setReceiptTemplate((p) => ({ ...p, watermark: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold" placeholder="e.g. COPY" /></div>
-                <div><label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">FSSAI License No</label><input type="text" value={receiptTemplate.fssai || ''} onChange={(e) => setReceiptTemplate((p) => ({ ...p, fssai: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold uppercase" /></div>
-                <div><label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Footer</label><input type="text" value={receiptTemplate.footer || ''} onChange={(e) => setReceiptTemplate((p) => ({ ...p, footer: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold" placeholder="Thank you note" /></div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-gray-400 mb-2">Show on Receipt</label>
-                <div className="flex flex-wrap gap-4">
-                  {[
-                    { key: 'showGstin', label: 'GSTIN' },
-                    { key: 'showFssai', label: 'FSSAI' },
-                  ].map((t) => (
-                    <label key={t.key} className="flex items-center gap-2 cursor-pointer">
-                      <button type="button" onClick={() => setReceiptTemplate((p) => ({ ...p, [t.key]: !p[t.key] }))} className={`w-11 h-6 rounded-full transition-colors relative ${p0(receiptTemplate, t.key) ? 'bg-[#004ac6]' : 'bg-gray-200'}`}>
-                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${p0(receiptTemplate, t.key) ? 'left-6' : 'left-1'}`} />
-                      </button>
-                      <span className="text-[10px] font-bold text-gray-700">{t.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center justify-between py-2 border-t border-gray-50">
-                <div><p className="text-xs font-bold text-gray-900">Custom Footer Fields</p><p className="text-[9px] text-gray-400">Extra key/value lines on the receipt</p></div>
-                <button type="button" onClick={() => setReceiptTemplate((p) => ({ ...p, customFields: [...(p.customFields || []), { id: `cf_${Date.now()}`, label: '', value: '' }] }))} className="px-3 py-1.5 rounded-lg border border-dashed border-[#c3c6d7] text-[#004ac6] text-[10px] font-bold cursor-pointer"><Plus className="w-3 h-3 inline mr-1" />Add Field</button>
-              </div>
-              {(receiptTemplate.customFields || []).map((f) => (
-                <div key={f.id} className="flex items-center gap-2">
-                  <input type="text" value={f.label} onChange={(e) => setReceiptTemplate((p) => ({ ...p, customFields: (p.customFields || []).map((x) => (x.id === f.id ? { ...x, label: e.target.value } : x)) }))} placeholder="Label" className="flex-1 px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold" />
-                  <input type="text" value={f.value} onChange={(e) => setReceiptTemplate((p) => ({ ...p, customFields: (p.customFields || []).map((x) => (x.id === f.id ? { ...x, value: e.target.value } : x)) }))} placeholder="Value" className="flex-1 px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold" />
-                  <button type="button" onClick={() => setReceiptTemplate((p) => ({ ...p, customFields: (p.customFields || []).filter((x) => x.id !== f.id) }))} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* ── THEME ── */}
           {activeTab === 'theme' && (
             <div className="max-w-3xl bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs space-y-4">
@@ -1234,34 +1184,6 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
                 </label>
               </div>
               <p className="text-[9px] text-gray-400">Backups include restaurant settings, receipt configuration, printer routing, modules and roles. Server data (bills, products, customers) is always available from the backend — this export covers POS configuration for offline/device migration.</p>
-            </div>
-          )}
-
-          {/* ── AI ── */}
-          {activeTab === 'ai' && (
-            <div className="max-w-3xl bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs space-y-4">
-              <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">
-                <div className="w-2.5 h-2.5 rounded-full bg-[#004ac6]" />
-                <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">AI Settings</h3>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <div><p className="text-xs font-bold text-gray-900">Enable AI Features</p><p className="text-[9px] text-gray-400">AI summaries, inventory health, purchase recommendations</p></div>
-                <button type="button" onClick={() => setAi((p) => ({ ...p, enabled: !p.enabled }))} className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${ai.enabled ? 'bg-[#004ac6]' : 'bg-gray-200'}`}>
-                  <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${ai.enabled ? 'left-6' : 'left-1'}`} />
-                </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="block text-[10px] font-bold uppercase text-gray-400 mb-1.5">Daily Request Limit</label><input type="number" min={1} value={ai.dailyLimit ?? 100} onChange={(e) => setAi((p) => ({ ...p, dailyLimit: Number(e.target.value) }))} className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold" /></div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1.5">Model</label>
-                  <select value={ai.model || 'llama-3.3-70b-versatile'} onChange={(e) => setAi((p) => ({ ...p, model: e.target.value }))} className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold bg-white">
-                    <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                    <option value="gpt-4o-mini">GPT-4o mini</option>
-                  </select>
-                </div>
-              </div>
-              <p className="text-[9px] text-gray-400">Usage is logged server-side (AIUsageLog) and counted against the subscription's AI quota. Fallback models are handled automatically by the AI provider layer.</p>
             </div>
           )}
 

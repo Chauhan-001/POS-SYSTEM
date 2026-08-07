@@ -24,9 +24,16 @@ export interface TableCtx extends ReconcileCtx {}
 export class TableService {
   /**
    * List tables with optional branch/section/status/floor filtering.
+   *
+   * Tenant isolation: when a restaurantId is supplied (from the JWT), only
+   * tables owned by that restaurant are returned. Rows with a null
+   * restaurantId are orphaned seed/legacy data and must never leak into a
+   * tenant's floor plan — that previously surfaced every duplicate table in
+   * the database to every restaurant (e.g. tables 1-16 twice).
    */
-  async list(params: { branchId?: string; section?: string; status?: string; floorId?: string } = {}) {
+  async list(params: { branchId?: string; section?: string; status?: string; floorId?: string; restaurantId?: string } = {}) {
     const query: any = {};
+    if (params.restaurantId) query.restaurantId = params.restaurantId;
     if (params.branchId) query.branchId = params.branchId;
     if (params.section) query.section = params.section;
     if (params.status) query.status = params.status;
@@ -292,7 +299,9 @@ export class TableService {
   async occupancyStats(params: { branchId?: string; restaurantId?: string; date?: string }, ctx: TableCtx = {}) {
     const query: any = {};
     if (params.branchId) query.branchId = params.branchId;
-    if (ctx.restaurantId) query.restaurantId = { $in: [ctx.restaurantId, null] };
+    // Strict tenant scoping — orphaned rows with a null restaurantId must not
+    // inflate occupancy stats for any tenant (consistent with list()).
+    if (ctx.restaurantId) query.restaurantId = ctx.restaurantId;
 
     const [all, occupied, reserved, cleaning, disabled, activeOrders] = await Promise.all([
       tableRepo.findAll(query, { sort: { number: 1 } }),
@@ -363,11 +372,11 @@ export class TableService {
           } as any);
           results.updated++;
         } else {
-          await tableRepo.create({ ...t, branchId } as any);
+          await tableRepo.create({ ...t, branchId, restaurantId: ctx.restaurantId || null } as any);
           results.created++;
         }
       } else {
-        await tableRepo.create({ ...t, branchId } as any);
+        await tableRepo.create({ ...t, branchId, restaurantId: ctx.restaurantId || null } as any);
         results.created++;
       }
     }

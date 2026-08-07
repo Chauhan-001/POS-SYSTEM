@@ -399,6 +399,14 @@ export default function App() {
     showToast,
   });
 
+  // Ask confirmation helper — must be defined BEFORE useOrders
+  const askConfirmation = useCallback((title: string, message: string, onConfirm: () => void) => {
+    pos.setConfirmState({
+      isOpen: true, title, message,
+      onConfirm: () => { onConfirm(); pos.setConfirmState(prev => ({ ...prev, isOpen: false })); },
+    });
+  }, [pos.setConfirmState]);
+
   // ============ ORDERS HOOK ============
   const orderMgmt = useOrders({
     orders: pos.orders,
@@ -433,6 +441,7 @@ export default function App() {
     products: pos.products,
     refreshDailyStats: pos.refreshDailyStats,
     showToast,
+    askConfirmation,
     setIsKOTOpen: pos.setIsKOTOpen,
     setKotOrder: pos.setKotOrder,
     setIsKOTPreviewOpen: pos.setIsKOTPreviewOpen,
@@ -591,17 +600,10 @@ export default function App() {
     quickFireRef: pos.quickFireRef,
   });
 
-  // Ask confirmation helper
-  const askConfirmation = useCallback((title: string, message: string, onConfirm: () => void) => {
-    pos.setConfirmState({
-      isOpen: true, title, message,
-      onConfirm: () => { onConfirm(); pos.setConfirmState(prev => ({ ...prev, isOpen: false })); },
-    });
-  }, [pos.setConfirmState]);
 
-  // ─── Refund / Void submission handler ────────────────────────
   // Calls the backend (manager PIN verified server-side), then updates the
   // local bills ledger so the UI reflects the refunded/voided state.
+  // ─── Refund / Void submission handler ────────────────────────
   const handleBillActionSubmit = useCallback(async (payload: { items?: any[]; reason: string; managerPin: string }) => {
     if (!billAction) return;
     const { mode, bill } = billAction;

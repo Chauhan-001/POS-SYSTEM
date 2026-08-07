@@ -97,12 +97,17 @@ const CK = {
 } as const;
 
 /**
- * Merge backend tables into the local floor plan instead of replacing it.
+ * Merge backend tables into the local floor plan.
  * The backend Table model doesn't store occupancy (orderSince/orderId/waiter/
- * guest), so replacing wholesale would drop occupancy and wipe layouts whenever
- * the server returns an empty collection. Backend rows drive identity/layout;
- * local rows keep the occupancy fields the server can't model, and an occupied
- * table is never auto-freed by an empty backend status.
+ * guest), so we never replace wholesale: for rows the server returns, local
+ * occupancy/layout fields are preserved. Backend rows drive identity/layout.
+ *
+ * When the server returns a NON-EMPTY list it is treated as authoritative —
+ * local-only rows (deleted tables, duplicates from other restaurants, or
+ * orphaned seed rows cached from an unscoped fetch) are dropped so the floor
+ * plan can't accumulate ghosts. When the server returns an empty list the
+ * local floor plan is kept (offline-first seeding; an occupied table is never
+ * auto-freed by an empty backend status).
  */
 function mergeTablesById(local: TableInfo[], incoming: any[]): TableInfo[] {
   const localById = new Map(local.map((t: TableInfo) => [t.id, t]));
@@ -118,269 +123,304 @@ function mergeTablesById(local: TableInfo[], incoming: any[]): TableInfo[] {
       branchId: bt.branchId ?? localT.branchId,
     };
   });
+  if (incoming.length > 0) {
+    // Server has the authoritative table list — drop stale local-only rows.
+    return merged;
+  }
   const mergedIds = new Set(merged.map((t) => t.id));
   for (const t of local) if (!mergedIds.has(t.id)) merged.push(t);
   return merged;
 }
 
 /**
- * Merge backend takeaway orders into local state. Local rows win on id match;
- * rows with the same orderNumber but a different id (e.g. the local temp id
- * used before the server _id comes back) are treated as the same order and not
- * duplicated.
+ * Merge backend takeaway orders into local state. The backend list is
+ * authoritative on a successful fetch: local-only rows are dropped while the
+ * local elapsedTime is preserved on matching rows (keyed by id, then
+ * orderNumber so a local temp id and its server _id aren't duplicated).
  */
 function mergeTakeawayById(local: TakeawayOrder[], incoming: TakeawayOrder[]): TakeawayOrder[] {
-  const out = [...local];
-  const byId = new Map(out.map((t) => [t.id, t]));
-  const byNumber = new Set(out.map((t) => t.orderNumber));
+  const localById = new Map(local.map((t) => [t.id, t]));
+  const localByNumber = new Map(local.map((t) => [t.orderNumber, t]));
+  const out: TakeawayOrder[] = [];
+  const seenIds = new Set<string>();
+  const seenNumbers = new Set<number>();
   for (const inc of incoming) {
-    const existing = byId.get(inc.id);
-    if (existing) {
-      const idx = out.indexOf(existing);
-      out[idx] = { ...inc, elapsedTime: existing.elapsedTime };
-      continue;
-    }
-    if (byNumber.has(inc.orderNumber)) continue;
-    out.push(inc);
-    byId.set(inc.id, inc);
-    byNumber.add(inc.orderNumber);
+    if (seenIds.has(inc.id) || seenNumbers.has(inc.orderNumber)) continue;
+    const localT = localById.get(inc.id) || localByNumber.get(inc.orderNumber);
+    out.push(localT ? { ...inc, elapsedTime: localT.elapsedTime } : inc);
+    seenIds.add(inc.id);
+    seenNumbers.add(inc.orderNumber);
   }
   return out;
 }
 
 /**
- * Merge backend menu products into the local catalog. Local rows are the
- * source of truth; backend rows are added only when they match neither an
- * existing id nor an existing (name+category) key, so an empty backend
- * collection can't wipe the seeded menu and synced products aren't duplicated.
+ * Merge backend menu products into the local catalog. The backend list is
+ * authoritative on a successful fetch: local-only rows (ghosts from a prior
+ * sync, products deleted server-side) are dropped, and local-only fields on
+ * matching rows are preserved. Rows are keyed by id, then (name+category).
  */
 function mergeProductsById(local: Product[], incoming: any[]): Product[] {
   const nameKey = (name?: string, category?: string) =>
     `${(name || '').toLowerCase()}|${(category || '').toLowerCase()}`;
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((p) => p.id));
-  const mergedNameKeys = new Set(merged.map((p) => nameKey(p.name, p.category)));
+  const localById = new Map(local.filter((p) => p.id).map((p) => [p.id, p]));
+  const localByName = new Map(local.map((p) => [nameKey(p.name, p.category), p]));
+  const merged: Product[] = [];
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
   for (const bp of incoming) {
     const id = bp._id || bp.id;
-    if (id && mergedIds.has(id)) continue;
     const key = nameKey(bp.name, bp.category);
-    if (mergedNameKeys.has(key)) continue;
+    if ((id && seenIds.has(id)) || seenNames.has(key)) continue;
+    const localP = (id && localById.get(id)) || localByName.get(key);
     merged.push({
+      ...(localP || {}),
       id: id || `p_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      code: bp.code ?? '',
-      name: bp.name,
-      price: bp.price ?? 0,
-      category: bp.category,
-      image: bp.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80',
-      gstPercent: bp.gstPercent ?? 0,
-      availability: bp.availability ?? true,
-      favorite: bp.favorite,
-      variants: bp.variants,
-      branchId: bp.branchId,
+      code: bp.code ?? localP?.code ?? '',
+      name: bp.name ?? localP?.name ?? '',
+      price: bp.price ?? localP?.price ?? 0,
+      category: bp.category ?? localP?.category,
+      image: bp.image || localP?.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80',
+      gstPercent: bp.gstPercent ?? localP?.gstPercent ?? 0,
+      availability: bp.availability ?? localP?.availability ?? true,
+      favorite: bp.favorite ?? localP?.favorite,
+      variants: bp.variants ?? localP?.variants,
+      branchId: bp.branchId ?? localP?.branchId,
     });
-    mergedIds.add(id);
-    mergedNameKeys.add(key);
+    if (id) seenIds.add(id);
+    seenNames.add(key);
   }
   return merged;
 }
 
-/**
- * Merge backend customer profiles into local state. Customers are keyed by
- * phone (the loyalty identifier the app uses throughout); local rows win on a
- * phone match and backend rows are appended only for new phones.
- */
-function mergeCustomersById(local: Customer[], incoming: any[]): Customer[] {
-  const merged = [...local];
-  const mergedPhones = new Set(merged.map((c) => c.phone));
-  for (const bc of incoming) {
-    const phone = String(bc.phone || '').trim();
-    if (!phone || mergedPhones.has(phone)) continue;
-    merged.push({
-      phone,
-      name: bc.name || 'Guest',
-      email: bc.email,
-      isNew: false,
-      visits: bc.visits ?? 0,
-      points: bc.points ?? 0,
-      birthday: bc.birthday,
-      lastVisit: bc.lastVisit || 'Never',
-      notes: bc.notes,
-      isBlocked: bc.isBlocked,
-      purchaseHistory: [],
-    });
-    mergedPhones.add(phone);
-  }
-  return merged;
-}
 
 /**
- * Merge backend staff into the local employee list. Local rows are the source
- * of truth (they hold the PIN, which the backend never returns); backend rows
- * are appended only for new ids/usernames. An empty backend collection can't
- * wipe the staff roster.
+ * Merge backend staff into the local employee list. The backend list is
+ * authoritative on a successful fetch: local-only rows are dropped while the
+ * local PIN (never returned by the backend) is preserved on matching rows
+ * (keyed by id, then username).
  */
 function mergeEmployeesById(local: Employee[], incoming: any[]): Employee[] {
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((e) => e.id));
-  const mergedUsernames = new Set(merged.map((e) => e.username.toLowerCase()));
+  const localById = new Map(local.filter((e) => e.id).map((e) => [e.id, e]));
+  const localByUsername = new Map(local.map((e) => [e.username.toLowerCase(), e]));
+  const merged: Employee[] = [];
+  const seenIds = new Set<string>();
+  const seenUsernames = new Set<string>();
   for (const be of incoming) {
     const id = be._id || be.id;
-    if (id && mergedIds.has(id)) continue;
     const username = String(be.username || '');
-    if (username && mergedUsernames.has(username.toLowerCase())) continue;
+    const ukey = username.toLowerCase();
+    if ((id && seenIds.has(id)) || (username && seenUsernames.has(ukey))) continue;
+    const localE = (id && localById.get(id)) || localByUsername.get(ukey);
     merged.push({
+      ...(localE || {}),
       id: id || `emp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       username,
-      name: be.name || 'Staff',
-      role: (be.role as Employee['role']) || 'Cashier',
-      pin: '',
-      status: be.status || 'Active',
-      branchId: be.branchId,
-      lastLogin: be.lastLogin,
+      name: be.name || localE?.name || 'Staff',
+      role: (be.role as Employee['role']) || localE?.role || 'Cashier',
+      pin: localE?.pin || '',
+      status: be.status || localE?.status || 'Active',
+      branchId: be.branchId ?? localE?.branchId,
+      lastLogin: be.lastLogin ?? localE?.lastLogin,
     });
-    mergedIds.add(id);
-    mergedUsernames.add(username.toLowerCase());
+    if (id) seenIds.add(id);
+    if (username) seenUsernames.add(ukey);
   }
   return merged;
 }
 
 /**
- * Merge backend branches into the local list. Local rows are the source of
- * truth; backend rows are appended only for new ids/names.
+ * Merge backend branches into the local list. The backend list is
+ * authoritative on a successful fetch: local-only rows (deleted branches,
+ * ghosts from a prior sync) are dropped while local-only fields on matching
+ * rows are preserved (keyed by id, then name).
  */
 function mergeBranchesById(local: Branch[], incoming: any[]): Branch[] {
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((b) => b.id));
-  const mergedNames = new Set(merged.map((b) => b.name.toLowerCase()));
+  const localById = new Map(local.filter((b) => b.id).map((b) => [b.id, b]));
+  const localByName = new Map(local.map((b) => [b.name.toLowerCase(), b]));
+  const merged: Branch[] = [];
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
   for (const bb of incoming) {
     const id = bb._id || bb.id;
-    if (id && mergedIds.has(id)) continue;
     const name = String(bb.name || '');
-    if (name && mergedNames.has(name.toLowerCase())) continue;
+    if ((id && seenIds.has(id)) || (name && seenNames.has(name.toLowerCase()))) continue;
+    const localB = (id && localById.get(id)) || localByName.get(name.toLowerCase());
     merged.push({
+      ...(localB || {}),
       id: id || `branch_${Date.now()}`,
       name,
-      address: bb.address,
-      phone: bb.phone,
-      isHeadBranch: bb.isHeadBranch ?? false,
-      isActive: bb.isActive ?? true,
-      createdAt: bb.createdAt ? String(bb.createdAt) : new Date().toISOString(),
+      address: bb.address ?? localB?.address,
+      phone: bb.phone ?? localB?.phone,
+      isHeadBranch: bb.isHeadBranch ?? localB?.isHeadBranch ?? false,
+      isActive: bb.isActive ?? localB?.isActive ?? true,
+      createdAt: bb.createdAt ? String(bb.createdAt) : (localB?.createdAt || new Date().toISOString()),
     });
-    mergedIds.add(id);
-    mergedNames.add(name.toLowerCase());
+    if (id) seenIds.add(id);
+    if (name) seenNames.add(name.toLowerCase());
   }
   return merged;
 }
 
 /**
- * Merge backend expense records into local state. Local rows are the source of
- * truth; backend rows are appended only for new ids.
+ * Merge backend expense records into local state. The backend list is
+ * authoritative on a successful fetch: local-only rows are dropped while
+ * local-only fields on matching rows are preserved (keyed by id).
  */
 function mergeExpensesById(local: ExpenseEntry[], incoming: any[]): ExpenseEntry[] {
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((e) => e.id));
+  const localById = new Map(local.filter((e) => e.id).map((e) => [e.id, e]));
+  const merged: ExpenseEntry[] = [];
+  const seenIds = new Set<string>();
   for (const be of incoming) {
     const id = be._id || be.id;
-    if (id && mergedIds.has(id)) continue;
+    if (id && seenIds.has(id)) continue;
+    const localE = id ? localById.get(id) : undefined;
     merged.push({
+      ...(localE || {}),
       id: id || `exp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      date: be.date || (be.createdAt ? String(be.createdAt).slice(0, 10) : ''),
-      category: be.category || 'Miscellaneous',
-      description: be.description || '',
-      amount: be.amount ?? 0,
-      paymentMethod: be.paymentMethod || 'Cash',
-      vendor: be.vendor,
-      notes: be.notes,
-      isRecurring: be.isRecurring,
-      branchId: be.branchId,
-      createdAt: be.createdAt ? String(be.createdAt) : new Date().toISOString(),
-      createdBy: be.createdBy,
+      date: be.date || localE?.date || (be.createdAt ? String(be.createdAt).slice(0, 10) : ''),
+      category: be.category || localE?.category || 'Miscellaneous',
+      description: be.description || localE?.description || '',
+      amount: be.amount ?? localE?.amount ?? 0,
+      paymentMethod: be.paymentMethod || localE?.paymentMethod || 'Cash',
+      vendor: be.vendor ?? localE?.vendor,
+      notes: be.notes ?? localE?.notes,
+      isRecurring: be.isRecurring ?? localE?.isRecurring,
+      branchId: be.branchId ?? localE?.branchId,
+      createdAt: be.createdAt ? String(be.createdAt) : (localE?.createdAt || new Date().toISOString()),
+      createdBy: be.createdBy ?? localE?.createdBy,
     });
-    mergedIds.add(id);
+    if (id) seenIds.add(id);
   }
   return merged;
 }
 
 /**
- * Merge backend reservations into local state. Local rows are the source of
- * truth; backend rows are appended only for new ids.
+ * Merge backend reservations into local state. The backend list is
+ * authoritative on a successful fetch: local-only rows are dropped while
+ * local-only fields on matching rows are preserved (keyed by id).
  */
 function mergeReservationsById(local: Reservation[], incoming: any[]): Reservation[] {
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((r) => r.id));
+  const localById = new Map(local.filter((r) => r.id).map((r) => [r.id, r]));
+  const merged: Reservation[] = [];
+  const seenIds = new Set<string>();
   for (const br of incoming) {
     const id = br._id || br.id;
-    if (id && mergedIds.has(id)) continue;
+    if (id && seenIds.has(id)) continue;
+    const localR = id ? localById.get(id) : undefined;
     merged.push({
+      ...(localR || {}),
       id: id || `res_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      customerName: br.customerName || 'Guest',
-      customerPhone: String(br.customerPhone || ''),
-      guestCount: br.guestCount ?? 1,
-      date: br.date || '',
-      time: br.time || '00:00',
-      tableId: br.tableId,
-      tableNumber: br.tableNumber,
-      status: br.status || 'Confirmed',
-      branchId: br.branchId,
-      notes: br.notes,
-      occasion: br.occasion,
-      createdAt: br.createdAt ? String(br.createdAt) : new Date().toISOString(),
-      createdBy: br.createdBy,
+      customerName: br.customerName || localR?.customerName || 'Guest',
+      customerPhone: String(br.customerPhone || localR?.customerPhone || ''),
+      guestCount: br.guestCount ?? localR?.guestCount ?? 1,
+      date: br.date || localR?.date || '',
+      time: br.time || localR?.time || '00:00',
+      tableId: br.tableId ?? localR?.tableId,
+      tableNumber: br.tableNumber ?? localR?.tableNumber,
+      status: br.status || localR?.status || 'Confirmed',
+      branchId: br.branchId ?? localR?.branchId,
+      notes: br.notes ?? localR?.notes,
+      occasion: br.occasion ?? localR?.occasion,
+      createdAt: br.createdAt ? String(br.createdAt) : (localR?.createdAt || new Date().toISOString()),
+      createdBy: br.createdBy ?? localR?.createdBy,
     });
-    mergedIds.add(id);
+    if (id) seenIds.add(id);
   }
   return merged;
 }
 
 /**
- * Merge backend reward tiers into the local catalog. Local rows are the
- * source of truth (they hold UI-only fields); backend rows are appended only
- * for new ids so a small/empty backend collection can't wipe the catalog.
+ * Merge backend reward tiers into the local catalog. The backend list is
+ * authoritative on a successful fetch: local-only rows are dropped while
+ * local-only UI fields on matching rows are preserved (keyed by id).
  */
 function mergeRewardsById(local: LoyaltyReward[], incoming: any[]): LoyaltyReward[] {
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((r) => r.id));
+  const localById = new Map(local.filter((r) => r.id).map((r) => [r.id, r]));
+  const merged: LoyaltyReward[] = [];
+  const seenIds = new Set<string>();
   for (const br of incoming) {
     const id = br._id || br.id;
-    if (id && mergedIds.has(id)) continue;
+    if (id && seenIds.has(id)) continue;
+    const localR = id ? localById.get(id) : undefined;
     merged.push({
+      ...(localR || {}),
       id: id || `r_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      title: br.title || '',
-      pointsRequired: br.pointsRequired ?? 0,
-      type: br.type || 'flat',
-      value: br.value ?? 0,
-      minBillAmount: br.minBillAmount ?? 0,
-      isLargeReward: br.isLargeReward ?? false,
-      rewardItemId: br.rewardItemId,
-      rewardItemName: br.rewardItemName,
+      title: br.title || localR?.title || '',
+      pointsRequired: br.pointsRequired ?? localR?.pointsRequired ?? 0,
+      type: br.type || localR?.type || 'flat',
+      value: br.value ?? localR?.value ?? 0,
+      minBillAmount: br.minBillAmount ?? localR?.minBillAmount ?? 0,
+      isLargeReward: br.isLargeReward ?? localR?.isLargeReward ?? false,
+      rewardItemId: br.rewardItemId ?? localR?.rewardItemId,
+      rewardItemName: br.rewardItemName ?? localR?.rewardItemName,
     });
-    mergedIds.add(id);
+    if (id) seenIds.add(id);
   }
   return merged;
 }
 
 /**
- * Merge backend held (suspended) order snapshots into local state. Local rows
- * are the source of truth; backend rows are appended only for new client ids so
- * an empty backend collection can't wipe local holds. serverId (the Mongo _id)
- * is kept so recall/completion can delete the row server-side.
+ * Merge backend held (suspended) order snapshots into local state. The backend
+ * list is authoritative on a successful fetch: local-only rows are dropped
+ * while local-only fields on matching rows are preserved (keyed by id).
+ * serverId (the Mongo _id) is kept so recall/completion can delete the row
+ * server-side.
  */
 function mergeHeldOrdersById(local: any[], incoming: any[]): any[] {
-  const merged = [...local];
-  const mergedIds = new Set(merged.map((h) => h.id));
+  const localById = new Map(local.filter((h) => h.id).map((h) => [h.id, h]));
+  const merged: any[] = [];
+  const seenIds = new Set<string>();
   for (const bh of incoming) {
     const id = bh.id || bh.clientId || bh._id;
-    if (id && mergedIds.has(id)) continue;
+    if (id && seenIds.has(id)) continue;
+    const localH = id ? localById.get(id) : undefined;
     merged.push({
+      ...(localH || {}),
       id: id || `h_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       serverId: bh.serverId || bh._id || bh.id,
-      timestamp: bh.timestamp || new Date().toLocaleTimeString(),
-      items: Array.isArray(bh.items) ? bh.items : [],
-      customer: bh.customer || null,
-      type: bh.type || 'Takeaway',
-      orderId: bh.orderId,
+      timestamp: bh.timestamp || localH?.timestamp || new Date().toLocaleTimeString(),
+      items: Array.isArray(bh.items) ? bh.items : (localH?.items || []),
+      customer: bh.customer ?? localH?.customer ?? null,
+      type: bh.type || localH?.type || 'Takeaway',
+      orderId: bh.orderId ?? localH?.orderId,
     });
-    mergedIds.add(id);
+    if (id) seenIds.add(id);
+  }
+  return merged;
+}
+
+/**
+ * Reconcile backend customer profiles with local state. The backend list is
+ * authoritative: local-only rows (ghosts from a prior sync, customers deleted
+ * server-side) are dropped — even when the backend returns an empty list after
+ * a data cleanup. Local-only fields the backend never returns (purchaseHistory,
+ * notes, isNew) are preserved on matching phones. On fetch failure the local
+ * list is kept untouched (offline-first).
+ */
+function mergeCustomersAuthoritative(local: Customer[], incoming: any[]): Customer[] {
+  const localByPhone = new Map(local.map((c) => [c.phone, c]));
+  const merged: Customer[] = [];
+  const seen = new Set<string>();
+  for (const bc of incoming) {
+    const phone = String(bc.phone || '').trim();
+    if (!phone || seen.has(phone)) continue;
+    seen.add(phone);
+    const localC = localByPhone.get(phone);
+    merged.push({
+      ...(localC || {}),
+      phone,
+      name: bc.name || localC?.name || 'Guest',
+      email: bc.email ?? localC?.email,
+      isNew: localC?.isNew ?? false,
+      visits: bc.visits ?? localC?.visits ?? 0,
+      points: bc.points ?? localC?.points ?? 0,
+      birthday: bc.birthday ?? localC?.birthday,
+      lastVisit: bc.lastVisit || localC?.lastVisit || 'Never',
+      notes: bc.notes ?? localC?.notes,
+      isBlocked: bc.isBlocked ?? localC?.isBlocked,
+      purchaseHistory: localC?.purchaseHistory || [],
+    });
   }
   return merged;
 }
@@ -529,8 +569,31 @@ export function usePOSState() {
         setCachedData(CK.TABLES, merged);
         return merged;
       });
+      // Multi-branch mode renders the grid from the per-branch cache
+      // (branchTables[bid]) which is only written by local mutations and can
+      // go stale — e.g. ghost/duplicate tables cached before a data cleanup.
+      // Heal it from the authoritative backend list on every successful fetch
+      // (scoped to this branch) so stale layouts don't linger forever.
+      if (currentBranchId) {
+        setBranchTables((prevBt: Record<string, TableInfo[]>) => {
+          const existing = prevBt[currentBranchId];
+          if (!existing) return prevBt; // nothing cached to heal
+          const branchRows = incoming.filter(
+            (t: any) => !t.branchId || t.branchId === currentBranchId,
+          );
+          const healed = mergeTablesById(existing, branchRows);
+          // Id-based (not length-only) no-op guard: a stale cache whose ghost
+          // count coincidentally equals the healed count must still be healed,
+          // and equal-id caches must not churn a state update every poll.
+          const unchanged =
+            healed.length === existing.length &&
+            healed.every((t, i) => t.id === existing[i].id);
+          if (unchanged) return prevBt;
+          return { ...prevBt, [currentBranchId]: healed };
+        });
+      }
     }).catch(() => undefined);
-  }, [setTables]);
+  }, [setTables, setBranchTables, currentBranchId]);
 
   const refreshTakeaway = useCallback(() => {
     return api.fetchTakeawayOrders().then((incoming: any) => {
@@ -557,10 +620,15 @@ export function usePOSState() {
   }, [setProducts]);
 
   const refreshCustomers = useCallback(() => {
-    return api.fetchCustomers().then((incoming: any) => {
+    // Reconcile against the authoritative backend list (requesting the max the
+    // API allows) so stale ghost customers from before a data cleanup are
+    // dropped — even when the backend is now empty — while local-only fields
+    // (purchaseHistory, notes) on customers that still exist are preserved.
+    // On error the local list is kept (offline-first).
+    return api.fetchCustomers({ limit: 100 }).then((incoming: any) => {
       if (!incoming || !Array.isArray(incoming)) return;
       setCustomers((prev: Customer[]) => {
-        const merged = mergeCustomersById(prev, incoming);
+        const merged = mergeCustomersAuthoritative(prev, incoming);
         setCachedData(CK.CUSTOMERS, merged);
         return merged;
       });
@@ -590,7 +658,9 @@ export function usePOSState() {
   }, [setBranches]);
 
   const refreshExpenses = useCallback(() => {
-    return api.fetchExpenses().then((incoming: any) => {
+    // The expenses endpoint is paginated (max 200) — request the full snapshot
+    // so the authoritative merge never truncates the cache.
+    return api.fetchExpenses({ limit: 200 }).then((incoming: any) => {
       if (!incoming || !Array.isArray(incoming)) return;
       setExpenses((prev: ExpenseEntry[]) => {
         const merged = mergeExpensesById(prev, incoming);
@@ -617,6 +687,8 @@ export function usePOSState() {
     return api.fetchWaiting().then((incoming: any) => {
       if (!incoming || !Array.isArray(incoming)) return;
       setWaitingList((prev: WaitingEntry[]) => {
+        // Backend list is authoritative on a successful fetch — local-only
+        // rows are dropped so ghosts from a prior sync can't accumulate.
         const localById = new Map(prev.map((w: any) => [w.id, w]));
         const merged = incoming.map((bw: any) => {
           const local = localById.get(bw._id || bw.id);
@@ -626,8 +698,6 @@ export function usePOSState() {
             id: local?.id || bw._id || bw.id,
           } as WaitingEntry;
         });
-        const mergedIds = new Set(merged.map((w: any) => w.id));
-        for (const w of prev) if (!mergedIds.has(w.id)) merged.push(w);
         setCachedData(CK.WAITING, merged);
         return merged;
       });
@@ -640,14 +710,14 @@ export function usePOSState() {
     return api.fetchFloors().then((incoming: any) => {
       if (!incoming || !Array.isArray(incoming)) return;
       setFloors((prev: Floor[]) => {
+        // Backend list is authoritative on a successful fetch — local-only
+        // rows are dropped so stale/ghost floors don't linger.
         const localById = new Map(prev.map((f: any) => [f.id, f]));
         const merged = incoming.map((bf: any) => ({
           ...(localById.get(bf.id) || {}),
           ...bf,
           id: bf.id,
         }));
-        const mergedIds = new Set(merged.map((f: any) => f.id));
-        for (const f of prev) if (!mergedIds.has(f.id)) merged.push(f);
         setCachedData(CK.FLOORS, merged);
         return merged;
       });
@@ -695,7 +765,7 @@ export function usePOSState() {
         }
         if (Array.isArray(data.customers)) {
           setCustomers(prev => {
-            const m = mergeCustomersById(prev, data.customers);
+            const m = mergeCustomersAuthoritative(prev, data.customers);
             setCachedData(CK.CUSTOMERS, m);
             return m;
           });

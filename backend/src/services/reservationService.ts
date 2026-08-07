@@ -56,6 +56,9 @@ export class ReservationService {
   async listReservations(params: { date?: string; status?: string; branchId?: string } = {}, ctx: ReservationCtx = {}) {
     await this.expireOverdueReservations(ctx);
     const query: any = {};
+    // Strict tenant scoping — orphaned rows with a null/other restaurantId
+    // (e.g. seed leftovers) must not leak into another tenant's view.
+    if (ctx.restaurantId) query.restaurantId = ctx.restaurantId;
     if (params.date) query.date = params.date;
     if (params.status) query.status = params.status;
     if (params.branchId) query.branchId = params.branchId;
@@ -225,13 +228,17 @@ export class ReservationService {
     // produce a malformed negative time string that silently matches nothing.
     const cutoffMinutes = Math.max(0, nowMinutes - RESERVATION_GRACE_MINUTES);
     const cutoff = `${String(Math.floor(cutoffMinutes / 60)).padStart(2, '0')}:${String(cutoffMinutes % 60).padStart(2, '0')}`;
-    const stale = await reservationRepo.findAll({
+    // Scope the sweep to this tenant — otherwise every listReservations call
+    // would mark OTHER tenants' overdue reservations as No Show.
+    const staleQuery: any = {
       status: 'Confirmed',
       $or: [
         { date: { $lt: today } },
         { date: today, time: { $lte: cutoff } },
       ],
-    } as any);
+    };
+    if (ctx.restaurantId) staleQuery.restaurantId = ctx.restaurantId;
+    const stale = await reservationRepo.findAll(staleQuery);
 
     let count = 0;
     for (const res of stale.data || []) {
@@ -247,6 +254,9 @@ export class ReservationService {
   /** List waitlist entries, sorted oldest-first with live estimated wait. */
   async listWaiting(params: { branchId?: string; status?: string } = {}, ctx: ReservationCtx = {}) {
     const query: any = {};
+    // Strict tenant scoping — orphaned rows with a null/other restaurantId
+    // (e.g. seed leftovers) must not leak into another tenant's waiting list.
+    if (ctx.restaurantId) query.restaurantId = ctx.restaurantId;
     if (params.branchId) query.branchId = params.branchId;
     if (params.status) query.status = params.status;
     const result = await waitingEntryRepo.findAll(query, { sort: { createdAt: 1 } });
@@ -266,7 +276,11 @@ export class ReservationService {
    * Add a new waitlist entry with server-side estimated wait + audit.
    */
   async addToWaiting(data: any, ctx: ReservationCtx = {}) {
-    const waiting = await waitingEntryRepo.create(data);
+    // Stamp the tenant so the strict-scoped listWaiting can return it.
+    const waiting = await waitingEntryRepo.create({
+      ...data,
+      restaurantId: ctx.restaurantId || data.restaurantId || null,
+    } as any);
     await this.audit('WAITING_LIST_ADDED', String(waiting._id), ctx, {
       guestName: data.customerName,
       phone: data.customerPhone,

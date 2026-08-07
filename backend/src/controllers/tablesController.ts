@@ -25,11 +25,14 @@ function authCtx(req: Request) {
 export async function listTables(req: Request, res: Response): Promise<void> {
   try {
     const { branchId, section, status, floorId } = req.query;
+    // Tenant isolation: scope to the authenticated restaurant so a tenant
+    // never sees another restaurant's (or orphaned seed) tables.
     const result = await tableService.list({
       branchId: branchId as string,
       section: section as string,
       status: status as string,
       floorId: floorId as string,
+      restaurantId: authCtx(req).restaurantId,
     });
     res.json({ data: result.data, total: result.total });
   } catch (error) {

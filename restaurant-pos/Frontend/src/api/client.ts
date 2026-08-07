@@ -451,12 +451,15 @@ export async function deleteSupplier(id: string) {
  * this legacy helper unwraps it to a plain array so existing callers (phone
  * lookup, loyalty search) keep working unchanged. Returns null when offline.
  */
-export async function fetchCustomers(params?: { search?: string; phone?: string }) {
+export async function fetchCustomers(params?: { search?: string; phone?: string; limit?: number }) {
   // BACKEND CALLED — load customer profiles from cloud
   const qs = new URLSearchParams();
   if (params?.search) qs.set('search', params.search);
   if (params?.phone) qs.set('phone', params.phone);
-  if (!params?.phone && !params?.search) qs.set('limit', '50');
+  // Explicit limit wins; otherwise default to 50 when listing broadly (the
+  // backend caps the list endpoint at 100, so 100 is the full snapshot).
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  else if (!params?.phone && !params?.search) qs.set('limit', '50');
   const query = qs.toString();
   const res = await get<any>(`/customers${query ? '?' + query : ''}`);
   if (!res) return null;
@@ -1380,7 +1383,13 @@ export async function rollbackSettings(payload: {
 }
 
 export async function fetchSettingsAudit(page = 1, limit = 50) {
-  return get<any>(`/settings/audit?page=${page}&limit=${limit}`);
+  // NOTE: uses request() directly instead of get() because the audit endpoint
+  // returns a { data, total, page, limit } envelope — get() unwraps .data and
+  // would hand the Settings History & Audit tab a bare array, making
+  // `audit.total` / `audit.data` undefined so the panel always looks empty.
+  const result = await request('GET', `/settings/audit?page=${page}&limit=${limit}`);
+  if (!result || !result.ok) return null;
+  return result.json?.data !== undefined ? { data: result.json.data, total: result.json.total ?? (Array.isArray(result.json.data) ? result.json.data.length : 0), page: result.json.page ?? page, limit: result.json.limit ?? limit } : result.json;
 }
 
 // ─── Printers (Phase 1.9) — real registry, replaces fake IPs ──
