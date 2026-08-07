@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════
+#  ROOT .gitignore — repo-wide ignores
+#  Each service also has its own .gitignore (backend/,
+#  admin-dashboard/, restaurant-pos/).
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Dependencies (untracked from the index) ───────────────────
+node_modules/
+**/node_modules/
+
+# ─── OS / editor ────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
+
+# ─── Logs ───────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── Build outputs / generated ──────────────────────────────────
+dist/
+dist-electron/
+build/
+release/
+coverage/
+.nyc_output/
+test-results/
+*.tsbuildinfo
+
+# ─── Env / secrets ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example

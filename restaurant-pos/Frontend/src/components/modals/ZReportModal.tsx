@@ -1,0 +1,80 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { FileText, X } from 'lucide-react';
+import type { SystemSettings } from '../../types';
+import ClosingAssistant from '../../ai/ClosingAssistant';
+
+interface ZReportData {
+  totalSales: number;
+  totalDiscounts: number;
+  totalTax: number;
+  orderCount: number;
+  itemCount: number;
+  avgOrderValue: number;
+  paymentMethods: Record<string, { count: number; amount: number }>;
+  cashiers: Record<string, { orders: number; revenue: number }>;
+}
+
+interface ZReportModalProps {
+  isOpen: boolean;
+  zReportData: ZReportData;
+  settings: SystemSettings;
+  moduleSettings?: Record<string, boolean>;
+  onClose: () => void;
+}
+
+export default function ZReportModal({ isOpen, zReportData, settings, moduleSettings = {} as Record<string, boolean>, onClose }: ZReportModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 border border-[#e1e2ed] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center">
+          <h3 className="font-bold text-sm flex items-center gap-1.5"><FileText className="w-4 h-4 text-purple-600" /> End-of-Day Z-Report</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-4 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-purple-50 rounded-lg p-3 border border-purple-200"><p className="text-[10px] text-purple-700 font-bold uppercase">Total Sales</p><p className="text-lg font-bold font-mono text-purple-800">{settings.currencySymbol}{zReportData.totalSales.toFixed(2)}</p></div>
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200"><p className="text-[10px] text-blue-700 font-bold uppercase">Orders</p><p className="text-lg font-bold font-mono text-blue-800">{zReportData.orderCount}</p></div>
+            <div className="bg-amber-50 rounded-lg p-3 border border-amber-200"><p className="text-[10px] text-amber-700 font-bold uppercase">Discounts</p><p className="text-lg font-bold font-mono text-amber-800">{settings.currencySymbol}{zReportData.totalDiscounts.toFixed(2)}</p></div>
+            <div className="bg-green-50 rounded-lg p-3 border border-green-200"><p className="text-[10px] text-green-700 font-bold uppercase">Avg Order</p><p className="text-lg font-bold font-mono text-green-800">{settings.currencySymbol}{zReportData.avgOrderValue.toFixed(2)}</p></div>
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-gray-700 mb-2">Payment Methods</h4>
+            <div className="space-y-1">
+              {Object.entries(zReportData.paymentMethods).map(([method, data]) => (
+                <div key={method} className="flex justify-between text-xs"><span className="font-semibold">{method}</span><span className="font-mono">{data.count} orders - {settings.currencySymbol}{data.amount.toFixed(2)}</span></div>
+              ))}
+            </div>
+          </div>
+          {moduleSettings.showCashierPerformance !== false && (
+            <div>
+              <h4 className="text-xs font-bold text-gray-700 mb-2">Cashier Performance</h4>
+              <div className="space-y-1">
+                {Object.entries(zReportData.cashiers).map(([name, data]) => (
+                  <div key={name} className="flex justify-between text-xs"><span className="font-semibold">{name}</span><span className="font-mono">{data.orders} orders - {settings.currencySymbol}{data.revenue.toFixed(2)}</span></div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI Closing Assistant */}
+          {moduleSettings.enableAIClosingAssistant !== false && (
+          <div className="pt-4 border-t border-[#e1e2ed]">
+            <ClosingAssistant
+              totalRevenue={zReportData.totalSales}
+              orderCount={zReportData.orderCount}
+              lowStockItems={0}
+              wasteCost={0}
+            />
+          </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

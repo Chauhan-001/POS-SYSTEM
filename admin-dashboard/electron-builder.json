@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.admin.dashboard",
+  "productName": "Admin Dashboard",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "!electron/*.ts",
+    "!node_modules/**/*"
+  ],
+  "win": {
+    "target": ["nsis"],
+    "icon": "public/favicon.svg"
+  },
+  "mac": {
+    "target": ["dmg"],
+    "icon": "public/favicon.svg"
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "icon": "public/favicon.svg"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  }
+}

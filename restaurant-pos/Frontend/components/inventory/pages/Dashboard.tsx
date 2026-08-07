@@ -1,0 +1,356 @@
+import { useState, useEffect, useMemo } from 'react';
+import { Package, ShoppingCart, AlertTriangle, TrendingUp, ArrowRight, Sparkles, Brain, AlertCircle, Loader2 } from 'lucide-react';
+import { motion } from 'motion/react';
+import { INVENTORY_ALERTS } from '../data';
+import type { InventoryPage } from '../types';
+import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction } from '../../../src/ai/aiData';
+import { useInventory } from '../InventoryManager';
+import { usePurchases } from '../usePurchases';
+import AICard from '../../../src/ai/AICard';
+import { computeHealthScore, generatePurchaseRecs, predictLowStock } from '../../../src/ai/aiData';
+import WeatherWidget from '../../../src/ai/WeatherWidget';
+
+export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: (page: InventoryPage) => void; moduleSettings?: Record<string, boolean> }) {
+  const { items } = useInventory();
+  const { purchases, synced } = usePurchases();
+  const totalValue = items.reduce((s, i) => s + i.currentStock * i.averageCost, 0);
+  const lowItems = items.filter(i => i.status === 'low' || i.status === 'critical');
+
+  // Real week-over-week purchase spend change for the Stock Value card.
+  const purchaseTrend = useMemo(() => {
+    if (!purchases || purchases.length === 0) return null;
+    const now = new Date();
+    const dayStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const thisWeekStart = dayStr(new Date(now.getTime() - 6 * 86_400_000));
+    const prevWeekStart = dayStr(new Date(now.getTime() - 13 * 86_400_000));
+    let thisWeek = 0;
+    let prevWeek = 0;
+    purchases.forEach((p) => {
+      if (p.date >= thisWeekStart) thisWeek += p.total || 0;
+      else if (p.date >= prevWeekStart) prevWeek += p.total || 0;
+    });
+    if (prevWeek <= 0) return thisWeek > 0 ? 100 : 0;
+    return Math.round(((thisWeek - prevWeek) / prevWeek) * 100);
+  }, [purchases]);
+
+  const [healthScore, setHealthScore] = useState<InventoryHealthScore>(() => ({ overall: 75, stockHealth: 70, wasteRate: 80, expiryRisk: 75, trend: 'stable', recommendations: [] }));
+  const [purchaseRecs, setPurchaseRecs] = useState<PurchaseRecommendation[]>([]);
+  const [lowStockPreds, setLowStockPreds] = useState<LowStockPrediction[]>([]);
+  const [aiLoading, setAiLoading] = useState(true);
+
+  useEffect(() => {
+    setAiLoading(true);
+    const wasteEntries = items.filter(i => i.status === 'critical').length * 50 + items.filter(i => i.expiryDate).length * 30;
+    Promise.all([
+      computeHealthScore(items, wasteEntries),
+      generatePurchaseRecs(items),
+      predictLowStock(items),
+    ]).then(([h, p, l]) => {
+      setHealthScore(h);
+      setPurchaseRecs(p);
+      setLowStockPreds(l);
+      setAiLoading(false);
+    }).catch(() => setAiLoading(false));
+  }, [items]);
+
+  const statusColor = (status: string) => {
+    switch (status) {
+      case 'healthy': return 'bg-emerald-500';
+      case 'normal': return 'bg-blue-500';
+      case 'low': return 'bg-amber-500';
+      case 'critical': return 'bg-red-500';
+      default: return 'bg-gray-400';
+    }
+  };
+
+  const statusBg = (status: string) => {
+    switch (status) {
+      case 'healthy': return 'bg-emerald-50 border-emerald-200';
+      case 'normal': return 'bg-blue-50 border-blue-200';
+      case 'low': return 'bg-amber-50 border-amber-200';
+      case 'critical': return 'bg-red-50 border-red-200';
+      default: return 'bg-gray-50 border-gray-200';
+    }
+  };
+
+  const healthColor = healthScore.overall >= 80 ? '#10b981' : healthScore.overall >= 50 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div className="p-6 md:p-8 space-y-8 max-w-6xl mx-auto">
+      {/* Top row: AI Health Score + Quick actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {moduleSettings?.enableAIInventoryHealth !== false && (
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}
+          className="lg:col-span-2 bg-white rounded-2xl border border-[#e1e2ed] p-6 flex flex-col shadow-sm"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-6 h-6 rounded-lg bg-purple-500 flex items-center justify-center">
+              <Brain className="w-3.5 h-3.5 text-white" />
+            </div>
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">AI Inventory Health</span>
+            <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
+              healthScore.trend === 'improving' ? 'bg-emerald-50 text-emerald-700' :
+              healthScore.trend === 'declining' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
+            }`}>
+              {healthScore.trend}
+            </span>
+          </div>
+          <div className="flex items-center gap-6 flex-1">
+            <div className="relative w-28 h-28 shrink-0">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="#f0f0f0" strokeWidth="8" />
+                <circle cx="60" cy="60" r="50" fill="none" stroke={healthColor} strokeWidth="8"
+                  strokeDasharray={2 * Math.PI * 50} strokeDashoffset={2 * Math.PI * 50 * (1 - healthScore.overall / 100)} strokeLinecap="round"
+                  className="transition-all duration-700" />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold font-mono">{healthScore.overall}</span>
+                <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">Score</span>
+              </div>
+            </div>
+            <div className="space-y-1.5 flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-gray-500">Stock Health</span>
+                <span className="text-[10px] font-bold font-mono">{healthScore.stockHealth}%</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500" style={{ width: `${healthScore.stockHealth}%` }} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-gray-500">Waste Control</span>
+                <span className="text-[10px] font-bold font-mono">{healthScore.wasteRate}%</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500" style={{ width: `${healthScore.wasteRate}%` }} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-gray-500">Expiry Risk</span>
+                <span className="text-[10px] font-bold font-mono">{healthScore.expiryRisk}%</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-blue-400 to-blue-500" style={{ width: `${healthScore.expiryRisk}%` }} />
+              </div>
+            </div>
+          </div>
+          {healthScore.recommendations.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-[#e1e2ed]">
+              <p className="text-[10px] text-gray-500 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3 text-purple-500" />
+                {healthScore.recommendations[0]}
+              </p>
+            </div>
+          )}
+        </motion.div>
+        )}
+
+        {/* Quick stats + actions */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }}
+          className="lg:col-span-3 space-y-4"
+        >
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Stock Value</p>
+              <p className="text-2xl font-bold font-mono">₹{totalValue.toLocaleString()}</p>
+              <div className="flex items-center gap-1 mt-1.5">
+                {synced && purchaseTrend !== null ? (
+                  <>
+                    <TrendingUp className={`w-3 h-3 ${purchaseTrend >= 0 ? 'text-emerald-500' : 'text-red-500'}`} />
+                    <span className={`text-[10px] font-semibold ${purchaseTrend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {purchaseTrend >= 0 ? '+' : ''}{purchaseTrend}% this week
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <TrendingUp className="w-3 h-3 text-emerald-500" />
+                    <span className="text-[10px] text-emerald-600 font-semibold">+2.4%</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Low Items</p>
+              <p className="text-2xl font-bold font-mono">{lowItems.length}</p>
+              <div className="flex items-center gap-1 mt-1.5">
+                <AlertTriangle className={`w-3 h-3 ${lowItems.length > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
+                <span className={`text-[10px] font-semibold ${lowItems.length > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {lowItems.length > 0 ? 'Need attention' : 'All good'}
+                </span>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Items</p>
+              <p className="text-2xl font-bold font-mono">{items.length}</p>
+              <p className="text-[10px] text-gray-400 mt-1.5">{new Set(items.map(i => i.category)).size} categories</p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button onClick={() => onNavigate('purchase')}
+              className="flex-1 py-3.5 bg-[#004ac6] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+            >
+              <ShoppingCart className="w-5 h-5" />
+              Add Stock
+            </button>
+            <button onClick={() => onNavigate('items')}
+              className="flex-1 py-3.5 bg-white border border-[#e1e2ed] text-gray-700 rounded-2xl text-sm font-bold hover:border-[#004ac6]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Package className="w-5 h-5" />
+              View Items
+            </button>
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Bottom grid: AI Purchase Recommendations + Low Stock Predictions + Weather+Alerts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {moduleSettings?.enableAIPurchaseRecs !== false && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.1 }}
+          className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-lg bg-amber-500 flex items-center justify-center">
+                <Sparkles className="w-3 h-3 text-white" />
+              </div>
+              <h2 className="text-sm font-bold">AI Recommendations</h2>
+            </div>
+            <ShoppingCart className="w-4 h-4 text-[#004ac6]" />
+          </div>
+          <div className="space-y-3">
+            {purchaseRecs.slice(0, 5).map(rec => (
+              <div key={rec.item} className="flex items-center justify-between py-2 border-b border-[#e1e2ed] last:border-0">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
+                    rec.urgency === 'high' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                  }`}>
+                    {rec.item[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate">{rec.item}</p>
+                    <p className="text-[9px] text-gray-400">{rec.suggestedQty} · ₹{rec.estimatedCost?.toLocaleString()}</p>
+                    <p className="text-[9px] text-gray-400 truncate">{rec.reason}</p>
+                  </div>
+                </div>
+                <button onClick={() => onNavigate('purchase')}
+                  className="px-3 py-1.5 bg-[#004ac6] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer shrink-0 ml-2"
+                >
+                  Order
+                </button>
+              </div>
+            ))}
+            <button onClick={() => onNavigate('purchase')} className="w-full py-2 text-center text-[10px] text-[#004ac6] font-semibold hover:underline cursor-pointer">
+              View all recommendations
+            </button>
+          </div>
+        </motion.div>
+        )}
+
+        {moduleSettings?.enableAILowStock !== false && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.12 }}
+          className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-lg bg-red-500 flex items-center justify-center">
+                <Brain className="w-3 h-3 text-white" />
+              </div>
+              <h2 className="text-sm font-bold">Low Stock Predictions</h2>
+            </div>
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+          </div>
+          {lowStockPreds.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs font-medium">No low stock predictions</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {lowStockPreds.slice(0, 5).map(pred => (
+                <div key={pred.item} className={`rounded-xl border p-3 ${
+                  pred.daysUntilOut <= 1 ? 'border-red-200 bg-red-50' :
+                  pred.daysUntilOut <= 3 ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'
+                }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold">{pred.item}</span>
+                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${
+                      pred.confidence === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                    }`}>{pred.confidence} confidence</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px] text-gray-500">
+                    <span>Stock: {pred.currentStock} {pred.unit}</span>
+                    <span>·</span>
+                    <span className={pred.daysUntilOut <= 1 ? 'text-red-600 font-bold' : ''}>
+                      {pred.daysUntilOut <= 0 ? 'OUT TODAY' : `${pred.daysUntilOut} day${pred.daysUntilOut > 1 ? 's' : ''} left`}
+                    </span>
+                  </div>
+                  <p className="text-[10px] mt-1 font-medium text-gray-600">{pred.suggestedAction}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+        )}
+
+        {/* Weather Recommendation + Alerts combined */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.15 }}
+          className="space-y-3"
+        >
+          {moduleSettings?.enableAIWeather !== false && <WeatherWidget compact />}
+          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold">Alerts</h2>
+              <AlertTriangle className="w-4 h-4 text-amber-500" />
+            </div>
+            <div className="space-y-3">
+              {INVENTORY_ALERTS.slice(0, 4).map(alert => {
+                const severityColor = alert.severity === 'critical' ? 'border-red-200 bg-red-50' : alert.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50';
+                const dotColor = alert.severity === 'critical' ? 'bg-red-500' : alert.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500';
+                return (
+                  <div key={alert.id} className={`rounded-xl border ${severityColor} p-3`}>
+                    <div className="flex items-start gap-2.5">
+                      <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${dotColor}`} />
+                      <div>
+                        <p className="text-xs font-bold">{alert.item}</p>
+                        <p className="text-[10px] mt-0.5 opacity-75">{alert.message}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </motion.div>
+
+      </div>
+
+        {/* Item health checklist — full width row */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.2 }}
+          className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold">Item Status</h2>
+            <Package className="w-4 h-4 text-gray-400" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {items.slice(0, 9).map(item => (
+              <div key={item.id} className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl border ${statusBg(item.status)}`}>
+                <div className="flex items-center gap-2.5">
+                  <span className={`w-2 h-2 rounded-full ${statusColor(item.status)}`} />
+                  <span className="text-sm font-semibold">{item.name}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-mono font-bold">{item.currentStock} <span className="text-[10px] text-gray-400 font-normal">{item.unit}</span></span>
+                  <span className={`text-[10px] font-semibold capitalize ${
+                    item.status === 'critical' ? 'text-red-600' : item.status === 'low' ? 'text-amber-600' : item.status === 'normal' ? 'text-blue-600' : 'text-emerald-600'
+                  }`}>{item.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => onNavigate('items')} className="w-full py-2.5 mt-3 text-center text-xs text-[#004ac6] font-semibold hover:bg-blue-50 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1">
+            View all items <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </motion.div>
+    </div>
+  );
+}

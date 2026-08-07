@@ -1,0 +1,46 @@
+{
+  "name": "admin-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5174 && cross-env NODE_ENV=development npm run dev:electron\"",
+    "dev:electron": "esbuild electron/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=electron/main.js --external:electron --external:esbuild && esbuild electron/preload.ts --bundle --platform=node --target=node22 --outfile=electron/preload.js --external:electron && electron .",
+    "dev:web": "vite",
+    "build": "npm run build:react && npm run build:electron",
+    "build:react": "tsc --noEmit && vite build",
+    "build:electron": "esbuild electron/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=electron/main.js --external:electron && esbuild electron/preload.ts --bundle --platform=node --target=node22 --outfile=electron/preload.js --external:electron",
+    "preview": "vite preview",
+    "start": "NODE_ENV=production electron .",
+    "package": "npm run build && electron-builder --config electron-builder.json",
+    "package:win": "npm run build && electron-builder --config electron-builder.json --win",
+    "package:mac": "npm run build && electron-builder --config electron-builder.json --mac",
+    "package:linux": "npm run build && electron-builder --config electron-builder.json --linux"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.1.4",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.4",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "wait-on": "^8.0.3"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "axios": "^1.18.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.27.0",
+    "react-hook-form": "^7.83.0",
+    "react-hot-toast": "^2.6.0",
+    "react-router-dom": "^7.18.1",
+    "recharts": "^3.10.1",
+    "tailwind-merge": "^3.6.0"
+  }
+}

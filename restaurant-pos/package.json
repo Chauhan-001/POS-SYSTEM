@@ -1,0 +1,25 @@
+{
+  "name": "pos-terminal",
+  "version": "1.0.0",
+  "description": "Restaurant POS Terminal — Order management, billing, inventory & kitchen display",
+  "author": "POS Terminal Team",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm --prefix ../backend run dev\" \"npm --prefix Frontend run dev\"",
+    "dev:electron": "concurrently -n backend,frontend,electron -c cyan,magenta,yellow \"npm --prefix ../backend run dev\" \"npm --prefix Frontend run dev\" \"wait-on --timeout 60000 http://localhost:5175 && cd electron && npx tsc && npx electron . --dev\"",
+    "build": "npm --prefix ../backend run build && npm --prefix Frontend run build",
+    "build:electron": "npm run build && npx tsc -p electron/tsconfig.json && npx electron-builder --win --config electron/electron-builder.json",
+    "build:electron:dir": "npm run build && npx tsc -p electron/tsconfig.json && npx electron-builder --win --dir --config electron/electron-builder.json",
+    "electron:dev": "cd electron && npx tsc 2>&1 && npx electron . --dev",
+    "electron:prod": "cd electron && npx tsc && npx electron .",
+    "electron:compile": "cd electron && npx tsc",
+    "lint": "npm --prefix Frontend run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.0",
+    "typescript": "^5.8.2",
+    "wait-on": "^8.0.0"
+  }
+}

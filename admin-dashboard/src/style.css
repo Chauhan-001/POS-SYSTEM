@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
+  --color-primary-950: #1e1b4b;
+
+  --color-surface-50: #f8fafc;
+  --color-surface-100: #f1f5f9;
+  --color-surface-200: #e2e8f0;
+  --color-surface-300: #cbd5e1;
+  --color-surface-400: #94a3b8;
+  --color-surface-500: #64748b;
+  --color-surface-600: #475569;
+  --color-surface-700: #334155;
+  --color-surface-800: #1e293b;
+  --color-surface-900: #0f172a;
+  --color-surface-950: #020617;
+
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+}
+
+body {
+  @apply bg-surface-50 text-surface-900 antialiased;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.dark body,
+body.dark {
+  @apply bg-surface-950 text-surface-100;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+
+/* Firefox */
+html, body, * {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+html.dark, body.dark, .dark * {
+  scrollbar-color: #475569 transparent;
+}
+
+/* Chrome / Edge / Safari */
+::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  border-color: transparent;
+  background-clip: content-box;
+}
+html.dark ::-webkit-scrollbar-thumb,
+body.dark ::-webkit-scrollbar-thumb,
+html.dark *::-webkit-scrollbar-thumb,
+body.dark *::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-color: transparent;
+  background-clip: content-box;
+}
+html.dark ::-webkit-scrollbar-thumb:hover,
+body.dark ::-webkit-scrollbar-thumb:hover,
+html.dark *::-webkit-scrollbar-thumb:hover,
+body.dark *::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+  border-color: transparent;
+  background-clip: content-box;
+}
+
+/* Corner between horizontal & vertical scrollbars */
+::-webkit-scrollbar-corner,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.dark .scrollbar-thin {
+  scrollbar-color: #475569 transparent;
+}

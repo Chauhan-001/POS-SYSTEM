@@ -1,0 +1,8 @@
+{
+  "name": "pos-terminal-electron",
+  "version": "1.0.0",
+  "description": "Restaurant POS Terminal — Order management, billing, inventory & kitchen display",
+  "author": "POS Terminal Team",
+  "main": "main.js",
+  "private": true
+}

@@ -1,0 +1,41 @@
+# ─── Environment variables ──────────────────────────────────────
+.env*
+!.env.example
+
+# ─── Dependencies ───────────────────────────────────────────────
+node_modules/
+
+# ─── Build outputs ──────────────────────────────────────────────
+dist/
+dist-ssr/
+dist-electron/
+release/
+build/
+
+# ─── Electron compiled outputs (generated from main.ts/preload.ts) ──
+electron/main.js
+electron/main.js.map
+electron/preload.js
+electron/preload.js.map
+
+# ─── Logs ───────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── Test / coverage ────────────────────────────────────────────
+coverage/
+test-results/
+
+# ─── IDE / OS ───────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,22 @@
+{
+  "name": "loyalty-pos-system",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Loyalty POS System — Backend + Admin Dashboard + POS Terminal",
+  "scripts": {
+    "dev": "concurrently -n backend,admin,pos -c cyan,green,magenta \"npm run dev:backend\" \"npm run dev:admin\" \"npm run dev:pos\"",
+    "dev:backend": "cross-env PORT=3002 npm --prefix backend run dev",
+    "dev:admin": "concurrently -k \"npm --prefix admin-dashboard run dev:web\" \"wait-on http://localhost:5174 && cross-env NODE_ENV=development npm run dev:electron\"",
+    "dev:pos": "npm --prefix restaurant-pos/Frontend run dev",
+    "dev:electron": "concurrently -k -n backend,admin,pos -c cyan,green,magenta \"npm run dev:backend\" \"npm --prefix admin-dashboard run dev\" \"npm run dev:pos:electron\"",
+    "dev:pos:electron": "concurrently -n vite,electron -c magenta,yellow \"npm --prefix restaurant-pos/Frontend run dev\" \"wait-on --timeout 60000 http://localhost:5175 && npm --prefix restaurant-pos run electron:dev\"",
+    "build": "npm --prefix backend run build && npm --prefix admin-dashboard run build && npm --prefix restaurant-pos/Frontend run build",
+    "install:all": "npm install && npm --prefix backend install && npm --prefix admin-dashboard install && npm --prefix restaurant-pos/Frontend install",
+    "lint": "npm --prefix restaurant-pos/Frontend run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "wait-on": "^8.0.3"
+  }
+}
