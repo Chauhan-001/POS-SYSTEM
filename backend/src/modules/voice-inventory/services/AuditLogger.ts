@@ -116,12 +116,22 @@ export async function recordVoiceAction(
 
 /**
  * Update the confirmation status of a previously logged voice action.
+ *
+ * @param appliedItems - The authoritative per-item result from InventoryService
+ *   (name, previousStock, newStock, unit). When present, these stock values are
+ *   stored on the log and become the source of truth for the voice undo flow.
  */
 export async function updateConfirmationStatus(
   logId: string,
   status: 'confirmed' | 'rejected' | 'clarified',
   editedItems?: ParsedItem[],
-  clarification?: string
+  clarification?: string,
+  appliedItems?: Array<{
+    itemName: string;
+    previousStock: number;
+    newStock: number;
+    unit: string;
+  }>
 ): Promise<boolean> {
   try {
     const update: any = {
@@ -129,10 +139,35 @@ export async function updateConfirmationStatus(
     };
 
     if (editedItems) {
-      update.items = editedItems.map((item) => ({
-        name: item.item,
-        quantity: item.quantity,
-        unit: item.unit,
+      // Merge the confirmed (possibly edited) quantities with the applied stock
+      // deltas so each item carries BOTH what was requested and what the stock
+      // moved from/to. This is what makes a precise undo possible later.
+      const merged = editedItems.map((item) => {
+        // The controller sends { name, quantity, unit } while older clients may
+        // send { item, quantity, unit } — accept both so the name always lands.
+        const itemName = (item as any).name || item.item || item.canonicalName || '';
+        const applied = (appliedItems || []).find(
+          (a) => a.itemName.toLowerCase() === itemName.toLowerCase()
+        );
+        return {
+          name: itemName,
+          quantity: item.quantity,
+          unit: item.unit,
+          ...(applied
+            ? { previousStock: applied.previousStock, newStock: applied.newStock }
+            : {}),
+        };
+      });
+      update.items = merged;
+    } else if (appliedItems) {
+      // No edited items (e.g. conversational flow) — store the applied result
+      // directly so undo still has the stock deltas.
+      update.items = appliedItems.map((a) => ({
+        name: a.itemName,
+        quantity: Math.max(0, a.newStock - a.previousStock),
+        unit: a.unit,
+        previousStock: a.previousStock,
+        newStock: a.newStock,
       }));
     }
 
@@ -162,5 +197,9 @@ export function buildParsedJson(parsed: VoiceParseOutput): Record<string, unknow
     confidence: parsed.confidence,
     language: parsed.language,
     error: parsed.error,
+    supplier: parsed.supplier,
+    date: parsed.date,
+    brand: parsed.brand,
+    expiryDate: parsed.expiryDate,
   } as Record<string, unknown>;
 }

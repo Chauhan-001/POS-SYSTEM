@@ -15,6 +15,7 @@
 
 import { tableRepo, orderRepo, auditLogRepo } from '../repositories';
 import { tableStateService, type ReconcileCtx } from './tableStateService';
+import { upsertTableSticker, retireTableSticker } from '../modules/qr-ordering/services/qrTokenService';
 import { AppError } from '../utils/AppError';
 
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
@@ -76,6 +77,13 @@ export class TableService {
       restaurantId: ctx.restaurantId || null,
     } as any);
     await this.audit('TABLE_CREATED', String(table._id), ctx, { number: table.number, capacity: table.capacity });
+    // AUTOMATIC QR STICKER: every new table gets its own printable sticker
+    // (best-effort, non-fatal — skipped silently when the online store isn't
+    // enabled yet). Existing stickers are NEVER touched here, so printed QRs
+    // stay valid forever unless the owner explicitly regenerates one.
+    if (ctx.restaurantId) {
+      await upsertTableSticker(ctx.restaurantId, table);
+    }
     return table;
   }
 
@@ -121,6 +129,11 @@ export class TableService {
     const table = await tableRepo.softDelete(id);
     if (!table) return null;
     await this.audit('TABLE_DELETED', id, ctx, { number: table.number });
+    // Deleting a table is an explicit owner action — retire its printed
+    // sticker so no orphaned QR lingers for a table that no longer exists.
+    if (ctx.restaurantId) {
+      await retireTableSticker(ctx.restaurantId, String(table._id));
+    }
     return table;
   }
 
@@ -372,12 +385,16 @@ export class TableService {
           } as any);
           results.updated++;
         } else {
-          await tableRepo.create({ ...t, branchId, restaurantId: ctx.restaurantId || null } as any);
+          const created = await tableRepo.create({ ...t, branchId, restaurantId: ctx.restaurantId || null } as any);
           results.created++;
+          // New table → auto-generate its QR sticker (existing tables keep
+          // their current stickers untouched).
+          if (ctx.restaurantId) await upsertTableSticker(ctx.restaurantId, created);
         }
       } else {
-        await tableRepo.create({ ...t, branchId, restaurantId: ctx.restaurantId || null } as any);
+        const created = await tableRepo.create({ ...t, branchId, restaurantId: ctx.restaurantId || null } as any);
         results.created++;
+        if (ctx.restaurantId) await upsertTableSticker(ctx.restaurantId, created);
       }
     }
 

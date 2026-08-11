@@ -7,6 +7,7 @@ import React from 'react';
 import { X, Printer, RefreshCw, FileText, AlertCircle } from 'lucide-react';
 import { KOTRecord, KOTType, CartItem, Order } from '../src/types';
 import ThermalKOT from './ThermalKOT';
+import { formatKOTTimestamp } from '../src/utils/kotTime';
 
 interface KOTModalProps {
   isOpen: boolean;
@@ -109,7 +110,7 @@ export default function KOTModal({
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="text-right">
-                              <span className="text-[10px] text-gray-500 block">{kot.printedAt}</span>
+                              <span className="text-[10px] text-gray-500 block">{formatKOTTimestamp(kot.printedAt)}</span>
                               <span className="text-[9px] text-gray-400">by {kot.printedBy}</span>
                             </div>
                             {onPrintPaperKOT && (

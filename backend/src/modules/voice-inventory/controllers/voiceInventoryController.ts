@@ -38,8 +38,14 @@ import {
   updateConfirmationStatus,
   buildParsedJson,
 } from '../services/AuditLogger';
-import { updateInventory } from '../services/InventoryService';
-import { transcribeAudio, getSTTConfig } from '../services/SpeechService';
+import { updateInventory, undoInventory } from '../services/InventoryService';
+import { transcribeAudio, getSTTConfig, getSttProviderChain } from '../services/SpeechService';
+import { recordSttUsage } from '../services/SttUsageService';
+import { issuePendingAction, consumePendingAction, rejectPendingAction, verifyPendingAction } from '../services/PendingActionService';
+import {
+  MAX_TRANSCRIBE_AUDIO_BYTES,
+  MAX_TRANSCRIBE_DURATION_SEC,
+} from '../validators/voiceInventory';
 import { aiConfig } from '../../ai/config';
 import ItemAlias from '../models/ItemAlias';
 import VoiceAuditLog from '../models/VoiceAuditLog';
@@ -48,6 +54,16 @@ import { generateAndApplyAliases } from '../services/AliasGeneratorService';
 import { learnFromCorrection } from '../services/SelfLearningService';
 import { detectNewProduct } from '../services/NewProductDetectionService';
 import type { ParsedItem, VoiceInventoryResponse, ConfirmationRequest } from '../types';
+
+/**
+ * Sanitize a spoken purchase rate: finite, positive, capped at ₹1,000,000.
+ * Returns undefined when no usable rate was spoken.
+ */
+function safeRate(rate: unknown): number | undefined {
+  const n = Number(rate);
+  if (!isFinite(n) || n <= 0) return undefined;
+  return Math.min(Math.round(n * 100) / 100, 1_000_000);
+}
 
 // ====================================================================
 // POST /api/voice-inventory/transcribe
@@ -68,6 +84,7 @@ export async function transcribeVoiceAudio(
   res: Response
 ): Promise<void> {
   const startTime = Date.now();
+  const authReq = req as AuthenticatedRequest;
   const { audio, audioMimeType = 'audio/webm', language = 'hi-en' } = req.body;
 
   try {
@@ -84,6 +101,29 @@ export async function transcribeVoiceAudio(
     const buffer = Buffer.from(audio, 'base64');
     const audioBlob = new Blob([new Uint8Array(buffer)], { type: audioMimeType });
 
+    // ── Audio size / duration caps (server-side, enforced BEFORE any STT call) ──
+    if (buffer.length > MAX_TRANSCRIBE_AUDIO_BYTES) {
+      res.status(413).json({
+        success: false,
+        error: `Audio too large (${Math.round(buffer.length / 1024)} KB). Max ${Math.round(MAX_TRANSCRIBE_AUDIO_BYTES / 1024)} KB.`,
+        code: 'AUDIO_TOO_LARGE',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+    // ~16 KB/s WebM/Opus — cap estimated duration so a long/hung recording is
+    // rejected instead of racking up STT cost.
+    const estimatedDurationSec = buffer.length / 16_000;
+    if (estimatedDurationSec > MAX_TRANSCRIBE_DURATION_SEC) {
+      res.status(413).json({
+        success: false,
+        error: `Audio too long (~${Math.round(estimatedDurationSec)}s > ${MAX_TRANSCRIBE_DURATION_SEC}s). Please re-record a shorter clip.`,
+        code: 'AUDIO_TOO_LONG',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
     console.log(
       `[VoiceInventory] Audio file received: ${Math.round(buffer.length / 1024)} KB, ` +
       `mime=${audioMimeType}, language=${language}, sttProvider=${getSTTConfig().provider}`
@@ -91,6 +131,23 @@ export async function transcribeVoiceAudio(
 
     const result = await transcribeAudio(audioBlob, { language });
     const totalLatency = Date.now() - startTime;
+
+    // Fire-and-forget cost/usage telemetry — never block the response.
+    recordSttUsage({
+      restaurantId: authReq?.user?.restaurantId || '',
+      branchId: authReq?.user?.branchIds?.[0],
+      employeeId: authReq?.user?.userId,
+      provider: result.provider || getSTTConfig().provider,
+      model: getSTTConfig().model || 'default',
+      audioBytes: buffer.length,
+      status: result.transcript ? 'success' : (result.error ? 'error' : 'empty'),
+      latencyMs: totalLatency,
+      transcriptExcerpt: result.transcript,
+      error: result.error?.message,
+      attemptHistory: result.attemptHistory,
+      costUsd: result.costUsd,
+      ipAddress: req.ip,
+    }).catch(() => {});
 
     if (!result.transcript) {
       console.warn('[VoiceInventory] Transcribe returned empty transcript', result.error);
@@ -174,19 +231,102 @@ export async function parseVoiceCommand(
 
     // Step 2: Resolve aliases for each item
     const resolvedItems: ParsedItem[] = [];
+    // Names of items without a spoken rate — resolved in ONE batched query so
+    // the product's average rate per unit can be filled in afterwards.
+    const avgLookupNames: string[] = [];
+
     for (const item of parsed.items) {
       const aliasMatch = await resolveAlias(restaurantId, item.item);
       // LOG: alias match for each spoken item
       console.log(
         `[VoiceInventory] Alias match: "${item.item}" → "${aliasMatch.canonicalName}" (unit=${aliasMatch.unit}, conf=${aliasMatch.confidence})`
       );
+
+      // Ambiguity surfacing — never silently resolve a spoken item the engine
+      // could not confidently map to a real inventory product.
+      const ambiguous = aliasMatch.confidence < 0.6;
+      const candidates = (inventoryContext || []).filter((inv: any) => {
+        const spoken = (item.item || '').toLowerCase();
+        const invName = String(inv?.name || '').toLowerCase();
+        return (
+          spoken &&
+          (invName.includes(spoken) || spoken.includes(invName) || invName.includes((aliasMatch.canonicalName || '').toLowerCase()))
+        );
+      });
+
+      // Unit precedence: what the speaker actually said is authoritative —
+      // "5 kg aloo" stays kg even when the catalog stores Potato in pcs (the
+      // spoken unit is the ground truth for a purchase). Only when NO unit was
+      // spoken do we fall back to the resolved product's configured unit, so
+      // "2 aloo" still books kg for a kg-catalog item.
+      const spokeUnit = item.unit || 'pcs';
+      const resolvedUnit =
+        spokeUnit !== 'pcs'
+          ? spokeUnit
+          : aliasMatch.confidence >= 0.6 && aliasMatch.unit
+            ? aliasMatch.unit
+            : 'pcs';
+
+      // When no rate was spoken, remember the resolved name so we can fill the
+      // product's average rate per unit afterwards (batched, one query only).
+      if (
+        item.rate == null &&
+        aliasMatch.confidence >= 0.6 &&
+        aliasMatch.canonicalName
+      ) {
+        avgLookupNames.push(aliasMatch.canonicalName);
+      }
+
       resolvedItems.push({
         ...item,
-        canonicalName: aliasMatch.canonicalName,
-        unit: aliasMatch.unit || item.unit,
+        canonicalName: ambiguous ? undefined : aliasMatch.canonicalName,
+        unit: resolvedUnit,
+        resolutionConfidence: aliasMatch.confidence,
+        ambiguous: ambiguous || undefined,
+        candidates: ambiguous && candidates.length > 1 ? candidates.slice(0, 5) : undefined,
       });
     }
-    parsed.items = resolvedItems;
+
+    // Batch average-rate-per-unit lookup: when the speaker did not state a
+    // rate, the product's averageCost is the practical default — always from
+    // the restaurant's OWN catalog (tenant-scoped), never from the client.
+    const avgCostByCanonical = new Map<string, number>();
+    if (avgLookupNames.length > 0 && restaurantId) {
+      try {
+        const products = await Product.find({
+          name: { $in: avgLookupNames },
+          restaurantId: new mongoose.Types.ObjectId(restaurantId),
+          isDeleted: { $ne: true },
+        })
+          .select('name averageCost')
+          .lean();
+        for (const p of products as any[]) {
+          const avg = Number((p as any).averageCost);
+          if (isFinite(avg) && avg > 0) {
+            avgCostByCanonical.set(
+              String(p.name || '').toLowerCase(),
+              Math.round(avg * 100) / 100
+            );
+          }
+        }
+      } catch (avgErr: any) {
+        console.warn('[VoiceInventory] Average-cost lookup failed:', avgErr.message);
+      }
+    }
+
+    // Final item shaping: a spoken rate always wins and is flagged as such;
+    // otherwise the catalog average (if any) is surfaced as the default rate.
+    parsed.items = resolvedItems.map((it) => {
+      if (it.rate != null && it.rate > 0) {
+        return { ...it, rateSource: 'spoken' as const };
+      }
+      const canonical = (it.canonicalName || it.item || '').toLowerCase();
+      const avg = avgCostByCanonical.get(canonical);
+      if (avg != null) {
+        return { ...it, rate: avg, rateSource: 'average' as const };
+      }
+      return it;
+    });
 
     // Step 3: Validate against business rules
     const validation = await validateInventoryAction(
@@ -213,7 +353,7 @@ export async function parseVoiceCommand(
           availableItems
         );
 
-    // Step 7: Log to audit trail
+// Step 7: Log to audit trail
     const auditResult = await recordVoiceAction({
       restaurantId,
       employeeId,
@@ -228,16 +368,50 @@ export async function parseVoiceCommand(
       ipAddress,
     });
 
+    // Step 7b: Issue a server-side pending action (mandatory confirmation).
+    // Every inventory-mutating intent is staged here — the LLM/transcript NEVER
+    // writes directly. Non-mutating intents (purchase_reminder, supplier_update,
+    // unknown) do not need a confirm token.
+    const MUTATING_INTENTS = new Set(['inventory_add', 'inventory_remove', 'inventory_adjust', 'inventory_waste']);
+    let pending: Awaited<ReturnType<typeof issuePendingAction>> | undefined;
+    if (auditResult.success && MUTATING_INTENTS.has(parsed.intent) && parsed.items.length > 0) {
+      try {
+        pending = await issuePendingAction({
+          restaurantId,
+          employeeId,
+          employeeName,
+          auditLogId: auditResult.logId,
+          intent: parsed.intent,
+          items: parsed.items.map((it) => ({
+            name: it.canonicalName || it.item || 'unnamed',
+            quantity: it.quantity,
+            unit: it.unit || 'pcs',
+            productId: it.productId,
+            rate: safeRate(it.rate),
+          })),
+          transcript,
+        });
+      } catch (pendingErr: any) {
+        console.warn('[VoiceInventory] Failed to issue pending action:', pendingErr.message);
+      }
+    }
+
     const totalLatency = Date.now() - startTime;
 
     // Build response
     const response: VoiceInventoryResponse = {
       success: true,
       auditLogId: auditResult.logId || undefined,
+      pendingActionId: pending?.pendingActionId,
+      confirmationToken: pending?.confirmationToken,
+      confirmationExpiresAt: pending?.expiresAt.toISOString(),
       transcript,
       parsed: {
         ...parsed,
-        items: resolvedItems,
+        // `parsed.items` is the FINAL array (spoken-unit precedence + rate
+        // backstop + average-cost fallback + rateSource) — never the raw
+        // pre-mapping `resolvedItems`.
+        items: parsed.items,
       },
       missingFields: missingFields.length > 0 ? missingFields : undefined,
       suggestions: confirmation?.suggestions,
@@ -273,33 +447,135 @@ export async function parseVoiceCommand(
 /**
  * Confirm (or edit/cancel) a previously parsed voice action.
  * Only on "confirm" does the inventory actually get updated.
+ *
+ * SECURITY: when a pending action + confirmation token is supplied (the
+ * production flow), the action is verified server-side — tenant-scoped,
+ * single-use, un-expired, token-hash matched — BEFORE any write. The legacy
+ * logId path remains for backwards compatibility with older clients.
  */
 export async function confirmVoiceAction(
   req: Request,
   res: Response
 ): Promise<void> {
   const startTime = Date.now();
-  const { logId, action, editedItems, clarification } = req.body;
+  const { logId, pendingActionId, confirmationToken, action, editedItems, clarification, date, supplier, brand, expiryDate } = req.body;
   const authReq = req as AuthenticatedRequest;
   const restaurantId = authReq.user?.restaurantId || '';
   const employeeName = authReq.user?.name || 'Unknown';
   const employeeId = authReq.user?.userId || '';
 
   try {
-    // Find the audit log entry
-    const log = await VoiceAuditLog.findById(logId);
-    if (!log) {
-      res.status(404).json({
-        success: false,
-        error: 'Voice action log not found',
-        latencyMs: Date.now() - startTime,
+    let log: any = null;
+
+    // ─── Authoritative path: pending action + one-time token ───────────
+    if (pendingActionId && confirmationToken) {
+      // Only the 'confirm' action consumes (flips) the token. Edit/cancel/
+      // clarify verify it without consuming so the merchant can still
+      // complete the confirmation afterwards.
+      const verdict = action === 'confirm'
+        ? await consumePendingAction(pendingActionId, confirmationToken, restaurantId)
+        : await verifyPendingAction(pendingActionId, confirmationToken, restaurantId);
+
+      if (!verdict.ok) {
+        res.status(verdict.code === 'MISMATCHED_RESTAURANT' ? 403 : 410).json({
+          success: false,
+          error: verdict.message,
+          code: verdict.code,
+          latencyMs: Date.now() - startTime,
+        });
+        return;
+      }
+      log = verdict.action;
+    } else {
+      // ── Legacy path: audit-log id only ────────────────────────────────
+      if (!logId) {
+        res.status(400).json({
+          success: false,
+          error: 'Pending action (pendingActionId + confirmationToken) or logId is required',
+          latencyMs: Date.now() - startTime,
+        });
+        return;
+      }
+      // Enforce tenant scoping even on the legacy path.
+      // Only the pending-action flow uses status 'pending' — legacy records
+      // from earlier parses are still matched by id + restaurant.
+      const legacyLog = await VoiceAuditLog.findOne({
+        _id: logId,
+        restaurantId,
       });
-      return;
+      if (!legacyLog) {
+        res.status(404).json({
+          success: false,
+          error: 'Voice action log not found',
+          latencyMs: Date.now() - startTime,
+        });
+        return;
+      }
+      log = legacyLog;
+    }
+
+    const auditLogId = String(log.auditLogId || log._id);
+
+    // Supplier/date captured at parse time live on the VoiceAuditLog's
+    // parsedJson. The pending-action doc itself only links to that log, so
+    // resolve them from whichever source the confirm path produced.
+    let spokenSupplier: string | undefined;
+    let spokenDate: string | undefined;
+    let spokenBrand: string | undefined;
+    let spokenExpiry: string | undefined;
+    try {
+      const meta: any = log?.parsedJson || null;
+      const srcMeta: any =
+        meta && (typeof meta.supplier === 'string' || typeof meta.date === 'string' || typeof meta.brand === 'string' || typeof meta.expiryDate === 'string')
+          ? meta
+          : log?.auditLogId
+            ? (await VoiceAuditLog.findById(log.auditLogId).lean().catch(() => null))?.parsedJson || null
+            : null;
+      if (srcMeta) {
+        if (typeof srcMeta.supplier === 'string' && srcMeta.supplier.trim()) spokenSupplier = srcMeta.supplier.trim().slice(0, 200);
+        if (typeof srcMeta.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(srcMeta.date)) spokenDate = srcMeta.date;
+        if (typeof srcMeta.brand === 'string' && srcMeta.brand.trim()) spokenBrand = srcMeta.brand.trim().slice(0, 200);
+        if (typeof srcMeta.expiryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(srcMeta.expiryDate)) spokenExpiry = srcMeta.expiryDate;
+      }
+    } catch (metaErr) {
+      console.warn('[VoiceInventory] Supplier/date/brand/expiry metadata read failed:', (metaErr as Error)?.message);
+    }
+
+    // The confirm panel lets the merchant correct a misheard spoken date — a
+    // client-supplied date (strictly validated by the Zod schema) overrides
+    // the parse-time one. An absent/invalid value keeps the spoken date.
+    let confirmDate = spokenDate;
+    if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      confirmDate = date;
+    }
+
+    // Same for the supplier: an edited name wins over the parse-time one.
+    // Empty string means the merchant cleared it → no supplier is recorded.
+    let confirmSupplier = spokenSupplier;
+    if (typeof supplier === 'string') {
+      const s = supplier.trim().slice(0, 200);
+      confirmSupplier = s || undefined;
+    }
+
+    // And the brand: an edited value wins over the parse-time one. Empty
+    // string means no brand was mentioned → nothing is recorded.
+    let confirmBrand = spokenBrand;
+    if (typeof brand === 'string') {
+      const b = brand.trim().slice(0, 200);
+      confirmBrand = b || undefined;
+    }
+
+    // And the expiry date: a corrected value wins over the parse-time one.
+    // Only a strictly valid YYYY-MM-DD is accepted; anything else keeps the
+    // spoken value (or stays unset when none was mentioned).
+    let confirmExpiry = spokenExpiry;
+    if (typeof expiryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(expiryDate)) {
+      confirmExpiry = expiryDate;
     }
 
     switch (action) {
       case 'confirm': {
-        // Update inventory
+        // Update inventory — only after token verification above.
         const updateResult = await updateInventory({
           restaurantId,
           operation: log.intent as any,
@@ -307,15 +583,46 @@ export async function confirmVoiceAction(
             itemName: item.name || item.canonicalName || item.item,
             quantity: item.quantity,
             unit: item.unit || 'pcs',
+            purchaseRate: safeRate(item.rate ?? item.purchaseRate),
           })),
           performedBy: employeeId,
           performedByName: employeeName,
           source: 'voice',
-          auditLogId: logId,
+          auditLogId,
+          supplier: confirmSupplier,
+          date: confirmDate,
+          brand: confirmBrand,
+          expiryDate: confirmExpiry,
         });
 
-        // Update audit log status
-        await updateConfirmationStatus(logId, 'confirmed', editedItems);
+        // Update audit log status — store the AUTHORITATIVE applied stock
+        // deltas (previousStock → newStock) so the voice undo flow can later
+        // reverse this exact action.
+        await updateConfirmationStatus(auditLogId, 'confirmed', editedItems, undefined, updateResult.updatedItems);
+
+        // Persist corrected purchase date/supplier/brand/expiry back onto the
+        // audit log's parsedJson so history/audit reads stay consistent with
+        // what was actually recorded.
+        if (
+          (confirmDate && confirmDate !== spokenDate) ||
+          (confirmSupplier !== spokenSupplier) ||
+          (confirmBrand !== spokenBrand) ||
+          (confirmExpiry !== spokenExpiry)
+        ) {
+          VoiceAuditLog.updateOne(
+            { _id: auditLogId },
+            {
+              $set: {
+                ...(confirmDate && confirmDate !== spokenDate ? { 'parsedJson.date': confirmDate } : {}),
+                ...(confirmSupplier !== spokenSupplier ? { 'parsedJson.supplier': confirmSupplier || '' } : {}),
+                ...(confirmBrand !== spokenBrand ? { 'parsedJson.brand': confirmBrand || '' } : {}),
+                ...(confirmExpiry !== spokenExpiry ? { 'parsedJson.expiryDate': confirmExpiry || '' } : {}),
+              },
+            }
+          ).catch((err) =>
+            console.warn('[VoiceInventory] Confirm correction persist failed:', (err as Error)?.message)
+          );
+        }
 
         const totalLatency = Date.now() - startTime;
         console.log(
@@ -337,11 +644,11 @@ export async function confirmVoiceAction(
 
       case 'edit': {
         // Log the edit and return a new confirmation
-        await updateConfirmationStatus(logId, 'clarified', editedItems, clarification);
+        await updateConfirmationStatus(auditLogId, 'clarified', editedItems, clarification);
 
         // Re-parse with edited items
         const newParsed = await parseTranscript(
-          clarification || log.transcript,
+          clarification || log.transcript || log.transcriptPreview || '',
           {
             language: 'hi-en',
             inventoryContext: editedItems?.map((i: any) => ({
@@ -363,7 +670,11 @@ export async function confirmVoiceAction(
       }
 
       case 'cancel': {
-        await updateConfirmationStatus(logId, 'rejected');
+        await updateConfirmationStatus(auditLogId, 'rejected');
+        // Mark the pending token consumed as rejected (best-effort).
+        if (pendingActionId) {
+          await rejectPendingAction(pendingActionId, restaurantId).catch(() => {});
+        }
         console.log(`[VoiceInventory] Cancelled: ${log.intent}`);
 
         res.json({
@@ -375,10 +686,10 @@ export async function confirmVoiceAction(
       }
 
       case 'clarify': {
-        await updateConfirmationStatus(logId, 'clarified', undefined, clarification);
+        await updateConfirmationStatus(auditLogId, 'clarified', undefined, clarification);
 
         // Re-parse with clarification context
-        const clarifiedText = `${log.transcript}. ${clarification || ''}`;
+        const clarifiedText = `${log.transcript || log.transcriptPreview || ''}. ${clarification || ''}`;
         const reParsed = await parseTranscript(clarifiedText);
 
         res.json({
@@ -404,6 +715,127 @@ export async function confirmVoiceAction(
     res.status(500).json({
       success: false,
       error: 'Voice action confirmation failed',
+      latencyMs: Date.now() - startTime,
+    });
+  }
+}
+
+// ====================================================================
+// POST /api/voice-inventory/undo
+// ====================================================================
+
+/**
+ * Undo a previously CONFIRMED voice action.
+ *
+ * Reverses the inventory change recorded on the VoiceAuditLog (add → remove,
+ * remove/waste → add back, adjust → restore previous stock). Safe guards:
+ *   - tenant-scoped (log must belong to the authenticated restaurant)
+ *   - only a 'confirmed' action can be undone
+ *   - each action can be undone at most ONCE (undoStatus)
+ *   - items whose stock has drifted since the action are skipped with a
+ *     human-readable warning instead of corrupting the count
+ */
+export async function undoVoiceAction(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const startTime = Date.now();
+  const { logId } = req.body;
+  const authReq = req as AuthenticatedRequest;
+  const restaurantId = authReq.user?.restaurantId || '';
+  const employeeName = authReq.user?.name || 'Unknown';
+  const employeeId = authReq.user?.userId || '';
+
+  try {
+    if (!logId || !mongoose.Types.ObjectId.isValid(logId)) {
+      res.status(400).json({
+        success: false,
+        error: 'A valid logId is required',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    const log = await VoiceAuditLog.findOne({
+      _id: logId,
+      restaurantId: restaurantId ? new mongoose.Types.ObjectId(restaurantId) : undefined,
+    });
+
+    if (!log) {
+      res.status(404).json({
+        success: false,
+        error: 'Voice action not found',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    if (log.confirmationStatus !== 'confirmed') {
+      res.status(400).json({
+        success: false,
+        error: 'Only confirmed voice actions can be undone',
+        code: 'NOT_CONFIRMED',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    if ((log as any).undoStatus === 'undone') {
+      res.status(400).json({
+        success: false,
+        error: 'This action has already been undone',
+        code: 'ALREADY_UNDONE',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    if (!['inventory_add', 'inventory_remove', 'inventory_adjust', 'inventory_waste'].includes(log.intent)) {
+      res.status(400).json({
+        success: false,
+        error: `"${log.intent}" actions cannot be undone`,
+        code: 'NOT_UNDOABLE',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    const result = await undoInventory(
+      log,
+      restaurantId,
+      employeeId,
+      employeeName
+    );
+
+    // Mark the original log as undone (single-use guarantee) — regardless of
+    // partial per-item errors, so a retry cannot double-reverse an item that
+    // already reverted. undoLogId points at the append-only 'inventory_undo'
+    // AuditLog record that documents the reversal.
+    await VoiceAuditLog.updateOne(
+      { _id: log._id },
+      { $set: { undoStatus: 'undone', undoLogId: result.undoAuditLogId || '' } }
+    );
+
+    const totalLatency = Date.now() - startTime;
+    console.log(
+      `[VoiceInventory] Undo: ${log.intent} (${result.totalChanges} items reverted, ${totalLatency}ms)`
+    );
+
+    res.json({
+      success: result.success,
+      data: {
+        operation: log.intent,
+        updatedItems: result.updatedItems,
+        totalChanges: result.totalChanges,
+      },
+      errors: result.errors.length > 0 ? result.errors : undefined,
+      latencyMs: totalLatency,
+    });
+  } catch (error: any) {
+    console.error('[VoiceInventory] Undo error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Voice action undo failed',
       latencyMs: Date.now() - startTime,
     });
   }
@@ -1149,9 +1581,10 @@ export async function getStatus(
   const stt = getSTTConfig();
   res.json({
     enabled: true,
-    version: '1.0.0',
+    version: '1.1.0',
     sttProvider: stt.provider,
     sttModel: stt.model || 'default',
+    sttChain: getSttProviderChain(),
     llmProvider: process.env.AI_PROVIDER || 'not configured',
     llmModel: aiConfig.model || 'default',
     languages: ['en', 'hi', 'hi-en'],
@@ -1175,6 +1608,8 @@ export async function getStatus(
       'ai_alias_generation',
       'self_learning',
       'new_product_detection',
+      'stt_provider_chain',
+      'stt_cost_tracking',
     ],
   });
 }

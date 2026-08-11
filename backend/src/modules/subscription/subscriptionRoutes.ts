@@ -6,10 +6,11 @@ import {
   calculateProration,
 } from './subscriptionController';
 import { requireAuth } from '../../middleware/authMiddleware';
+import { publicLimiter } from '../../middleware/rateLimiter';
 
 const router = Router();
 
-router.get('/plans', getPlans);
+router.get('/plans', publicLimiter, getPlans);
 router.get('/subscription/status', requireAuth, getStatus);
 router.get('/subscription/history', requireAuth, getHistory);
 router.get('/payment/history', requireAuth, getPaymentHistory);

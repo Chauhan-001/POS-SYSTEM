@@ -20,27 +20,45 @@ export interface FeatureDefinition {
 }
 
 export const FEATURE_CATALOG: FeatureDefinition[] = [
+  // ── Core ─────────────────────────────────────────────────────
   { key: 'core_pos', label: 'Core POS', description: 'Billing, orders, table management, and payment processing' },
+  // ── Ordering & Service ───────────────────────────────────────
+  { key: 'table_service', label: 'Table Service', description: 'Dine-in floor plan with table states and guest counts' },
+  { key: 'takeaway', label: 'Takeaway', description: 'Takeaway and quick orders without a table' },
+  { key: 'delivery', label: 'Delivery', description: 'Delivery orders from partner apps (Swiggy, Zomato, Uber Eats)' },
+  { key: 'online_ordering', label: 'Online Ordering', description: 'Customer-facing online ordering website and order intake' },
+  { key: 'qr_ordering', label: 'QR Ordering', description: 'QR-based self-ordering from the table, car, or pickup' },
+  { key: 'waiter_management', label: 'Waiter Management', description: 'Assign waiters to tables and track service' },
+  { key: 'kitchen_display', label: 'Kitchen Display', description: 'Kitchen order tickets (KOT) and display screen' },
+  // ── Catalog & Pricing ────────────────────────────────────────
+  { key: 'products', label: 'Products & Menu', description: 'Product catalog, categories, variants, and menu management' },
+  { key: 'staff', label: 'Staff Management', description: 'Employees, roles, PINs, and shift management' },
+  { key: 'discounts', label: 'Discounts', description: 'Discounts, price overrides, and happy hours' },
+  { key: 'guest_checkout', label: 'Guest Checkout', description: 'Bill without a registered customer' },
+  { key: 'order_notes', label: 'Order Notes', description: 'Item notes, modifiers, and special instructions' },
+  { key: 'offers', label: 'Offers & Promotions', description: 'Coupons, BOGO, and promotional offers' },
   { key: 'loyalty', label: 'Loyalty', description: 'Customer rewards program, points tracking, and promotions' },
   { key: 'crm', label: 'CRM', description: 'Customer profiles, segmentation, and relationship management' },
+  // ── Business Operations ──────────────────────────────────────
+  { key: 'reservations', label: 'Reservations', description: 'Table booking and waitlist management' },
   { key: 'inventory', label: 'Inventory', description: 'Stock tracking, purchase orders, and low-stock alerts' },
-  { key: 'kitchen_display', label: 'Kitchen Display', description: 'Kitchen order tickets and display screen' },
-  { key: 'qr_ordering', label: 'QR Ordering', description: 'QR-based self-ordering from the table' },
-  { key: 'ai', label: 'AI', description: 'AI menu suggestions, demand forecasting, and smart insights' },
-  { key: 'voice_ordering', label: 'Voice Ordering', description: 'Voice-assisted order entry and inventory' },
+  { key: 'expense_tracking', label: 'Expense Tracking', description: 'Record and categorize operational expenses' },
+  { key: 'finance', label: 'Finance', description: 'Cash flow, P&L, and financial statements' },
+  { key: 'analytics', label: 'Analytics', description: 'Advanced dashboards and business intelligence' },
   { key: 'basic_reports', label: 'Basic Reports', description: 'Daily sales summaries and order history' },
   { key: 'advanced_reports', label: 'Advanced Reports', description: 'Profit & loss, tax reports, and custom exports' },
-  { key: 'finance', label: 'Finance', description: 'Expense tracking, cash flow, and financial statements' },
-  { key: 'expense_tracking', label: 'Expense Tracking', description: 'Record and categorize operational expenses' },
+  // ── Multi-location ───────────────────────────────────────────
   { key: 'multi_branch', label: 'Multi Branch', description: 'Centralized management across multiple locations' },
   { key: 'multi_device', label: 'Multi Device', description: 'Run the POS on multiple terminals concurrently' },
+  // ── AI & Voice ───────────────────────────────────────────────
+  { key: 'ai', label: 'AI', description: 'AI menu suggestions, demand forecasting, and smart insights' },
+  { key: 'voice_ordering', label: 'Voice Ordering', description: 'Voice-assisted order entry and inventory' },
+  // ── Platform ─────────────────────────────────────────────────
   { key: 'offline_mode', label: 'Offline Mode', description: 'Continue billing during internet outages' },
   { key: 'customer_display', label: 'Customer Display', description: 'Customer-facing order and payment display' },
-  { key: 'analytics', label: 'Analytics', description: 'Advanced dashboards and business intelligence' },
-  { key: 'marketing', label: 'Marketing', description: 'Campaigns, offers, and promotional tools' },
-  { key: 'reservations', label: 'Reservations', description: 'Table booking and waitlist management' },
-  { key: 'api_access', label: 'API Access', description: 'REST API for third-party integrations' },
+  { key: 'marketing', label: 'Marketing', description: 'Campaigns and promotional tools' },
   { key: 'integrations', label: 'Integrations', description: 'Swiggy, Zomato, Uber Eats and delivery partners' },
+  { key: 'api_access', label: 'API Access', description: 'REST API for third-party integrations' },
   { key: 'custom_branding', label: 'Custom Branding', description: 'White-label experience with custom logo and branding' },
   { key: 'priority_support', label: 'Priority Support', description: 'Dedicated support with priority ticketing' },
 ];

@@ -24,11 +24,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Mic, Square, X, Check, MessageSquare, ShoppingCart, Trash2,
   Plus, Sparkles, AlertTriangle, HelpCircle, Loader2, ArrowRight,
-  Edit3, Volume2, Globe,
+  Edit3, Volume2, Globe, Package as PackageIcon, CalendarDays, Tag, Hourglass,
 } from 'lucide-react';
 import type { InventoryItem } from '../../components/inventory/types';
 import { useNotify, useInventory } from '../../components/inventory/InventoryManager';
-import { getAuthToken } from '../api/client';
+import apiClient from '../api/axios';
 
 // ====================================================================
 // TYPES
@@ -47,12 +47,27 @@ interface ParsedItem {
   item: string;
   quantity: number;
   unit?: string;
+  /** Purchase rate (₹/unit) — spoken in the command or the catalog average. */
+  rate?: number;
+  /** Where the rate came from — 'spoken' (command) vs 'average' (catalog avg cost). */
+  rateSource?: 'spoken' | 'average';
   canonicalName?: string;
+  productId?: string;
+  /** Low value → the spoken item may be a new product or ambiguous. */
+  resolutionConfidence?: number;
+  /** True when the item could NOT be confidently matched to inventory. */
+  ambiguous?: boolean;
+  /** Candidate inventory items to pick from (disambiguation). */
+  candidates?: Array<{ name: string; unit?: string; currentStock?: number }>;
 }
 
 interface VoiceParseResult {
   success: boolean;
   auditLogId?: string;
+  /** Server-side pending action — required for confirm (token-based). */
+  pendingActionId?: string;
+  confirmationToken?: string;
+  confirmationExpiresAt?: string;
   transcript?: string;
   parsed?: {
     intent: IntentType;
@@ -61,6 +76,14 @@ interface VoiceParseResult {
     language?: string;
     originalText: string;
     error?: string;
+    /** Supplier/vendor named in the command ("... from Verka Dairy"). */
+    supplier?: string;
+    /** Purchase date (YYYY-MM-DD) — defaults to today when not spoken. */
+    date?: string;
+    /** Brand/variant named in the command ("Amul brand butter"). */
+    brand?: string;
+    /** Expiry date of the incoming batch ("expiry 31 Dec 2026"). */
+    expiryDate?: string;
   };
   missingFields?: string[];
   suggestions?: string[];
@@ -137,6 +160,21 @@ const LANGUAGES = [
   { code: 'hi', label: 'Hindi', native: 'हिन्दी' },
 ];
 
+/** Stepper increment for a unit: fractional for weight/volume, whole for pcs. */
+const stepFor = (unit?: string): number => {
+  const u = (unit || 'pcs').toLowerCase();
+  return u === 'kg' || u === 'l' || u === 'litre' || u === 'liter' || u === 'ml' || u === 'g' || u === 'gram'
+    ? 0.5
+    : 1;
+};
+/** Same increment, but non-zero (used for the + button). */
+const stepOf = (unit?: string): number => {
+  const u = (unit || 'pcs').toLowerCase();
+  return u === 'kg' || u === 'l' || u === 'litre' || u === 'liter' || u === 'ml' || u === 'g' || u === 'gram'
+    ? 0.5
+    : 1;
+};
+
 // ====================================================================
 // COMPONENT
 // ====================================================================
@@ -151,6 +189,28 @@ export default function VoiceFAB() {
   const [isParsing, setIsParsing] = useState(false);
   const [parsedResult, setParsedResult] = useState<VoiceParseResult | null>(null);
   const [logId, setLogId] = useState<string | null>(null);
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const [confirmationToken, setConfirmationToken] = useState<string | null>(null);
+  // Per-row quantity steppers (qty adjustments before confirming).
+  const [rowQtys, setRowQtys] = useState<Record<number, number>>({});
+  // Per-row purchase rate edits (keyed by row index). `null` = explicitly
+  // cleared by the user; undefined = untouched (use the parsed rate).
+  const [rowRates, setRowRates] = useState<Record<number, number | null>>({});
+  // Resolved product name for ambiguous rows (keyed by row index).
+  const [rowPicks, setRowPicks] = useState<Record<number, string>>({});
+  // Purchase date shown in the confirm panel — editable so a misheard spoken
+  // date (e.g. "kal" parsed as today) can be corrected before confirming.
+  const [editableDate, setEditableDate] = useState('');
+  // Supplier/vendor shown in the confirm panel — editable so a misheard
+  // supplier can be corrected (or added when one wasn't spoken). Sent back
+  // to the server on confirm; empty string means "no supplier".
+  const [editableSupplier, setEditableSupplier] = useState('');
+  // Brand/variant shown in the confirm panel — the same product can come from
+  // different brands, so it's editable too. Empty string means "not mentioned".
+  const [editableBrand, setEditableBrand] = useState('');
+  // Expiry date of the incoming batch — editable date picker; empty means
+  // "not mentioned" (the product keeps whatever expiry it already has).
+  const [editableExpiry, setEditableExpiry] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmResult, setConfirmResult] = useState<ConfirmationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -218,27 +278,26 @@ export default function VoiceFAB() {
     setParsedResult(null);
     setConfirmResult(null);
     setLogId(null);
+    setPendingActionId(null);
+    setConfirmationToken(null);
+    setRowQtys({});
+    setRowRates({});
+    setRowPicks({});
+    setEditableDate('');
+    setEditableSupplier('');
+    setEditableBrand('');
+    setEditableExpiry('');
 
     try {
-      const response = await fetch('/api/voice-inventory/parse', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getAuthToken() || ''}`,
-        },
-        body: JSON.stringify({
-          transcript: trimmed,
-          language,
-          items: inventory.items.map(i => ({ name: i.name, unit: i.unit })),
-        }),
+      // App's authenticated axios client — auto-refreshes an expired JWT so
+      // the voice API never surfaces "Invalid or expired token".
+      const { data } = await apiClient.post('/voice-inventory/parse', {
+        transcript: trimmed,
+        language,
+        items: inventory.items.map(i => ({ name: i.name, unit: i.unit })),
       });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`API error (${response.status}): ${errText.slice(0, 100)}`);
-      }
-
-      const result: VoiceParseResult = await response.json();
+      const result: VoiceParseResult = data;
 
       if (!result.success) {
         setError(result.error || 'Failed to parse voice command');
@@ -246,25 +305,28 @@ export default function VoiceFAB() {
       }
 
       setParsedResult(result);
+      // Seed the editable date/supplier from what was heard — date defaults to
+      // today when none was spoken, supplier to empty.
+      setEditableDate(result.parsed?.date || new Date().toISOString().slice(0, 10));
+      setEditableSupplier(result.parsed?.supplier || '');
+      setEditableBrand(result.parsed?.brand || '');
+      setEditableExpiry(result.parsed?.expiryDate || '');
       if (result.auditLogId) setLogId(result.auditLogId);
+      if (result.pendingActionId && result.confirmationToken) {
+        setPendingActionId(result.pendingActionId);
+        setConfirmationToken(result.confirmationToken);
+      }
     } catch (err: any) {
       console.error('[VoiceFAB] Parse error:', err.message);
-      setError(err.message || 'Failed to connect. Is the backend running?');
+      setError(err?.response?.data?.error || err.message || 'Failed to connect. Is the backend running?');
 
       // Fallback: try the old /api/ai/inventory-voice endpoint
       try {
-        const fallbackRes = await fetch('/api/ai/inventory-voice', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${getAuthToken() || ''}`,
-          },
-          body: JSON.stringify({
-            transcript: trimmed,
-            items: inventory.items.map(i => ({ name: i.name, unit: i.unit })),
-          }),
+        const fallbackRes = await apiClient.post('/ai/inventory-voice', {
+          transcript: trimmed,
+          items: inventory.items.map(i => ({ name: i.name, unit: i.unit })),
         });
-        const fbData = await fallbackRes.json();
+        const fbData = fallbackRes.data;
         if (fbData.success && fbData.data) {
           const d = fbData.data;
           const existing = inventory.items.find(i => i.name.toLowerCase() === d.item?.toLowerCase());
@@ -281,6 +343,12 @@ export default function VoiceFAB() {
               },
               latencyMs: 0,
             });
+            // Legacy fallback has no spoken date/supplier/brand/expiry — default
+            // the date to today so corrected values still reach the server.
+            setEditableDate(new Date().toISOString().slice(0, 10));
+            setEditableSupplier('');
+            setEditableBrand('');
+            setEditableExpiry('');
             return;
           }
         }
@@ -304,28 +372,15 @@ export default function VoiceFAB() {
         payloadBase64Chars: audioBase64.length,
         mimeType: blob.type || 'audio/webm',
         blobSize: blob.size,
-        authHeaderPresent: !!getAuthToken(), // presence only — never the token
+        authHeader: 'via apiClient (auto-refresh)', // token attached by axios interceptor
       });
-      const response = await fetch('/api/voice-inventory/transcribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getAuthToken() || ''}`,
-        },
-        body: JSON.stringify({
-          audio: audioBase64,
-          audioMimeType: blob.type || 'audio/webm',
-          language,
-        }),
+      const { data } = await apiClient.post('/voice-inventory/transcribe', {
+        audio: audioBase64,
+        audioMimeType: blob.type || 'audio/webm',
+        language,
       });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => 'Unknown error');
-        console.error('[VoiceFAB] Transcribe HTTP error', response.status, errText);
-        throw new Error(`Transcribe API error (${response.status}): ${errText.slice(0, 100)}`);
-      }
-
-      const result = await response.json();
+      const result = data;
       console.log('[VoiceFAB] Transcribe response', { success: result.success, transcript: result.transcript, confidence: result.confidence, error: result.error });
       if (!result.success || !result.transcript) {
         throw new Error(result.error || 'No speech detected');
@@ -334,7 +389,7 @@ export default function VoiceFAB() {
       analyzeText(result.transcript);
     } catch (err: any) {
       console.error('[VoiceFAB] Transcribe error (full):', err);
-      setError(err.message || 'Transcription failed. Type instead.');
+      setError(err?.response?.data?.error || err.message || 'Transcription failed. Type instead.');
     } finally {
       setIsListening(false);
     }
@@ -493,108 +548,188 @@ export default function VoiceFAB() {
 
   const handleConfirm = useCallback(async () => {
     if (!parsedResult?.parsed || !parsedResult.parsed.items.length) return;
-    if (!logId) {
-      setError('Cannot confirm — no audit log reference. Try parsing again.');
-      return;
-    }
 
-    setIsConfirming(true);
+    // Resolve stepper/picked quantities into the final edited items.
+    const editedItems = parsedResult.parsed.items.map((item, i) => ({
+      name: rowPicks[i] || item.canonicalName || item.item,
+      quantity: rowQtys[i] ?? item.quantity,
+      unit: item.unit || 'pcs',
+      // Carry the spoken/average/edited rate so the server can apply it to
+      // the product's averageCost on add. (null → cleared → no rate.)
+      rate: rowRates[i] === undefined ? item.rate : rowRates[i] ?? undefined,
+      productId: item.productId,
+    }));
+    // Corrected purchase date — the server uses it for the purchase record.
+    const confirmDate = editableDate || parsedResult.parsed.date;
+    // Corrected supplier — trimmed; empty means "no supplier" (server records
+    // the purchase with just the rate, or skips it when neither is present).
+    const confirmSupplier = editableSupplier.trim() || undefined;
+    // Corrected brand — trimmed; empty means "not mentioned" (server records
+    // the purchase without a brand).
+    const confirmBrand = editableBrand.trim() || undefined;
+    // Corrected expiry — empty means "not mentioned" (product keeps its own).
+    const confirmExpiry = editableExpiry || undefined;
 
-    try {
-      const response = await fetch('/api/voice-inventory/confirm', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getAuthToken() || ''}`,
-        },
-        body: JSON.stringify({
+    if (pendingActionId && confirmationToken) {
+      setIsConfirming(true);
+      try {
+        const { data } = await apiClient.post('/voice-inventory/confirm', {
+          pendingActionId,
+          confirmationToken,
+          action: 'confirm',
+          editedItems,
+          date: confirmDate,
+          supplier: confirmSupplier,
+          brand: confirmBrand,
+          expiryDate: confirmExpiry,
+        });
+
+        const result: ConfirmationResult = data;
+
+        if (result.success) {
+          setConfirmResult(result);
+
+          // The server confirm endpoint is authoritative (it updated the
+          // product catalog + stock atomically). Re-pull the catalog so new
+          // auto-created items and updated stock appear immediately — the old
+          // local addStock/removeStock loop DOUBLE-COUNTED stock for existing
+          // items (server + client both applied the delta) and silently did
+          // nothing for auto-created ones.
+          inventory.refreshItems().catch(() => {});
+
+          notify(
+            `${INTENT_META[parsedResult.parsed!.intent].verb} ${editedItems.length} item(s) — done!`,
+            'success'
+          );
+
+          setTimeout(() => {
+            setIsOpen(false);
+            setParsedResult(null);
+            setConfirmResult(null);
+            setInput('');
+            setLogId(null);
+            setPendingActionId(null);
+            setConfirmationToken(null);
+            setRowQtys({});
+            setRowRates({});
+            setRowPicks({});
+            setEditableDate('');
+            setEditableSupplier('');
+            setEditableBrand('');
+            setEditableExpiry('');
+          }, 1200);
+        } else {
+          setError(result.error || 'Confirmation failed');
+        }
+      } catch (err: any) {
+        setError(err.message || 'Confirmation failed');
+      } finally {
+        setIsConfirming(false);
+      }
+    } else if (logId) {
+      // Legacy path (no pending token — e.g. non-mutating intents).
+      setIsConfirming(true);
+      try {
+        const { data } = await apiClient.post('/voice-inventory/confirm', {
           logId,
           action: 'confirm',
-          editedItems: parsedResult.parsed.items.map(i => ({
-            name: i.canonicalName || i.item,
-            quantity: i.quantity,
-            unit: i.unit || 'pcs',
-          })),
-        }),
-      });
+          editedItems,
+          date: confirmDate,
+          supplier: confirmSupplier,
+          brand: confirmBrand,
+          expiryDate: confirmExpiry,
+        });
 
-      const result: ConfirmationResult = await response.json();
+        const result: ConfirmationResult = data;
 
-      if (result.success) {
-        setConfirmResult(result);
+        if (result.success) {
+          setConfirmResult(result);
 
-        // Update local inventory state
-        const intent = parsedResult.parsed!.intent;
-        for (const item of parsedResult.parsed!.items) {
-          const name = item.canonicalName || item.item;
-          const existing = inventory.items.find(
-            i => i.name.toLowerCase() === name.toLowerCase()
+          // See the pending-action path above — the server is authoritative,
+          // so just re-sync the local catalog (no local stock double-apply).
+          inventory.refreshItems().catch(() => {});
+
+          notify(
+            `${INTENT_META[parsedResult.parsed!.intent].verb} ${editedItems.length} item(s) — done!`,
+            'success'
           );
-          if (existing) {
-            if (intent === 'inventory_add') {
-              inventory.addStock(existing.name, item.quantity);
-            } else if (intent === 'inventory_remove' || intent === 'inventory_waste') {
-              inventory.removeStock(existing.name, item.quantity);
-            }
-          }
+
+          setTimeout(() => {
+            setIsOpen(false);
+            setParsedResult(null);
+            setConfirmResult(null);
+            setInput('');
+            setLogId(null);
+            setPendingActionId(null);
+            setConfirmationToken(null);
+            setRowQtys({});
+            setRowRates({});
+            setRowPicks({});
+            setEditableDate('');
+            setEditableSupplier('');
+            setEditableBrand('');
+            setEditableExpiry('');
+          }, 1200);
+        } else {
+          setError(result.error || 'Confirmation failed');
         }
-
-        notify(
-          `${INTENT_META[parsedResult.parsed!.intent].verb} ${parsedResult.parsed!.items.length} item(s) — done!`,
-          'success'
-        );
-
-        // Close after showing success briefly
-        setTimeout(() => {
-          setIsOpen(false);
-          setParsedResult(null);
-          setConfirmResult(null);
-          setInput('');
-        }, 1200);
-      } else {
-        setError(result.error || 'Confirmation failed');
+      } catch (err: any) {
+        setError(err.message || 'Confirmation failed');
+      } finally {
+        setIsConfirming(false);
       }
-    } catch (err: any) {
-      setError(err.message || 'Confirmation failed');
-    } finally {
-      setIsConfirming(false);
+    } else {
+      setError('Cannot confirm — missing confirmation token. Try parsing again.');
     }
-  }, [parsedResult, logId, inventory, notify]);
+  }, [parsedResult, logId, pendingActionId, confirmationToken, rowQtys, rowRates, rowPicks, editableDate, editableSupplier, editableBrand, editableExpiry, inventory, notify]);
 
-  const handleCancel = useCallback(() => {
-    // Send cancel to backend if we have a logId
-    if (logId) {
-      fetch('/api/voice-inventory/confirm', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getAuthToken() || ''}`,
-        },
-        body: JSON.stringify({ logId, action: 'cancel' }),
-      }).catch(() => {});
-    }
+const handleCancel = useCallback(() => {
+  // Send cancel to backend — requires the pending token when present.
+  if (pendingActionId && confirmationToken) {
+    apiClient.post('/voice-inventory/confirm', { pendingActionId, confirmationToken, action: 'cancel' }).catch(() => {});
+  } else if (logId) {
+    apiClient.post('/voice-inventory/confirm', { logId, action: 'cancel' }).catch(() => {});
+  }
 
-    setParsedResult(null);
-    setConfirmResult(null);
-    setInput('');
-    setError(null);
-    setLogId(null);
-  }, [logId]);
+  setParsedResult(null);
+  setConfirmResult(null);
+  setInput('');
+  setError(null);
+  setLogId(null);
+  setPendingActionId(null);
+  setConfirmationToken(null);
+  setRowQtys({});
+  setRowRates({});
+  setRowPicks({});
+  setEditableDate('');
+  setEditableSupplier('');
+  setEditableBrand('');
+  setEditableExpiry('');
+}, [logId, pendingActionId, confirmationToken]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && input.trim()) analyzeText(input);
-    if (e.key === 'Escape') handleClose();
-  };
+const handleKeyDown = (e: React.KeyboardEvent) => {
+  if (e.key === 'Enter' && input.trim()) analyzeText(input);
+  if (e.key === 'Escape') handleClose();
+};
 
-  const handleClose = () => {
-    setIsOpen(false);
-    setParsedResult(null);
-    setConfirmResult(null);
-    setInput('');
-    setError(null);
-    setLogId(null);
-    stopListening();
-  };
+const handleClose = () => {
+  setIsOpen(false);
+  setParsedResult(null);
+  setConfirmResult(null);
+  setInput('');
+  setError(null);
+  setLogId(null);
+  setPendingActionId(null);
+  setConfirmationToken(null);
+  setRowQtys({});
+  setRowRates({});
+  setRowPicks({});
+  setEditableDate('');
+  setEditableSupplier('');
+  setEditableBrand('');
+  setEditableExpiry('');
+  stopListening();
+};
 
   // ==================================================================
   // RENDER HELPERS
@@ -635,7 +770,7 @@ export default function VoiceFAB() {
       {/* FAB Button */}
       <button
         onClick={() => { setIsOpen(true); setError(null); }}
-        className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-[#004ac6] to-blue-600 text-white shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center z-[100] group"
+        className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-[var(--brand-color)] to-blue-600 text-white shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center z-[100] group"
         title="Voice Inventory Entry — Tap to speak"
       >
         <Mic className="w-6 h-6 group-hover:scale-110 transition-transform" />
@@ -656,7 +791,9 @@ export default function VoiceFAB() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 20 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="bg-white rounded-3xl shadow-2xl max-w-lg w-full mx-auto overflow-hidden"
+              className={`bg-white rounded-3xl shadow-2xl max-w-lg w-full mx-auto overflow-hidden transition-all duration-300 ${
+                parsedResult?.parsed && !confirmResult?.success ? 'sm:max-w-3xl' : ''
+              }`}
               onClick={e => e.stopPropagation()}
             >
               {/* ================================================================ */}
@@ -664,8 +801,8 @@ export default function VoiceFAB() {
               {/* ================================================================ */}
               <div className="px-6 pt-6 pb-2 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#004ac6]/10 to-blue-50 flex items-center justify-center">
-                    <Sparkles className="w-5 h-5 text-[#004ac6]" />
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[var(--brand-color)]/10 to-blue-50 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-[var(--brand-color)]" />
                   </div>
                   <div>
                     <h2 className="text-lg font-bold tracking-tight">
@@ -689,7 +826,7 @@ export default function VoiceFAB() {
                         onClick={() => setLanguage(l.code)}
                         className={`px-2 py-1 rounded-[10px] text-[10px] font-bold transition-all cursor-pointer ${
                           language === l.code
-                            ? 'bg-white text-[#004ac6] shadow-sm'
+                            ? 'bg-white text-[var(--brand-color)] shadow-sm'
                             : 'text-gray-400 hover:text-gray-600'
                         }`}
                       >
@@ -724,17 +861,21 @@ export default function VoiceFAB() {
               )}
 
               {/* ================================================================ */}
-              {/* INPUT / MIC AREA (shown when no result yet) */}
+              {/* INPUT / MIC + ACTIVE COMMAND PANEL */}
+              {/* Idle: full-width mic/input. Parsed: 2:3 split — input (left,
+                  2/5) + Active Command Panel (right, 3/5) so confirmations
+                  get more room. */}
               {/* ================================================================ */}
-              {!parsedResult && !confirmResult?.success && (
-                <div className="px-6 py-6 flex flex-col items-center gap-5">
+              {!confirmResult?.success && (
+                <div className={`border-t border-[#e1e2ed] transition-all duration-300 ${parsedResult?.parsed ? 'sm:grid sm:grid-cols-5' : ''}`}>
+                <div className={`${parsedResult?.parsed ? 'sm:col-span-2 sm:border-r border-[#e1e2ed] px-5 py-5 flex flex-col items-center gap-4' : 'px-6 py-6 flex flex-col items-center gap-5'}`}>
                   {/* Mic button */}
                   <button
                     onClick={isListening ? stopListening : startListening}
-                    className={`w-24 h-24 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-lg ${
+                    className={`${parsedResult?.parsed ? 'w-20 h-20' : 'w-24 h-24'} rounded-full flex items-center justify-center transition-all cursor-pointer shadow-lg ${
                       isListening
                         ? 'bg-red-500 scale-110 shadow-red-200 animate-pulse'
-                        : 'bg-gradient-to-br from-[#004ac6] to-blue-600 hover:scale-105 hover:shadow-[#004ac6]/30'
+                        : 'bg-gradient-to-br from-[var(--brand-color)] to-blue-600 hover:scale-105 hover:shadow-[var(--brand-color)]/30'
                     }`}
                     title={isListening ? 'Stop recording' : 'Start recording'}
                   >
@@ -750,7 +891,7 @@ export default function VoiceFAB() {
                       {Array.from({ length: 24 }).map((_, i) => (
                         <div
                           key={i}
-                          className="w-[3px] bg-gradient-to-t from-[#004ac6] to-blue-400 rounded-full animate-pulse"
+                          className="w-[3px] bg-gradient-to-t from-[var(--brand-color)] to-blue-400 rounded-full animate-pulse"
                           style={{
                             height: `${15 + Math.random() * 75}%`,
                             animationDelay: `${i * 0.05}s`,
@@ -801,14 +942,14 @@ export default function VoiceFAB() {
                               ? 'e.g. \"20 kg atta add karo\" or \"3 paneer waste\"'
                               : 'e.g. \"add 20L milk\" or \"log 3 bread expired\"'
                           }
-                          className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-[#e1e2ed] rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6] transition-all"
+                          className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-[#e1e2ed] rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all"
                           autoFocus
                         />
                       </div>
                       <button
                         onClick={() => analyzeText(input)}
                         disabled={!input.trim() || isParsing}
-                        className="px-5 py-3 bg-[#004ac6] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        className="px-5 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                       >
                         {isParsing ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -821,14 +962,14 @@ export default function VoiceFAB() {
 
                   {/* Parsing indicator */}
                   {isParsing && (
-                    <div className="flex items-center gap-2 text-xs text-[#004ac6] font-medium">
+                    <div className="flex items-center gap-2 text-xs text-[var(--brand-color)] font-medium">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       AI is parsing your command...
                     </div>
                   )}
 
-                  {/* Example chips */}
-                  {!isListening && !isParsing && (
+                  {/* Example chips — hidden in split mode to save room */}
+                  {!isListening && !isParsing && !parsedResult?.parsed && (
                     <div className="flex flex-wrap gap-2 justify-center">
                       {[
                         { text: 'Add 20 kg flour', intent: 'add' as const },
@@ -838,7 +979,7 @@ export default function VoiceFAB() {
                         <button
                           key={i}
                           onClick={() => { setInput(ex.text); }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-[#e1e2ed] rounded-xl text-[10px] font-semibold text-gray-500 hover:border-[#004ac6]/30 hover:text-[#004ac6] transition-all cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-[#e1e2ed] rounded-xl text-[10px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/30 hover:text-[var(--brand-color)] transition-all cursor-pointer"
                         >
                           <Volume2 className="w-3 h-3" />
                           {ex.text}
@@ -847,20 +988,12 @@ export default function VoiceFAB() {
                     </div>
                   )}
                 </div>
-              )}
 
-              {/* ================================================================ */}
-              {/* CONFIRMATION SCREEN */}
-              {/* ================================================================ */}
-              <AnimatePresence>
-                {parsedResult?.parsed && !confirmResult?.success && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="border-t border-[#e1e2ed] overflow-hidden"
-                  >
-                    <div className="px-6 py-4">
+                {/* ============================================================ */}
+                {/* RIGHT — ACTIVE COMMAND PANEL (3/5) — confirmation */}
+                {/* ============================================================ */}
+                {parsedResult?.parsed && (
+                <div className="sm:col-span-3 px-5 py-5">
                       {/* Intent badge + confidence */}
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
@@ -882,6 +1015,115 @@ export default function VoiceFAB() {
                           &ldquo;{parsedResult.transcript}&rdquo;
                         </p>
                       </div>
+
+                      {/* Supplier chip + editable purchase date — the date heard
+                          in the command can be corrected before confirming
+                          (voice adds record it into the purchases feed). */}
+                      {(parsedResult.parsed.supplier || parsedResult.parsed.date || parsedResult.parsed.intent === 'inventory_add') && (
+                        <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                          {(parsedResult.parsed.supplier || parsedResult.parsed.intent === 'inventory_add') && (
+                            <div
+                              className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-[10px] font-bold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-100/70 transition-all"
+                              title="Supplier — tap to correct a misheard vendor"
+                            >
+                              <PackageIcon className="w-3 h-3 shrink-0" />
+                              <span className="uppercase tracking-wide text-indigo-400 text-[9px]">Supplier</span>
+                              <input
+                                type="text"
+                                value={editableSupplier}
+                                placeholder="Not mentioned"
+                                maxLength={200}
+                                onChange={e => setEditableSupplier(e.target.value)}
+                                className="bg-transparent border-none outline-none p-0 text-[10px] font-bold text-indigo-700 w-[7.5rem] placeholder:text-gray-400"
+                              />
+                              {editableSupplier && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditableSupplier('')}
+                                  className="text-indigo-400 hover:text-indigo-600 cursor-pointer shrink-0"
+                                  title="Clear supplier"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {(parsedResult.parsed.brand || parsedResult.parsed.intent === 'inventory_add') && (
+                            <div
+                              className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-cyan-50 border border-cyan-200 text-[10px] font-bold text-cyan-700 hover:border-cyan-300 hover:bg-cyan-100/70 transition-all"
+                              title="Brand — same product can come from different brands; tap to add or correct"
+                            >
+                              <Tag className="w-3 h-3 shrink-0" />
+                              <span className="uppercase tracking-wide text-cyan-400 text-[9px]">Brand</span>
+                              <input
+                                type="text"
+                                value={editableBrand}
+                                placeholder="Not mentioned"
+                                maxLength={200}
+                                onChange={e => setEditableBrand(e.target.value)}
+                                className="bg-transparent border-none outline-none p-0 text-[10px] font-bold text-cyan-700 w-[7.5rem] placeholder:text-gray-400"
+                              />
+                              {editableBrand && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditableBrand('')}
+                                  className="text-cyan-400 hover:text-cyan-600 cursor-pointer shrink-0"
+                                  title="Clear brand"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          <label
+                            className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-purple-50 border border-purple-200 text-[10px] font-bold text-purple-700 cursor-pointer hover:border-purple-300 hover:bg-purple-100/70 transition-all [color-scheme:light]"
+                            title="Purchase date — tap to correct a misheard date"
+                          >
+                            <CalendarDays className="w-3 h-3 shrink-0" />
+                            <span className="uppercase tracking-wide text-purple-400 text-[9px]">Date</span>
+                            <input
+                              type="date"
+                              value={editableDate || parsedResult.parsed.date || new Date().toISOString().slice(0, 10)}
+                              max={new Date().toISOString().slice(0, 10)}
+                              onChange={e => setEditableDate(e.target.value)}
+                              className="bg-transparent border-none outline-none p-0 text-[10px] font-bold text-purple-700 cursor-pointer w-[8.75rem]"
+                            />
+                          </label>
+                          {(parsedResult.parsed.expiryDate || parsedResult.parsed.intent === 'inventory_add') && (
+                            <div
+                              className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-rose-50 border border-rose-200 text-[10px] font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100/70 transition-all [color-scheme:light]"
+                              title="Expiry date — the incoming batch's expiry; tap to add or correct"
+                            >
+                              <Hourglass className="w-3 h-3 shrink-0" />
+                              <span className="uppercase tracking-wide text-rose-400 text-[9px]">Expiry</span>
+                              <span className="relative block w-[8.5rem]">
+                                <input
+                                  type="date"
+                                  min={new Date().toISOString().slice(0, 10)}
+                                  value={editableExpiry}
+                                  onChange={e => setEditableExpiry(e.target.value)}
+                                  className="bg-transparent border-none outline-none p-0 text-[10px] font-bold text-rose-700 cursor-pointer w-full"
+                                />
+                                {!editableExpiry && (
+                                  <span className="absolute inset-y-0 left-0 flex items-center text-[10px] font-bold text-gray-400 pointer-events-none">
+                                    Not mentioned
+                                  </span>
+                                )}
+                              </span>
+                              {editableExpiry && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditableExpiry('')}
+                                  className="text-rose-400 hover:text-rose-600 cursor-pointer shrink-0"
+                                  title="Clear expiry"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Missing fields warning */}
                       {parsedResult.missingFields && parsedResult.missingFields.length > 0 && (
@@ -919,32 +1161,44 @@ export default function VoiceFAB() {
                         </div>
                       )}
 
-                      {/* Items list with stock preview */}
+                      {/* Items list with steppers + stock preview */}
                       <div className="space-y-2 mb-4">
                         {parsedResult.parsed.items.map((item, i) => {
+                          const pickedName = rowPicks[i] || item.canonicalName || item.item;
                           const existing = inventory.items.find(
-                            inv => inv.name.toLowerCase() === (item.canonicalName || item.item).toLowerCase()
+                            inv => inv.name.toLowerCase() === pickedName.toLowerCase()
                           );
                           const currentStock = existing?.currentStock ?? 0;
                           const unit = item.unit || existing?.unit || 'pcs';
+                          const qty = rowQtys[i] ?? item.quantity;
                           const isAdd = parsedResult.parsed!.intent === 'inventory_add';
                           const isRemove = parsedResult.parsed!.intent === 'inventory_remove' || parsedResult.parsed!.intent === 'inventory_waste';
-                          const newStock = isAdd ? currentStock + item.quantity :
-                            isRemove ? Math.max(0, currentStock - item.quantity) :
-                            item.quantity;
+                          const newStock = isAdd ? currentStock + qty :
+                            isRemove ? Math.max(0, currentStock - qty) :
+                            qty;
                           const stockChange = newStock - currentStock;
                           const diffColor = stockChange > 0 ? 'text-emerald-600' :
                             stockChange < 0 ? 'text-red-600' : 'text-gray-400';
+
+                          const isAmbiguous = !!item.ambiguous || (!item.canonicalName && (item.candidates?.length || 0) > 0);
+                          const candidates = item.candidates && item.candidates.length > 1
+                            ? item.candidates
+                            : inventory.items.filter(
+                                inv => inv.name.toLowerCase().includes((item.item || '').toLowerCase()) ||
+                                       (item.item || '').toLowerCase().includes(inv.name.toLowerCase())
+                              ).map(c => ({ name: c.name, unit: c.unit, currentStock: c.currentStock }));
 
                           return (
                             <div key={i} className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
                               <div className="flex items-start justify-between mb-2">
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-bold text-gray-800 truncate">
-                                    {item.canonicalName || item.item}
+                                    {isAmbiguous
+                                      ? item.item
+                                      : rowPicks[i] || item.canonicalName || item.item}
                                   </p>
                                   <p className="text-[11px] text-gray-400">
-                                    {item.quantity} {unit} × {INTENT_META[parsedResult.parsed!.intent].verb}
+                                    {qty} {unit} × {INTENT_META[parsedResult.parsed!.intent].verb}
                                   </p>
                                 </div>
                                 {existing && (
@@ -957,9 +1211,132 @@ export default function VoiceFAB() {
                                 )}
                               </div>
 
+                              {/* AMBIGUOUS / unresolved item — MUST be resolved before confirm */}
+                              {isAmbiguous && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-2">
+                                  <div className="flex items-center gap-1.5 mb-1.5">
+                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                                    <p className="text-[11px] font-bold text-amber-800">
+                                      Which item did you mean? (unresolved)
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {candidates && candidates.length > 0 ? (
+                                      candidates.map((c, ci) => (
+                                        <button
+                                          key={ci}
+                                          onClick={() => setRowPicks(p => ({ ...p, [i]: c.name }))}
+                                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                                            rowPicks[i] === c.name
+                                              ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]'
+                                              : 'bg-white text-gray-700 border-gray-200 hover:border-[var(--brand-color)]/40'
+                                          }`}
+                                        >
+                                          {c.name} {c.currentStock != null ? `(${c.currentStock} ${c.unit || 'pcs'})` : ''}
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <p className="text-[11px] text-amber-700">
+                                        No matching inventory item found. It may be a new product.
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Quantity stepper */}
+                              <div className="flex items-center justify-between mt-2">
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => setRowQtys(q => ({ ...q, [i]: Math.max(0.05, (q[i] ?? item.quantity) - stepFor(unit)) }))}
+                                    className="w-7 h-7 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
+                                    aria-label={`Decrease ${item.item}`}
+                                  >
+                                    <span className="text-sm leading-none font-bold">−</span>
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={stepFor(unit)}
+                                    value={Math.round((rowQtys[i] ?? item.quantity) * 100) / 100}
+                                    onChange={e => {
+                                      const v = parseFloat(e.target.value);
+                                      if (!isNaN(v) && v >= 0) setRowQtys(q => ({ ...q, [i]: v }));
+                                    }}
+                                    className="w-16 text-center text-sm font-bold bg-white border border-[#e1e2ed] rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
+                                  />
+                                  <button
+                                    onClick={() => setRowQtys(q => ({ ...q, [i]: (q[i] ?? item.quantity) + stepOf(unit) }))}
+                                    disabled={isConfirming}
+                                    className="w-7 h-7 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
+                                    aria-label={`Increase ${rowPicks[i] || item.canonicalName || item.item}`}
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <span className="text-[10px] text-gray-400">{unit}</span>
+                              </div>
+
+                              {/* Purchase rate (₹/unit) — spoken, catalog average, or editable */}
+                              {(() => {
+                                const rateTouched = rowRates[i] !== undefined;
+                                const rateVal = rateTouched ? rowRates[i] ?? undefined : item.rate;
+                                const rateLabel = !rateTouched
+                                  ? item.rateSource === 'spoken'
+                                    ? 'Spoken'
+                                    : item.rateSource === 'average'
+                                      ? 'Avg rate'
+                                      : null
+                                  : null;
+                                return (
+                                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-dashed border-gray-200">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Rate</span>
+                                      {rateLabel && (
+                                        <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                                          item.rateSource === 'spoken'
+                                            ? 'bg-emerald-50 text-emerald-600'
+                                            : 'bg-blue-50 text-blue-600'
+                                        }`}>
+                                          {rateLabel}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-xs text-gray-500">₹</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        step={0.5}
+                                        value={rateVal == null ? '' : rateVal}
+                                        onChange={e => {
+                                          const v = e.target.value.trim();
+                                          setRowRates(q => ({ ...q, [i]: v === '' ? null : parseFloat(v) }));
+                                        }}
+                                        placeholder="—"
+                                        disabled={isConfirming}
+                                        className="w-20 text-right text-sm font-bold bg-white border border-[#e1e2ed] rounded-lg py-1 px-2 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 disabled:opacity-50"
+                                        aria-label={`Rate for ${item.item}`}
+                                      />
+                                      <span className="text-[10px] text-gray-400">/{unit}</span>
+                                      {!rateVal && existing?.averageCost > 0 && (
+                                        <button
+                                          onClick={() => setRowRates(q => ({ ...q, [i]: existing.averageCost }))}
+                                          disabled={isConfirming}
+                                          className="text-[10px] text-blue-600 hover:underline font-semibold whitespace-nowrap cursor-pointer"
+                                          title={`Use catalog average rate ₹${existing.averageCost}/${unit}`}
+                                        >
+                                          avg ₹{existing.averageCost}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
                               {/* Stock level bar */}
                               {existing && existing.currentStock > 0 && (
-                                <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden mt-2">
                                   <div
                                     className={`h-full rounded-full transition-all ${
                                       newStock > existing.maxStock * 0.8 ? 'bg-emerald-500' :
@@ -988,7 +1365,13 @@ export default function VoiceFAB() {
                         </button>
                         <button
                           onClick={handleConfirm}
-                          disabled={isConfirming || parsedResult.parsed.items.length === 0}
+                          disabled={
+                            isConfirming
+                            || parsedResult.parsed.items.length === 0
+                            || parsedResult.parsed.items.some((item, i) =>
+                                (!!item.ambiguous || (!item.canonicalName && (item.candidates?.length || 0) > 0)) && !rowPicks[i]
+                              )
+                          }
                           className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 cursor-pointer transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {isConfirming ? (
@@ -1000,9 +1383,9 @@ export default function VoiceFAB() {
                         </button>
                       </div>
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  )}
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

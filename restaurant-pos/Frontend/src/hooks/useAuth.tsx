@@ -12,6 +12,7 @@ import {
   apiLogoutAll,
   apiGetMe,
 } from '../api/axios';
+import { setAuthToken } from '../api/client';
 import { getDBData } from '../data';
 
 export interface AuthUser {
@@ -71,7 +72,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (username: string, password: string, rememberMe?: boolean) => Promise<LoginResult>;
+  login: (username: string, password: string, rememberMe?: boolean, mode?: 'password' | 'pin' | 'role_pin') => Promise<LoginResult>;
   logout: (allDevices?: boolean) => Promise<void>;
   refreshSession: () => Promise<void>;
   clearError: () => void;
@@ -90,11 +91,21 @@ function hasPersistedSession(): boolean {
   }
 }
 
-function findLocalEmployee(username: string): AuthEmployee | null {
+function findLocalEmployee(username: string, pinOrPassword?: string): AuthEmployee | null {
   try {
     const employees = getDBData<any[]>('pos_employees', []) || [];
     const match = employees.find((emp: any) => emp.username?.toLowerCase() === username.toLowerCase());
     if (!match) return null;
+
+    // Offline fallback must NEVER grant access on username alone. When a
+    // credential was supplied, require it to match the locally cached verifier
+    // (the 4-digit quick PIN for PIN-mode staff). This blocks the prior hole
+    // where any known username could open the terminal while disconnected.
+    if (pinOrPassword) {
+      const cachedPin = match.pin || '';
+      if (pinOrPassword !== cachedPin) return null;
+    }
+
     return {
       id: match.id,
       name: match.name,
@@ -231,14 +242,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     username: string,
     password: string,
     rememberMe = false,
+    mode: 'password' | 'pin' | 'role_pin' = 'pin',
   ): Promise<LoginResult> => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      const result = await apiLogin(username, password, rememberMe);
+      const result = await apiLogin(username, password, rememberMe, mode);
 
       setAccessToken(result.accessToken);
       setRefreshToken(result.refreshToken);
+      // Sync the client.ts module-level auth token too. apiLogin (axios) only
+      // updates the axios instance token; without this the fetch-based API
+      // client (products, customers, bills, …) sends NO Authorization header
+      // after a cold login — every hydrate call 401s and the POS stays empty
+      // until a page reload picks the token up from localStorage.
+      setAuthToken(result.accessToken);
       localStorage.setItem('pos_access_token', result.accessToken);
       localStorage.setItem('pos_refresh_token', result.refreshToken);
       localStorage.setItem('pos_session_mode', 'persisted');
@@ -267,7 +285,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return result;
     } catch (err: any) {
-      const localEmployee = findLocalEmployee(username);
+      const localEmployee = findLocalEmployee(username, password);
       if (localEmployee) {
         localStorage.setItem('pos_current_employee', JSON.stringify(localEmployee));
         localStorage.setItem('pos_session_mode', 'offline');

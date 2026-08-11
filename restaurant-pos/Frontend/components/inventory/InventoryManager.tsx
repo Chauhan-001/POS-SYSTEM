@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, createContext, useContext } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo, createContext, useContext, type Context } from 'react';
 import { motion } from 'motion/react';
 import {
   LayoutDashboard, Package, ShoppingCart, Truck, Trash2, BarChart3,
@@ -6,7 +6,7 @@ import {
   Mic, Activity,
 } from 'lucide-react';
 import type { InventoryPage, InventoryItem, Purchase, TimelineEntry } from './types';
-import { INVENTORY_ITEMS } from './data';
+import { daysUntilExpiry } from './expiryUtils';
 import {
   fetchProducts,
   createProduct as apiCreateProduct,
@@ -18,6 +18,7 @@ import {
   deletePurchase,
   fetchInventoryEvents,
   createInventoryEvent as apiCreateInventoryEvent,
+  CACHE_INVALIDATED_EVENT,
 } from '../../src/api/client';
 
 /** Map a backend Product document into the frontend InventoryItem shape. */
@@ -95,8 +96,75 @@ type InventoryCtxType = {
   refreshItems: () => Promise<void>;
 };
 
+/**
+ * Guarded context access for the Inventory module.
+ *
+ * React contexts created at MODULE scope have a fatal interaction with Vite's
+ * dev HMR: when any file in this module graph is edited, the dev server re-serves
+ * the graph with a fresh `?t=` URL. A partially-updated window can end up holding
+ * TWO instances of this module — and therefore two DIFFERENT InventoryCtx
+ * objects. The <Provider> renders against one, consumers read the other,
+ * useContext() falls back to the null default, and every page crashes with
+ * "Cannot destructure property 'items' of useInventory(...) as it is null".
+ *
+ * Instead of that cryptic crash:
+ *   1. Dev — trigger ONE full page reload (the reload rebuilds the module graph
+ *      from the now-consistent server, restoring the single context instance).
+ *      A sessionStorage flag guarantees the reload happens at most once, so a
+ *      genuine wiring bug can never loop the page.
+ *   2. Otherwise — throw a descriptive error so the error boundary shows an
+ *      actionable message instead of a confusing destructure failure.
+ */
+const CONTEXT_AUTORELOAD_FLAG = 'pos_inv_ctx_autoreloaded';
+
+/** Read/clear the auto-reload flag defensively — storage can throw in
+ *  restricted sandboxes, and a StorageException here would mask the real
+ *  error we are trying to surface. */
+function hasAutoReloaded(): boolean {
+  try {
+    return sessionStorage.getItem(CONTEXT_AUTORELOAD_FLAG) === '1';
+  } catch {
+    return true; // storage unavailable → never auto-reload, just throw below
+  }
+}
+
+function markAutoReloaded(): void {
+  try {
+    sessionStorage.setItem(CONTEXT_AUTORELOAD_FLAG, '1');
+  } catch { /* storage unavailable — the reload below still fires */ }
+}
+
+function useStrictContext<T>(ctx: Context<T>, name: string): T {
+  const value = useContext(ctx);
+  if (value !== null && value !== undefined) return value;
+  // NOTE: the setItem + reload below run during render. The sessionStorage
+  // flag makes this idempotent under React StrictMode's double render, and
+  // the throw (caught by the error boundary) prevents effects from running —
+  // so exactly one reload is scheduled, deferred until React finishes the
+  // erroring render pass.
+  if (import.meta.env.DEV && !hasAutoReloaded()) {
+    markAutoReloaded();
+    // Rebuild the module graph from the now-consistent dev server.
+    setTimeout(() => window.location.reload(), 0);
+  }
+  throw new Error(
+    `${name}: inventory context is unavailable. Reloading the app to rebuild the module graph — if this persists, restart the app.`,
+  );
+}
+
+// Force a full page reload instead of a partial hot update when this module
+// graph is edited in dev. Partial HMR updates split the module into two
+// instances (see useStrictContext above), which is exactly the crash reported
+// as "useInventory(...) is null". Declining hot updates on the context-owning
+// module makes Vite reload the page cleanly on every inventory edit.
+if (import.meta.hot) {
+  // decline() exists at runtime in Vite's HMR client, but the installed
+  // ViteHotContext type is missing it — cast to the runtime shape.
+  (import.meta.hot as unknown as { decline?: () => void }).decline?.();
+}
+
 const InventoryCtx = createContext<InventoryCtxType>(null!);
-export const useInventory = () => useContext(InventoryCtx);
+export const useInventory = () => useStrictContext(InventoryCtx, 'useInventory');
 
 // ─── Shared purchase history (single source of truth across pages) ───
 // Loaded once here so PurchaseEntry, Timeline, Analytics and Dashboard all
@@ -112,7 +180,7 @@ type PurchasesCtxType = {
 };
 
 const PurchasesCtx = createContext<PurchasesCtxType>(null!);
-export const usePurchasesCtx = () => useContext(PurchasesCtx);
+export const usePurchasesCtx = () => useStrictContext(PurchasesCtx, 'usePurchasesCtx');
 
 // ─── Shared inventory activity events (single source of truth) ───
 // Loaded once so the Activity timeline and the Waste page share one feed — a
@@ -122,10 +190,12 @@ type InventoryEventsCtxType = {
   synced: boolean;
   /** Persists a waste/adjustment event; returns true only when saved. */
   addEvent: (data: { type: 'waste' | 'adjusted'; item: string; quantity: number; unit: string; details?: string }) => Promise<boolean>;
+  /** Re-fetches the activity feed from the backend (used after a stock write). */
+  refreshEvents: () => Promise<void>;
 };
 
 const InventoryEventsCtx = createContext<InventoryEventsCtxType>(null!);
-export const useInventoryEventsCtx = () => useContext(InventoryEventsCtx);
+export const useInventoryEventsCtx = () => useStrictContext(InventoryEventsCtx, 'useInventoryEventsCtx');
 
 interface InventoryManagerProps {
   onBack: () => void;
@@ -161,22 +231,36 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
   const [events, setEvents] = useState<TimelineEntry[] | null>(null);
   const [eventsSynced, setEventsSynced] = useState(false);
 
-  // Load the real inventory catalog once (products = items). Falls back to
-  // static demo data when the API is unreachable (offline) — the pages show
-  // the "Offline demo" badge so the user knows the numbers aren't live.
+  // Live expiry counts for the Items nav badge — computed from real product
+  // expiryDate so staff see expiries without opening the page.
+  const expiryBadge = useMemo(() => {
+    let expiring = 0;
+    let expired = 0;
+    for (const i of items) {
+      if (!i.expiryDate) continue;
+      const d = daysUntilExpiry(i.expiryDate);
+      if (d < 0) expired += 1;
+      else if (d <= 7) expiring += 1;
+    }
+    return { expiring, expired };
+  }, [items]);
+
+  // Load the real inventory catalog once (products = items). No demo/seed
+  // fallback: an empty array means the restaurant has no inventory products,
+  // and null (API unreachable) leaves the catalog empty with synced=false so
+  // pages show an honest offline state — never fabricated rows.
   const loadItems = useCallback(async () => {
     try {
       const data = await fetchProducts();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setItems(data.map(productToInventoryItem));
         setItemsSynced(true);
-      } else if (data === null) {
-        // API unreachable — keep demo fallback for offline browsing.
-        setItems(INVENTORY_ITEMS);
+      } else {
+        setItems([]);
         setItemsSynced(false);
       }
     } catch {
-      setItems(INVENTORY_ITEMS);
+      setItems([]);
       setItemsSynced(false);
     }
   }, []);
@@ -185,32 +269,67 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     loadItems();
   }, [loadItems]);
 
+  // The inventory context guard auto-reloads the page ONCE if a stale dev HMR
+  // update ever splits this module into two instances. Re-arm the guard after a
+  // successful mount so a future incident can self-heal again instead of
+  // degrading to a one-shot-per-session recovery.
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(CONTEXT_AUTORELOAD_FLAG);
+    } catch { /* storage unavailable — guard stays tripped, harmless */ }
+  }, []);
+
   // Load real purchase history once for the whole Inventory module. Null when
   // the API is unreachable (offline) so pages fall back to static demo data.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const data = await fetchPurchases({ limit: 500 });
-      if (cancelled) return;
+  // fetchPurchases is TTL-cached (5 min), so remounts are instant, a 5-min
+  // interval re-checks the cache, and a write anywhere invalidates it and
+  // triggers an immediate re-fetch via the cache-invalidated event. A sequence
+  // guard ignores late/out-of-order responses when mount + event + interval
+  // overlap.
+  const purchasesLoadSeq = useRef(0);
+  const loadPurchases = useCallback(() => {
+    const seq = ++purchasesLoadSeq.current;
+    return fetchPurchases({ limit: 500 }).then((data) => {
+      if (seq !== purchasesLoadSeq.current) return;
       setPurchases(data);
       // synced = backend actually answered (non-null). Null (offline) keeps
       // the flag false so pages show the "Offline demo" badge + fallback data.
       setPurchasesSynced(data !== null);
-    })();
-    return () => { cancelled = true; };
+    });
   }, []);
 
+  useEffect(() => { void loadPurchases(); }, [loadPurchases]);
+
   // Load real activity events once for the whole Inventory module.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const data = await fetchInventoryEvents({ limit: 500 });
-      if (cancelled) return;
+  const eventsLoadSeq = useRef(0);
+  const loadEvents = useCallback(() => {
+    const seq = ++eventsLoadSeq.current;
+    return fetchInventoryEvents({ limit: 500 }).then((data) => {
+      if (seq !== eventsLoadSeq.current) return;
       setEvents(data);
       setEventsSynced(data !== null);
-    })();
-    return () => { cancelled = true; };
+    });
   }, []);
+
+  useEffect(() => { void loadEvents(); }, [loadEvents]);
+
+  // Timely freshness while the Inventory module stays open: re-check the
+  // TTL-gated caches every 5 minutes (purchases 5min / events 1h TTL — the
+  // fetches only hit the network when a cache expired), and re-fetch
+  // immediately when a write anywhere invalidates one of our collections.
+  useEffect(() => {
+    const onInvalidated = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail;
+      if (key === 'pos_purchases') void loadPurchases();
+      else if (key === 'pos_inventory_events') void loadEvents();
+    };
+    window.addEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
+    const interval = setInterval(() => { void loadPurchases(); void loadEvents(); }, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
+      clearInterval(interval);
+    };
+  }, [loadPurchases, loadEvents]);
 
   const addPurchase = useCallback((p: Purchase) => {
     setPurchases(prev => (prev ? [p, ...prev] : prev));
@@ -312,6 +431,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     events,
     synced: eventsSynced,
     addEvent,
+    refreshEvents: () => loadEvents(),
   };
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
@@ -410,11 +530,11 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
       <div className="flex flex-col h-full">
         {/* Slim header bar */}
         <div className="bg-white border-b border-[#e1e2ed] px-5 py-2.5 flex items-center gap-3 shrink-0">
-          <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to POS">
+          <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to POS">
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#004ac6] to-blue-500 flex items-center justify-center shadow-sm">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[var(--brand-color)] to-blue-500 flex items-center justify-center shadow-sm">
               <Package className="w-4 h-4 text-white" />
             </div>
             <div className="flex items-center gap-6">
@@ -423,14 +543,29 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
                 {NAV_ITEMS.map(item => {
                   const Icon = item.icon;
                   const isActive = page === item.id;
+                  const showBadge = item.id === 'items' && (expiryBadge.expiring > 0 || expiryBadge.expired > 0);
                   return (
                     <button key={item.id} onClick={() => setPage(item.id)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                        isActive ? 'bg-[#004ac6] text-white shadow-sm' : 'text-gray-500 hover:text-[#004ac6] hover:bg-blue-50'
+                        isActive ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'text-gray-500 hover:text-[var(--brand-color)] hover:bg-blue-50'
                       }`}
                     >
                       <Icon className="w-3.5 h-3.5" />
                       {item.label}
+                      {showBadge && (
+                        <span className="flex items-center gap-1 ml-0.5" aria-label={`${expiryBadge.expired} expired, ${expiryBadge.expiring} expiring soon`}>
+                          {expiryBadge.expiring > 0 && (
+                            <span className="min-w-[16px] h-4 px-1 inline-flex items-center justify-center rounded-full text-[9px] font-black bg-amber-400 text-amber-950" title={`${expiryBadge.expiring} item${expiryBadge.expiring === 1 ? '' : 's'} expiring soon`}>
+                              {expiryBadge.expiring}
+                            </span>
+                          )}
+                          {expiryBadge.expired > 0 && (
+                            <span className="min-w-[16px] h-4 px-1 inline-flex items-center justify-center rounded-full text-[9px] font-black bg-red-500 text-white" title={`${expiryBadge.expired} item${expiryBadge.expired === 1 ? '' : 's'} expired`}>
+                              {expiryBadge.expired}
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -439,7 +574,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
           </div>
           <div className="flex-1" />
           <button onClick={() => setPage('settings')}
-            className="p-1.5 text-gray-400 hover:text-[#004ac6] rounded-lg transition-all cursor-pointer"
+            className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] rounded-lg transition-all cursor-pointer"
             title="Settings"
           >
             <SettingsIcon className="w-4 h-4" />

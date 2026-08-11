@@ -36,6 +36,11 @@ export interface ModuleSettings {
   enableDineInModule?: boolean;
   enableExpenseManagement?: boolean;
   enableDiscountOnBilling?: boolean;
+  /** Online ordering: when a cashier marks an item unavailable from an incoming
+   * order, also block it for NEW online orders (explicit opt-in, default OFF). */
+  autoMarkSoldOutFromOrder?: boolean;
+  /** Master switch for the online Menu Availability controls. */
+  enableMenuAvailability?: boolean;
 }
 
 export interface IBranchSettings extends Document {

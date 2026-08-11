@@ -13,7 +13,15 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface IPurchase extends Document {
   restaurantId: mongoose.Types.ObjectId;
   branchId?: mongoose.Types.ObjectId;
+  /** Vendor name — EMPTY when none was named (e.g. voice "add" without a
+   *  supplier); never fabricate a placeholder like "Voice". */
   supplier: string;
+  /** Brand/variant of the item (e.g. "Amul" for butter). Optional — only
+   *  stored when the merchant actually named a brand. */
+  brand?: string;
+  /** Expiry date of this stock-in batch (YYYY-MM-DD). Optional — only stored
+   *  when the merchant actually mentioned an expiry. */
+  expiryDate?: string;
   item: string;
   category?: string;
   quantity: number;
@@ -31,7 +39,9 @@ const PurchaseSchema = new Schema<IPurchase>(
   {
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true, index: true },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
-    supplier: { type: String, required: true, trim: true },
+    supplier: { type: String, default: '', trim: true },
+    brand: { type: String, default: '', trim: true },
+    expiryDate: { type: String, default: '', trim: true },
     item: { type: String, required: true, trim: true },
     category: { type: String, default: '', trim: true },
     quantity: { type: Number, required: true, min: 0 },

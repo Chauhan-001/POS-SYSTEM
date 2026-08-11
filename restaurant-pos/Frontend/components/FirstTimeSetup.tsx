@@ -117,7 +117,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
         <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl border border-[#e1e2ed] overflow-hidden grid md:grid-cols-5">
           
           {/* Left panel — Branding & info */}
-          <div className="md:col-span-2 bg-gradient-to-br from-[#004ac6] to-[#0031a0] p-8 md:p-10 text-white flex flex-col justify-between relative overflow-hidden">
+          <div className="md:col-span-2 bg-gradient-to-br from-[var(--brand-color)] to-[#0031a0] p-8 md:p-10 text-white flex flex-col justify-between relative overflow-hidden">
             {/* Decorative circles */}
             <div className="absolute -top-20 -right-20 w-40 h-40 bg-white/5 rounded-full" />
             <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full" />
@@ -210,7 +210,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                             value={fullName}
                             onChange={(e) => setFullName(e.target.value)}
                             placeholder="e.g., Rajesh Kumar"
-                            className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6] ${fieldErrors.fullName ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
+                            className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] ${fieldErrors.fullName ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
                           />
                         </div>
                         {fieldErrors.fullName && <p className="text-xs text-red-500 mt-1">{fieldErrors.fullName}</p>}
@@ -227,7 +227,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                             onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
                             placeholder="e.g., 9876543210"
                             maxLength={10}
-                            className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6] ${fieldErrors.phone ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
+                            className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] ${fieldErrors.phone ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
                           />
                         </div>
                         {fieldErrors.phone && <p className="text-xs text-red-500 mt-1">{fieldErrors.phone}</p>}
@@ -243,7 +243,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             placeholder="e.g., owner@restaurant.com"
-                            className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6] ${fieldErrors.email ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
+                            className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] ${fieldErrors.email ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
                           />
                         </div>
                         {fieldErrors.email && <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>}
@@ -260,7 +260,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                               value={password}
                               onChange={(e) => setPassword(e.target.value)}
                               placeholder="Min. 6 characters"
-                              className={`w-full pl-10 pr-10 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6] ${fieldErrors.password ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
+                              className={`w-full pl-10 pr-10 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] ${fieldErrors.password ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
                             />
                             <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -277,7 +277,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                               value={confirmPassword}
                               onChange={(e) => setConfirmPassword(e.target.value)}
                               placeholder="Re-enter password"
-                              className={`w-full pl-10 pr-10 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6] ${fieldErrors.confirmPassword ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
+                              className={`w-full pl-10 pr-10 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] ${fieldErrors.confirmPassword ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
                             />
                             <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                               {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -304,7 +304,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                           value={restaurantName}
                           onChange={(e) => setRestaurantName(e.target.value)}
                           placeholder="e.g., The Royal Bistro"
-                          className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6] ${fieldErrors.restaurantName ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
+                          className={`w-full pl-10 pr-4 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] ${fieldErrors.restaurantName ? 'border-red-300 bg-red-50' : 'border-[#c3c6d7]'}`}
                         />
                       </div>
                       {fieldErrors.restaurantName && <p className="text-xs text-red-500 mt-1">{fieldErrors.restaurantName}</p>}
@@ -315,7 +315,7 @@ export default function FirstTimeSetup({ onSetupComplete }: FirstTimeSetupProps)
                   <button
                     type="submit"
                     disabled={step === 'loading'}
-                    className="w-full bg-[#004ac6] hover:bg-[#003ea8] text-white py-3 rounded-lg font-semibold text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
+                    className="w-full bg-[var(--brand-color)] hover:bg-[#003ea8] text-white py-3 rounded-lg font-semibold text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
                   >
                     {step === 'loading' ? (
                       <>

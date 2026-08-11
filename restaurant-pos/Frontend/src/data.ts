@@ -139,7 +139,11 @@ function setCacheMeta(meta: Record<string, number>): void {
 
 /** Default TTLs for different data categories (in milliseconds) */
 export const CACHE_TTL = {
-  SLOW: 24 * 60 * 60 * 1000,       // 24 hours — products, employees, branches, settings, rewards
+  // 1 hour — products, employees, branches, settings, rewards. Kept short so a
+  // change made on another terminal/restart is picked up within the hour
+  // instead of lingering for a day (writes already trigger an immediate
+  // refresh on the terminal that made them via syncEngine.markStale).
+  SLOW: 60 * 60 * 1000,
   MEDIUM: 5 * 60 * 1000,            // 5 minutes — customers, expenses
   FAST: 30 * 1000,                  // 30 seconds — orders, tables, takeaway
   LIVE: 10 * 1000,                  // 10 seconds — reservations, waiting list
@@ -187,6 +191,47 @@ export function invalidateCache(key: string): void {
 export function clearAllCache(): void {
   try { localStorage.removeItem(CACHE_META_KEY); } catch { /* ignore */ }
 }
+
+// ============================================================
+// ONE-TIME CACHE SCHEMA MIGRATION
+// ============================================================
+// The menu catalog (+ per-branch price and variant maps) is cached in
+// localStorage for offline-first UX. When the product/variant data SHAPE
+// changes — or a stale/incorrect menu was cached by an older build — the old
+// rows must not keep rendering (e.g. Menu Availability showing wrong
+// products/variants instead of the restaurant's real MongoDB menu).
+//
+// On the FIRST launch after this counter is bumped, the product-family keys
+// are purged (data + TTL stamps) exactly once, forcing a fresh fetch from the
+// backend DB. On the second launch the version matches and normal caching
+// resumes. This runs at import time — BEFORE any useState initializer reads
+// the cached catalog — so the app can never hydrate from soon-deleted rows.
+const CACHE_SCHEMA_VERSION = 'products_variants_v2';
+const CACHE_VERSION_KEY = 'pos_cache_schema_version';
+
+// Product-family cache keys that must be re-pulled when the schema changes.
+const SCHEMA_MIGRATED_KEYS = [
+  'pos_products',                       // menu catalog (+ embedded variants)
+  'pos_branch_product_prices',          // branchId → productId → price
+  'pos_branch_variant_prices',          // branchId → productId → variant → price
+];
+
+function runCacheSchemaMigration(): void {
+  try {
+    if (localStorage.getItem(CACHE_VERSION_KEY) === CACHE_SCHEMA_VERSION) return;
+    const meta = getCacheMeta();
+    for (const key of SCHEMA_MIGRATED_KEYS) {
+      try { localStorage.removeItem(key); } catch { /* ignore */ }
+      delete meta[key];
+    }
+    setCacheMeta(meta);
+    try { localStorage.setItem(CACHE_VERSION_KEY, CACHE_SCHEMA_VERSION); } catch { /* ignore */ }
+    // eslint-disable-next-line no-console
+    console.info('[DB] Cache schema migration — product/variant caches cleared (one-time).');
+  } catch { /* ignore */ }
+}
+
+runCacheSchemaMigration();
 
 /** 
  * Compute a DailySales object from an array of bills.

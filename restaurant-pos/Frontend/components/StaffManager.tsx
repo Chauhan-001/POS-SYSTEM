@@ -25,6 +25,8 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
   const [uname, setUname] = useState('');
   const [role, setRole] = useState<'Owner' | 'Manager' | 'Cashier'>('Cashier');
   const [pin, setPin] = useState('');
+  const [password, setPassword] = useState('');
+  const [generatedCreds, setGeneratedCreds] = useState<{ userId: string; password: string } | null>(null);
   const [status, setStatus] = useState<'Active' | 'Inactive'>('Active');
   const [branchId, setBranchId] = useState(branches.length > 0 ? branches[0].id : '');
   
@@ -120,6 +122,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
         role: newEmp.role,
         pin: newEmp.pin,
         status: newEmp.status,
+        ...(password ? { password } : {}),
         ...(newEmp.branchId && /^[a-fA-F0-9]{24}$/.test(newEmp.branchId) ? { branchId: newEmp.branchId } : {}),
       }).then((created: any) => {
         const serverId = created?._id || created?.id;
@@ -134,6 +137,8 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
     setName('');
     setUname('');
     setPin('');
+    setPassword('');
+    setGeneratedCreds(null);
     setRole('Cashier');
     setStatus('Active');
     setBranchId(branches.length > 0 ? branches[0].id : '');
@@ -148,6 +153,31 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
     setStatus(emp.status);
     setBranchId(emp.branchId || (branches.length > 0 ? branches[0].id : ''));
     setIsAdding(true);
+  };
+
+  // Generate a unique User ID + password for the staff member (Owner only).
+  // The plaintext is shown once so it can be handed to the staff member;
+  // only the hash is stored server-side.
+  const handleGenerateCredentials = async () => {
+    setError('');
+    setGeneratedCreds(null);
+    try {
+      const res = await api.generateCredentials({
+        name: name.trim() || role,
+        role,
+        avoid: employees.map((e) => e.username),
+      });
+      if (res?.userId) {
+        setUname(res.userId);
+        setPassword(res.password);
+        setGeneratedCreds({ userId: res.userId, password: res.password });
+      } else {
+        setError('Could not generate credentials. Check your connection.');
+      }
+    } catch (err) {
+      debugWarn('StaffManager', 'generateCredentials failed:', err);
+      setError('Could not generate credentials online. Try again when connected.');
+    }
   };
 
   const handleDeleteEmployee = (empId: string) => {
@@ -193,7 +223,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
           {currentEmployee.role !== 'Cashier' && (
             <button
               onClick={() => { setIsAdding(true); setEditingEmp(null); }}
-              className="flex items-center gap-1 bg-[#004ac6] hover:bg-[#003ea8] text-white px-3 py-1.5 rounded-lg font-semibold text-xs transition-colors shadow-sm cursor-pointer"
+              className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-3 py-1.5 rounded-lg font-semibold text-xs transition-colors shadow-sm cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               Authorize Staff
@@ -212,14 +242,14 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-[#f3f3fe] border border-[#c3c6d7] text-[#004ac6] font-bold text-sm flex items-center justify-center uppercase shadow-inner shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-[#f3f3fe] border border-[#c3c6d7] text-[var(--brand-color)] font-bold text-sm flex items-center justify-center uppercase shadow-inner shrink-0">
                     {emp.name.charAt(0)}
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <strong className="text-xs text-[#191b23] block leading-tight">{emp.name}</strong>
                       {emp.id === currentEmployee.id && (
-                        <span className="text-[9px] font-bold bg-[#004ac6] text-white px-1.5 py-0.2 rounded-full uppercase scale-90">
+                        <span className="text-[9px] font-bold bg-[var(--brand-color)] text-white px-1.5 py-0.2 rounded-full uppercase scale-90">
                           YOU
                         </span>
                       )}
@@ -243,7 +273,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                   <div className="flex flex-col items-end gap-2.5">
                     <div className="text-right">
                       <span className="text-[9px] text-gray-400 font-bold block uppercase tracking-wider">PIN Code</span>
-                      <strong className="text-xs font-mono font-bold tracking-widest text-[#004ac6] bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                      <strong className="text-xs font-mono font-bold tracking-widest text-[var(--brand-color)] bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
                         {emp.pin}
                       </strong>
                     </div>
@@ -251,7 +281,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                     <div className="flex gap-1.5 items-center">
                       <button
                         onClick={() => openEditModal(emp)}
-                        className="p-1 text-gray-500 hover:text-[#004ac6] bg-[#faf8ff] hover:bg-[#e7e7f3] rounded border border-[#e1e2ed] text-[10px] font-semibold cursor-pointer"
+                        className="p-1 text-gray-500 hover:text-[var(--brand-color)] bg-[#faf8ff] hover:bg-[#e7e7f3] rounded border border-[#e1e2ed] text-[10px] font-semibold cursor-pointer"
                       >
                         Modify
                       </button>
@@ -285,7 +315,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
             <div className="space-y-4">
               <div className="border-b border-gray-100 pb-2 mb-2">
                 <h3 className="font-bold text-[#191b23] text-xs flex items-center gap-1">
-                  <Shield className="w-4 h-4 text-[#004ac6]" />
+                  <Shield className="w-4 h-4 text-[var(--brand-color)]" />
                   {editingEmp ? 'Modify Permissions' : 'Authorize Staff'}
                 </h3>
               </div>
@@ -304,7 +334,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                   placeholder="e.g., Ravi Singh"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   required
                 />
               </div>
@@ -312,15 +342,35 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
               {/* ID / Username */}
               <div>
                 <label className="block text-[9px] font-bold uppercase text-gray-500 mb-1">Login Username</label>
-                <input
-                  type="text"
-                  placeholder="e.g., ravi_cashier"
-                  value={uname}
-                  onChange={(e) => setUname(e.target.value)}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6] font-mono lowercase"
-                  disabled={!!editingEmp}
-                  required
-                />
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="e.g., ravi_cashier"
+                    value={uname}
+                    onChange={(e) => setUname(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] font-mono lowercase"
+                    disabled={!!editingEmp}
+                    required
+                  />
+                  {!editingEmp && (
+                    <button
+                      type="button"
+                      onClick={handleGenerateCredentials}
+                      title="Generate a unique User ID + password"
+                      className="px-2.5 py-1.5 rounded-lg bg-[var(--brand-color)]/10 text-[var(--brand-color)] border border-[var(--brand-color)]/30 text-[10px] font-bold hover:bg-[var(--brand-color)]/20 cursor-pointer shrink-0 flex items-center gap-1"
+                    >
+                      <KeyRound className="w-3 h-3" /> Generate
+                    </button>
+                  )}
+                </div>
+                {generatedCreds && (
+                  <div className="mt-2 p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] space-y-0.5">
+                    <p className="font-bold">Generated credentials — share with this staff member:</p>
+                    <p className="font-mono">ID: <strong>{generatedCreds.userId}</strong></p>
+                    <p className="font-mono">Password: <strong>{generatedCreds.password}</strong></p>
+                    <p className="text-[9px] text-emerald-600">Shown once. Only the hashed value is stored.</p>
+                  </div>
+                )}
               </div>
 
               {/* Role select */}
@@ -329,7 +379,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as any)}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                 >
                   <option value="Cashier">Cashier (Standard billing access)</option>
                   <option value="Manager">Manager (Billing, catalog & analytics)</option>
@@ -347,7 +397,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                   <select
                     value={branchId}
                     onChange={(e) => setBranchId(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   >
                     {branches.filter(b => b.isActive).map(b => (
                       <option key={b.id} value={b.id}>
@@ -367,9 +417,23 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                   placeholder="e.g., 3333"
                   value={pin}
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold tracking-widest focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold tracking-widest focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   required
                 />
+              </div>
+
+              {/* Login Password (for User ID + Password sign-in mode) — optional */}
+              <div>
+                <label className="block text-[9px] font-bold uppercase text-gray-500 mb-1">Login Password (optional)</label>
+                <input
+                  type="text"
+                  minLength={4}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Leave blank to use PIN only"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold tracking-widest focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
+                />
+                <p className="text-[9px] text-gray-400 mt-1">Used by the "User ID + Password" sign-in method. You can leave this blank and use the PIN for quick switching.</p>
               </div>
 
               {/* Status */}
@@ -379,7 +443,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                   <select
                     value={status}
                     onChange={(e) => setStatus(e.target.value as any)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   >
                     <option value="Active">Active Authorized</option>
                     <option value="Inactive">Deactivated (Revoked)</option>
@@ -391,14 +455,14 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
             <div className="flex gap-2 pt-4 border-t border-gray-100">
               <button
                 type="button"
-                onClick={() => { setIsAdding(false); setEditingEmp(null); }}
+                onClick={() => { setIsAdding(false); setEditingEmp(null); setPassword(''); setGeneratedCreds(null); }}
                 className="flex-1 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="flex-1 py-1.5 bg-[#004ac6] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer hover:bg-[#003ea8]"
+                className="flex-1 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer hover:bg-[#003ea8]"
               >
                 Save Profile
               </button>
@@ -408,7 +472,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
           /* Login audit trails */
           <div className="p-4 flex flex-col h-full overflow-hidden">
             <div className="border-b border-gray-100 pb-2.5 mb-3 flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-gray-500">
-              <Clock className="w-4 h-4 text-[#004ac6]" />
+              <Clock className="w-4 h-4 text-[var(--brand-color)]" />
               Staff Security Shift Logs
             </div>
 
@@ -420,7 +484,7 @@ export default function StaffManager({ employees, onUpdateEmployees, currentEmpl
                     <span className="text-[9px] font-semibold text-gray-400 font-mono">{ses.ipAddress}</span>
                   </div>
                   <div className="flex justify-between items-center text-[10px] text-gray-500">
-                    <span className="font-medium text-[#004ac6]">{ses.role} opened shift</span>
+                    <span className="font-medium text-[var(--brand-color)]">{ses.role} opened shift</span>
                     <span className="font-mono text-[9px]">{ses.loginTime}</span>
                   </div>
                 </div>

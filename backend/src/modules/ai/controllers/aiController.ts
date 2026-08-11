@@ -26,6 +26,8 @@ import { buildVoiceParsePrompt } from '../prompts/voice';
 import { buildWeatherPrompt } from '../prompts/weather';
 import { buildOfferPrompt, type OfferSuggestionInput } from '../prompts/offers';
 import { fetchWeatherData } from '../services/weatherService';
+import { generateMarketingPlan, generateOfferCopy } from '../../../services/marketingService';
+import type { OfferCopyInput } from '../prompts/offerCopy';
 
 // ─── USAGE RECORDING HELPER ────────────────────────────────────────
 // Fire-and-forget: records each AI call so the Admin Dashboard can show
@@ -188,6 +190,77 @@ export async function offerRecommendations(req: Request, res: Response): Promise
   } catch (error: any) {
     console.error('[AiController] offerRecommendations error:', error.message);
     res.status(500).json({ success: false, error: 'AI offer analysis failed', fallback: true, data: null });
+  }
+}
+
+// ─── MARKETING (Create-with-AI) ─────────────────────────────────────
+
+/**
+ * POST /api/ai/marketing/generate — Build a full marketing plan (offer +
+ * audience + messages + schedule) from the owner's natural-language goal.
+ *
+ * The backend gathers trusted, aggregate-only, tenant-scoped context and the
+ * LLM output is strictly validated server-side. Nothing is ever sent or saved
+ * without explicit user confirmation in the UI.
+ */
+export async function marketingGenerate(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = String((req as AuthenticatedRequest).user?.restaurantId || '');
+    if (!restaurantId) {
+      res.status(400).json({ error: 'Missing restaurant ID' });
+      return;
+    }
+    const { request, tone, language } = req.body;
+    const result = await generateMarketingPlan(restaurantId, { request, tone, language });
+
+    trackUsage(req, 'marketing', {
+      success: true,
+      fallback: result.source !== 'ai',
+      cached: result.cached,
+      latency: result.latency,
+    });
+    res.json(result);
+  } catch (error: any) {
+    console.error('[AiController] marketingGenerate error:', error.message);
+    res.status(500).json({ success: false, error: 'AI marketing generation failed', fallback: true, data: null });
+  }
+}
+
+/**
+ * POST /api/ai/offer-copy — Generate all copy fields (title, description,
+ * WhatsApp, SMS, push, email) for an offer using the existing offerCopy
+ * prompts. Falls back to deterministic templates when AI is unavailable.
+ */
+export async function offerCopy(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = String((req as AuthenticatedRequest).user?.restaurantId || '');
+    if (!restaurantId) {
+      res.status(400).json({ error: 'Missing restaurant ID' });
+      return;
+    }
+    const input: OfferCopyInput = {
+      type: req.body.type,
+      value: req.body.value,
+      discountValue: req.body.discountValue,
+      applicableCategories: req.body.applicableCategories || [],
+      targetAudience: req.body.targetAudience,
+      reason: req.body.reason,
+      minOrderValue: req.body.minOrderValue,
+      durationDays: req.body.durationDays,
+      language: req.body.language,
+    };
+    const result = await generateOfferCopy(restaurantId, input);
+
+    trackUsage(req, 'offer-copy', {
+      success: true,
+      fallback: result.fallback,
+      cached: result.cached,
+      latency: result.latency,
+    });
+    res.json(result);
+  } catch (error: any) {
+    console.error('[AiController] offerCopy error:', error.message);
+    res.status(500).json({ success: false, error: 'AI copy generation failed', fallback: true, data: null });
   }
 }
 

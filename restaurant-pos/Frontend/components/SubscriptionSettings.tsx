@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { CreditCard, AlertTriangle, CheckCircle, Clock, Zap, Shield, Layers, Calendar, Smartphone, FileText, ArrowRight, Loader, Wallet } from 'lucide-react';
 import * as api from '../src/api/client';
 
@@ -109,6 +109,26 @@ function setOfflineSub(data: SubscriptionStatus) {
   } catch { /* ignore */ }
 }
 
+function getOfflinePlans(): Plan[] | null {
+  try {
+    const cached = localStorage.getItem(api.getSubscriptionCacheKeys().plans);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      const age = Date.now() - (parsed?._cachedAt || 0);
+      if (Array.isArray(parsed?.plans) && age < 15 * 60 * 1000) {
+        return parsed.plans;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+function setOfflinePlans(plans: Plan[]) {
+  try {
+    localStorage.setItem(api.getSubscriptionCacheKeys().plans, JSON.stringify({ plans, _cachedAt: Date.now() }));
+  } catch { /* ignore */ }
+}
+
 export default function SubscriptionSettings() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
@@ -117,6 +137,7 @@ export default function SubscriptionSettings() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState(false);
   const [razorpayReady, setRazorpayReady] = useState(false);
   const [manualRenewProcessing, setManualRenewProcessing] = useState(false);
   const [manualRenewResult, setManualRenewResult] = useState<{ invoiceNumber: string; amount: number } | null>(null);
@@ -131,31 +152,67 @@ export default function SubscriptionSettings() {
     if (cached) {
       setSubscription(cached);
     }
+    const cachedPlans = getOfflinePlans();
+    if (cachedPlans) {
+      setPlans(cachedPlans);
+    }
     loadData();
   }, []);
 
   async function loadData() {
     setError(null);
-    try {
-      const [plansData, statusData, historyData, branchUsageData] = await Promise.all([
-        api.fetchPlans(),
-        api.fetchSubscriptionStatus(),
-        api.fetchSubscriptionHistory(),
-        api.fetchBranchUsage(),
-      ]);
-      if (plansData) setPlans(plansData);
-      if (statusData) {
-        setSubscription(statusData);
-        setOfflineSub(statusData);
+    setSessionError(false);
+    // Status is fetched with HTTP-status awareness so an expired session (401)
+    // or unreachable server surfaces a clear message instead of a blank card.
+    // The remaining sections load independently — a single failure never blanks
+    // the whole page (`get()` silently returns null on HTTP/network errors).
+    const [statusDetail, plansData, historyData, branchUsageData] = await Promise.allSettled([
+      api.fetchSubscriptionStatusDetailed(),
+      api.fetchPlans(),
+      api.fetchSubscriptionHistory(),
+      api.fetchBranchUsage(),
+    ]);
+
+    let failed = 0;
+    let sessionExpired = false;
+
+    if (statusDetail.status === 'fulfilled' && statusDetail.value) {
+      const { data, httpStatus, ok } = statusDetail.value;
+      console.log('Fetched subscription status:', { data, httpStatus, ok });
+      if (ok && data) {
+        setSubscription(data);
+        setOfflineSub(data);
+      } else if (httpStatus === 401) {
+        // Live call returned 401 even after the client's auto token-refresh.
+        sessionExpired = true;
+      } else {
+        console.error('Failed to fetch subscription status', statusDetail.value);
+        failed++;
       }
-      if (historyData) setHistory(historyData);
-      if (branchUsageData) setBranchUsage(branchUsageData);
-    } catch (err) {
-      if (!subscription) {
-        setError('Failed to load subscription data');
-      }
-    } finally {
-      setLoading(false);
+    } else {
+      console.error('Failed to fetch subscription status', statusDetail);
+      failed++;
+    }
+
+    if (plansData.status === 'fulfilled' && plansData.value) {
+      console.log('Fetched plans:', plansData.value);
+      setPlans(plansData.value);
+      setOfflinePlans(plansData.value);
+    } else {
+      console.error('Failed to fetch plans', plansData);
+      failed++;
+    }
+    if (historyData.status === 'fulfilled' && historyData.value) setHistory(historyData.value); else failed++;
+    if (branchUsageData.status === 'fulfilled' && branchUsageData.value) setBranchUsage(branchUsageData.value); else failed++;
+
+    setLoading(false);
+    if (sessionExpired) {
+      setSessionError(true);
+    } else if (failed === 4) {
+      setError('Failed to load subscription data. Check that the server is running and your session is active, then retry.');
+    } else if (failed > 0) {
+      // Partial failure — keep showing what loaded but surface a hint.
+      console.warn('[SubscriptionSettings] One or more subscription sections failed to load.');
     }
   }
 
@@ -260,7 +317,7 @@ export default function SubscriptionSettings() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader className="w-6 h-6 animate-spin text-[#004ac6]" />
+        <Loader className="w-6 h-6 animate-spin text-[var(--brand-color)]" />
         <span className="ml-3 text-sm text-gray-500">Loading subscription data...</span>
       </div>
     );
@@ -272,252 +329,123 @@ export default function SubscriptionSettings() {
         <div className="text-center">
           <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-2" />
           <p className="text-sm text-red-500">{error}</p>
-          <button onClick={loadData} className="mt-3 text-xs text-[#004ac6] hover:underline cursor-pointer">Retry</button>
+          <button onClick={loadData} className="mt-3 text-xs text-[var(--brand-color)] hover:underline cursor-pointer">Retry</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (sessionError) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center max-w-sm">
+          <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+          <p className="text-sm font-bold text-[#191b23]">Session expired</p>
+          <p className="text-xs text-gray-500 mt-1">
+            The server says your login session is no longer valid. Please log out and log back in to refresh your session, then retry.
+          </p>
+          <div className="flex items-center justify-center gap-3 mt-4">
+            <button onClick={loadData} className="text-xs text-[var(--brand-color)] hover:underline cursor-pointer">Retry</button>
+          </div>
         </div>
       </div>
     );
   }
 
   const statusConfig = subscription ? STATUS_CONFIG[subscription.status] || STATUS_CONFIG.trial : STATUS_CONFIG.trial;
+  const currentPlan = plans.find(p => p.planId === subscription?.plan);
+  const planName = currentPlan ? currentPlan.name : (subscription?.plan || 'N/A');
 
   return (
-    <div className="flex-1 overflow-y-auto min-h-0 space-y-6 pr-2 pb-6">
-      {/* Current Subscription Status Card */}
-      <div className="bg-white rounded-xl border border-[#e1e2ed] p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-bold text-[#191b23]">Subscription Status</h3>
-            <p className="text-[11px] text-gray-400 mt-0.5">{subscription?.restaurantName}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {subscription && (
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold ${statusConfig.color}`}>
-                {statusConfig.icon}
-                {statusConfig.label}
-              </span>
-            )}
-            <button
-              onClick={loadData}
-              className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"
-              title="Refresh Status"
-            >
-              <Loader className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
+    <div className="flex-1 overflow-y-auto min-h-0 bg-gray-50 p-6 space-y-6">
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Subscription</h2>
+          <p className="text-sm text-gray-500">Manage your plan and billing information.</p>
         </div>
-
-        {subscription && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Plan</p>
-              <p className="text-sm font-bold text-[#191b23] mt-0.5 capitalize">{subscription.plan}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Devices</p>
-              <p className="text-sm font-bold text-[#191b23] mt-0.5">{subscription.currentDevices} / {subscription.maxDevices}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
-                {subscription.status === 'trial' ? 'Trial Ends' : 'Expires'}
-              </p>
-              <p className="text-sm font-bold text-[#191b23] mt-0.5">
-                {formatDate(subscription.trialEnd || subscription.expiryDate)}
-                {subscription.status !== 'suspended' && daysRemaining(subscription.trialEnd || subscription.expiryDate) > 0 && (
-                  <span className="text-[10px] text-gray-400 font-normal ml-1">({daysRemaining(subscription.trialEnd || subscription.expiryDate)}d left)</span>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Renewal</p>
-              <p className="text-sm font-bold text-[#191b23] mt-0.5">{formatDate(subscription.renewalDate)}</p>
-            </div>
-          </div>
-        )}
+        <button
+          onClick={loadData}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer"
+        >
+          <Loader className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
-      {/* Branch Usage Card */}
-      {branchUsage && (
-        <div className="bg-white rounded-xl border border-[#e1e2ed] p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-[#191b23]">Branch Usage</h3>
-            <span className="text-xs text-gray-400">{branchUsage.plan}</span>
-          </div>
-          <div className="flex items-center gap-4 mb-3">
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] text-gray-400 uppercase font-semibold">
-                  {branchUsage.usage.totalBranches} / {branchUsage.maxBranches === 0 ? 'Unlimited' : branchUsage.maxBranches} Branches
-                </span>
-                <span className="text-xs font-bold text-[#191b23]">
-                  {typeof branchUsage.usage.remainingBranches === 'number' 
-                    ? `${branchUsage.usage.remainingBranches} remaining` 
-                    : branchUsage.usage.remainingBranches}
-                </span>
+      {/* ── Status Card ── */}
+      {subscription && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+          <div className="flex items-start justify-between mb-6">
+            <div className="flex items-center gap-4">
+              <div className={`p-3 rounded-xl ${statusConfig.color.split(' ')[1]}`}>
+                {statusConfig.icon}
               </div>
-              {branchUsage.maxBranches > 0 && (
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${Math.min(100, (branchUsage.usage.totalBranches / branchUsage.maxBranches) * 100)}%`,
-                      backgroundColor: branchUsage.usage.totalBranches >= branchUsage.maxBranches ? '#ef4444' : '#22c55e'
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            {branchUsage.branches.map((b: any) => (
-              <div key={b.id} className="flex items-center justify-between py-1 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: b.status === 'active' ? '#22c55e' : '#9ca3af' }} />
-                  <span className="font-medium text-[#191b23]">{b.name}</span>
-                  {b.isHeadBranch && <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-purple-100 text-purple-700">HEAD</span>}
-                </div>
-                <span className="text-gray-400">{b.employees} emp · {b.tables} tbl</span>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">{planName}</h3>
+                <p className="text-sm text-gray-500">{subscription.restaurantName}</p>
               </div>
-            ))}
-          </div>
-          {branchUsage.maxBranches > 0 && branchUsage.usage.totalBranches >= branchUsage.maxBranches && (
-            <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-              <span className="font-bold">Branch limit reached.</span> Upgrade your plan to create more branches.
             </div>
-          )}
-        </div>
-      )}
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${statusConfig.color}`}>
+              {statusConfig.label}
+            </span>
+          </div>
 
-      {/* Grace / Suspended Warnings */}
-      {subscription?.status === 'grace' && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-bold text-amber-800">Grace Period Active</p>
-            <p className="text-xs text-amber-700 mt-1">
-              Your subscription expired. Renew now to avoid suspension.
-              {subscription.graceEnd && ` Grace ends ${formatDate(subscription.graceEnd)}.`}
-            </p>
-          </div>
-        </div>
-      )}
-      {subscription?.status === 'suspended' && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
-          <Shield className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-bold text-red-800">Subscription Suspended</p>
-            <p className="text-xs text-red-700 mt-1">
-              Your subscription has been suspended. Renew now to restore full access.
-            </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gray-50 rounded-xl p-4">
+              <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Devices Used</p>
+              <div className="flex items-end gap-2">
+                <p className="text-2xl font-bold text-gray-900">{subscription.currentDevices}</p>
+                <p className="text-sm text-gray-500 mb-1">/ {subscription.maxDevices}</p>
+              </div>
+              <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                <div 
+                  className="h-full bg-blue-600 rounded-full" 
+                  style={{ width: `${Math.min(100, (subscription.currentDevices / subscription.maxDevices) * 100)}%` }} 
+                />
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-4">
+              <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Expires On</p>
+              <p className="text-lg font-bold text-gray-900">{formatDate(subscription.trialEnd || subscription.expiryDate)}</p>
+              <p className="text-xs text-gray-500">{daysRemaining(subscription.trialEnd || subscription.expiryDate)} days remaining</p>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-4">
+              <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Next Renewal</p>
+              <p className="text-lg font-bold text-gray-900">{formatDate(subscription.renewalDate)}</p>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Manual Renew Section — shown when subscription needs renewal */}
-      {(subscription?.status === 'suspended' || subscription?.status === 'grace') && (
-        <div className="bg-white rounded-xl border border-[#e1e2ed] p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Wallet className="w-4 h-4 text-[#004ac6]" />
-              <h3 className="text-sm font-bold text-[#191b23]">Pay Offline (Cash / Bank)</h3>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500 mb-4">
-            If you've made a payment outside the online gateway, click below to record it and instantly reactivate your subscription. An invoice will be generated for your records.
-          </p>
-          {manualRenewResult ? (
-            <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-center">
-              <CheckCircle className="w-6 h-6 text-green-500 mx-auto mb-2" />
-              <p className="text-sm font-bold text-green-800">Subscription Reactivated!</p>
-              <div className="mt-2 space-y-1 text-xs text-green-700">
-                <p>Invoice: <span className="font-semibold">{manualRenewResult.invoiceNumber}</span></p>
-                <p>Amount: <span className="font-semibold">₹{manualRenewResult.amount}</span></p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleManualRenew}
-                disabled={manualRenewProcessing}
-                className="px-5 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003a9f] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
-              >
-                {manualRenewProcessing ? (
-                  <><Loader className="w-3.5 h-3.5 animate-spin" /> Processing...</>
-                ) : (
-                  <><CheckCircle className="w-3.5 h-3.5" /> Confirm Payment & Reactivate</>
-                )}
-              </button>
-              <span className="text-[10px] text-gray-400">
-                Payment already made outside the app
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Plan Cards */}
+      {/* ── Plans Grid ── */}
       <div>
-        <h3 className="text-sm font-bold text-[#191b23] mb-3">Available Plans</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <h3 className="text-lg font-bold text-gray-900 mb-4">Available Plans</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {plans.map((plan) => {
             const isCurrentPlan = subscription?.plan === plan.planId;
-            const needsPayment = subscription?.status !== 'active' || !isCurrentPlan;
-
             return (
-              <div
-                key={plan.planId}
-                className={`relative bg-white rounded-xl border p-5 transition-all ${
-                  isCurrentPlan ? 'border-[#004ac6] ring-1 ring-[#004ac6]' : 'border-[#e1e2ed] hover:border-[#004ac6]'
-                }`}
-              >
-                {isCurrentPlan && (
-                  <span className="absolute top-3 right-3 text-[10px] font-bold text-[#004ac6] bg-blue-50 px-2 py-0.5 rounded-full">Current</span>
-                )}
-                <h4 className="text-base font-bold text-[#191b23]">{plan.name}</h4>
-                <p className="text-[11px] text-gray-400 mt-1">{plan.description}</p>
-                <div className="mt-3 flex items-baseline gap-1">
-                  <span className="text-2xl font-bold text-[#191b23]">₹{plan.price}</span>
-                  <span className="text-[11px] text-gray-400">/month</span>
+              <div key={plan.planId} className={`bg-white rounded-2xl border ${isCurrentPlan ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200'} p-6 shadow-sm`}>
+                <h4 className="text-lg font-bold text-gray-900">{plan.name}</h4>
+                <p className="text-sm text-gray-500 mt-1 mb-4">{plan.description}</p>
+                <div className="flex items-baseline gap-1 mb-6">
+                  <span className="text-3xl font-bold text-gray-900">₹{plan.price}</span>
+                  <span className="text-sm text-gray-500">/month</span>
                 </div>
-                <ul className="mt-4 space-y-2">
-                  <li className="flex items-center gap-2 text-xs text-gray-600">
-                    <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                    Up to {plan.maxUsers} users
-                  </li>
-                  <li className="flex items-center gap-2 text-xs text-gray-600">
-                    <Smartphone className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                    Up to {plan.maxDevices} devices
-                  </li>
+                <ul className="space-y-3 mb-6">
                   {plan.features.map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-xs text-gray-600">
-                      <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                    <li key={f} className="flex items-center gap-2 text-sm text-gray-700">
+                      <CheckCircle className="w-4 h-4 text-green-500" />
                       {f.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                     </li>
                   ))}
-                  {plan.aiEnabled && (
-                    <li className="flex items-center gap-2 text-xs text-purple-600">
-                      <Zap className="w-3.5 h-3.5 shrink-0" />
-                      AI-Powered Features
-                    </li>
-                  )}
                 </ul>
                 <button
-                  type="button"
                   onClick={() => handleSubscribe(plan.planId)}
-                  disabled={processing || (isCurrentPlan && subscription?.status === 'active')}
-                  className={`mt-5 w-full py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                    isCurrentPlan && subscription?.status === 'active'
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : 'bg-[#004ac6] text-white hover:bg-[#003a9f] disabled:opacity-50 disabled:cursor-not-allowed'
-                  }`}
+                  disabled={isCurrentPlan}
+                  className={`w-full py-3 rounded-xl font-bold transition ${isCurrentPlan ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'} cursor-pointer`}
                 >
-                  {processing ? (
-                    <><Loader className="w-3.5 h-3.5 animate-spin" /> Processing...</>
-                  ) : isCurrentPlan && subscription?.status === 'active' ? (
-                    'Current Plan'
-                  ) : (
-                    <><Zap className="w-3.5 h-3.5" /> {subscription?.status === 'trial' ? 'Subscribe Now' : subscription?.status === 'suspended' ? 'Reactivate' : 'Upgrade'}</>
-                  )}
+                  {isCurrentPlan ? 'Current Plan' : 'Upgrade Plan'}
                 </button>
               </div>
             );
@@ -525,31 +453,30 @@ export default function SubscriptionSettings() {
         </div>
       </div>
 
-      {/* Payment History */}
-      <div className="bg-white rounded-xl border border-[#e1e2ed] p-5">
-        <h3 className="text-sm font-bold text-[#191b23] mb-3">Payment History</h3>
+      {/* ── Payment History ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+        <h3 className="text-lg font-bold text-gray-900 mb-4">Payment History</h3>
         {history && history.payments.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-[#e1e2ed]">
-                  <th className="text-left py-2 px-2 text-gray-400 font-semibold">Date</th>
-                  <th className="text-left py-2 px-2 text-gray-400 font-semibold">Invoice</th>
-                  <th className="text-left py-2 px-2 text-gray-400 font-semibold">Amount</th>
-                  <th className="text-left py-2 px-2 text-gray-400 font-semibold">Status</th>
+            <table className="w-full text-sm">
+              <thead className="text-gray-500 border-b border-gray-100">
+                <tr>
+                  <th className="text-left py-3">Date</th>
+                  <th className="text-left py-3">Invoice</th>
+                  <th className="text-left py-3">Amount</th>
+                  <th className="text-right py-3">Status</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-100">
                 {history.payments.map((p: any) => (
-                  <tr key={p._id} className="border-b border-[#f0f0f5]">
-                    <td className="py-2 px-2 text-[#191b23]">{formatDate(p.createdAt)}</td>
-                    <td className="py-2 px-2 text-[#191b23]">{p.invoiceNumber || '-'}</td>
-                    <td className="py-2 px-2 text-[#191b23] font-semibold">₹{p.amount}</td>
-                    <td className="py-2 px-2">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                        p.status === 'success' ? 'text-green-600 bg-green-50' : p.status === 'created' ? 'text-blue-600 bg-blue-50' : 'text-red-600 bg-red-50'
+                  <tr key={p._id}>
+                    <td className="py-3 text-gray-900">{formatDate(p.createdAt)}</td>
+                    <td className="py-3 text-gray-600">{p.invoiceNumber || '-'}</td>
+                    <td className="py-3 font-semibold text-gray-900">₹{p.amount}</td>
+                    <td className="py-3 text-right">
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                        p.status === 'success' ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'
                       }`}>
-                        {p.status === 'success' ? <CheckCircle className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
                         {p.status}
                       </span>
                     </td>
@@ -559,7 +486,7 @@ export default function SubscriptionSettings() {
             </table>
           </div>
         ) : (
-          <p className="text-xs text-gray-400">No payment records yet.</p>
+          <p className="text-sm text-gray-500">No payment history found.</p>
         )}
       </div>
     </div>

@@ -6,6 +6,7 @@ export const loginSchema = z.object({
   phone: phone.optional(),
   username: z.string().min(1).max(100).optional(),
   password: z.string().min(1, 'Password is required').max(100),
+  mode: z.enum(['password', 'pin', 'role_pin']).optional().default('pin'),
   rememberMe: z.boolean().optional().default(false),
   // Server-attributed context (IP + User-Agent) for session/login-history.
   ipAddress: z.string().max(64).optional(),
@@ -49,3 +50,9 @@ export const ownerRegistrationSchema = z.object({
   message: 'Passwords do not match',
   path: ['confirmPassword'],
 });
+
+export const generateCredentialsSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(40),
+  role: z.enum(['Owner', 'Manager', 'Cashier']).default('Cashier'),
+  avoid: z.array(z.string()).optional(),
+}).strict();

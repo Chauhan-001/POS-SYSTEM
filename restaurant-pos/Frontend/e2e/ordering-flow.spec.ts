@@ -85,7 +85,9 @@ test.describe('Full POS Ordering Flow', () => {
     await expect(cartArea).not.toContainText('Empty Bill', { timeout: 5_000 });
 
     await burgerCard.click();
-    await expect(page.locator('text=1 items')).toBeVisible({ timeout: 3_000 });
+    // Two clicks → quantity 2 → the cart badge reads "2 items" (was "1 items"
+    // before — a stale assertion that could never pass after the second click).
+    await expect(page.locator('text=2 items')).toBeVisible({ timeout: 3_000 });
   });
 
   test('should complete the full checkout flow with payment', async ({ page }) => {

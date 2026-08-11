@@ -40,7 +40,7 @@ export class EmployeeService {
   /**
    * Create a new employee. PIN is required.
    */
-  async create(data: { username: string; name: string; role: string; pin: string; branchId?: string }) {
+  async create(data: { username: string; name: string; role: string; pin: string; password?: string; branchId?: string }) {
     if (!data.pin) throw new AppError(400, 'PIN is required');
     // PINs must be bcrypt-hashed at rest so authService.verifyPin (bcrypt.compare)
     // succeeds on login. Storing plaintext made every API-created employee unable
@@ -48,6 +48,7 @@ export class EmployeeService {
     const employee = await employeeRepo.create({
       ...data,
       pin: await hashPin(data.pin),
+      password: data.password ? await hashPin(data.password) : undefined,
     } as any);
     return this.stripPin(employee);
   }
@@ -62,6 +63,9 @@ export class EmployeeService {
     if (updateData.pin && !isBcryptHash(updateData.pin)) {
       updateData.pin = await hashPin(updateData.pin);
     }
+    if (updateData.password && !isBcryptHash(updateData.password)) {
+      updateData.password = await hashPin(updateData.password);
+    }
     const employee = await employeeRepo.update(id, updateData);
     if (!employee) return null;
     return this.stripPin(employee);
@@ -75,11 +79,11 @@ export class EmployeeService {
   }
 
   /**
-   * Strip the PIN field from employee data before returning to client.
+   * Strip the PIN/password fields from employee data before returning to client.
    */
   private stripPin(employee: any) {
     const obj = employee.toObject ? employee.toObject() : employee;
-    const { pin, ...safe } = obj;
+    const { pin, password, ...safe } = obj;
     return safe;
   }
 }

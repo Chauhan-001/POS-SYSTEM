@@ -137,6 +137,21 @@ export async function converse(
   };
   addTurn(restaurantId, employeeId, merchantTurn);
 
+  // Capture a spoken supplier/date/brand into the conversation state so a
+  // voice "add" can record who supplied the stock and when (defaults to
+  // today) and which brand it was. Kept across turns — the merchant can name
+  // the supplier/brand on a follow-up turn ("... from Verka Dairy") after
+  // stating the item.
+  if (parsed.supplier || parsed.date || parsed.brand) {
+    updateContext(restaurantId, employeeId, {
+      pendingSupplier: parsed.supplier || state.pendingSupplier,
+      pendingDate: parsed.date || state.pendingDate,
+      pendingBrand: parsed.brand || state.pendingBrand,
+      pendingExpiryDate: parsed.expiryDate || state.pendingExpiryDate,
+    });
+    state = getContextById(state.conversationId)!;
+  }
+
   // ─── Step 4: Check for "yes/no" responses (answer to previous question) ──
   const isAffirmative = /^(yes|haan|ha|hmm|ok|ठीक|हाँ|confirm|confirm karo|done|karo|kar do|theek)\b/i.test(transcript.trim());
   const isNegative = /^(no|nahi|nhi|नहीं|cancel|cancel karo|cancel kar do|hatao|wrong|galat)\b/i.test(transcript.trim());
@@ -376,6 +391,11 @@ export async function converse(
         type: 'confirmation',
         question: response.message,
       }],
+      // Keep the spoken supplier/date/brand/expiry alongside the confirmed action.
+      ...(parsed.supplier ? { pendingSupplier: parsed.supplier } : {}),
+      ...(parsed.date ? { pendingDate: parsed.date } : {}),
+      ...(parsed.brand ? { pendingBrand: parsed.brand } : {}),
+      ...(parsed.expiryDate ? { pendingExpiryDate: parsed.expiryDate } : {}),
     });
 
     return {
@@ -444,10 +464,18 @@ async function executeFinalAction(
         itemName: productName,
         quantity,
         unit,
+        // Carry the spoken purchase price into averageCost on add.
+        purchaseRate: state.pendingPurchasePrice || undefined,
       }],
       performedBy: employeeId || 'system',
       performedByName: employeeName || 'System',
       source: 'voice',
+      // Voice adds record the named supplier + brand + expiry + spoken date
+      // (today when absent) into the purchases feed + item history.
+      supplier: state.pendingSupplier,
+      date: state.pendingDate,
+      brand: state.pendingBrand,
+      expiryDate: state.pendingExpiryDate,
     });
 
     // Log audit
@@ -471,9 +499,12 @@ async function executeFinalAction(
 
     completeContext(restaurantId, employeeId, 'confirmed');
 
+    const extra =
+      (state.pendingSupplier ? ` from ${state.pendingSupplier}` : '') +
+      (state.pendingDate ? ` on ${state.pendingDate}` : '');
     const doneTurn: ConversationTurn = {
       role: 'assistant',
-      message: `${productName} — done! ${quantity} ${unit} updated.`,
+      message: `${productName} — done! ${quantity} ${unit} updated${extra}.`,
       timestamp: new Date(),
     };
     addTurn(restaurantId, employeeId, doneTurn);
@@ -481,7 +512,7 @@ async function executeFinalAction(
     return {
       success: true,
       conversationId: state.conversationId,
-      message: `${productName} — done! ${quantity} ${unit} updated.`,
+      message: `${productName} — done! ${quantity} ${unit} updated${extra}.`,
       responseType: 'result',
       resolution: state.activeProduct?.resolution,
       auditLogId: auditResult.logId,

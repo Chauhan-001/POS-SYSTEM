@@ -44,5 +44,6 @@ const OfferAnalyticsSchema = new Schema<IOfferAnalytics>(
 
 OfferAnalyticsSchema.index({ offerId: 1, snapshotDate: -1 });
 OfferAnalyticsSchema.index({ restaurantId: 1, snapshotDate: -1 });
+OfferAnalyticsSchema.index({ restaurantId: 1, offerId: 1, snapshotDate: -1 });
 
 export default mongoose.model<IOfferAnalytics>('OfferAnalytics', OfferAnalyticsSchema);

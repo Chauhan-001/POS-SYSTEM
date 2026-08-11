@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2 } from 'lucide-react';
 import { Product, ProductVariant, Branch } from '../src/types';
 import * as api from '../src/api/client';
 import { debugWarn } from '../src/utils/debugLog';
@@ -134,6 +134,60 @@ export default function ProductManager({
   // Variant pricing: branchId → { variantName: price }
   const [variantPricingForm, setVariantPricingForm] = useState<Record<string, Record<string, string>>>({});
 
+  // ── Customer-site visibility ─────────────────────────────────────
+  // productId → MenuAvailabilityState (default visible + available). Loaded
+  // once from the backend so the owner can list/unlist products on the
+  // customer website right from the product card. Hidden products never
+  // appear on the site (not even SOLD OUT).
+  const [availabilityMap, setAvailabilityMap] = useState<Record<string, any>>({});
+  const [siteTogglePending, setSiteTogglePending] = useState<string | null>(null);
+  const [siteVisibilityLoaded, setSiteVisibilityLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.fetchAvailability().then((rows: any[]) => {
+      if (cancelled) return;
+      if (Array.isArray(rows)) {
+        const map: Record<string, any> = {};
+        for (const r of rows) {
+          if (r?.productId) map[r.productId] = r;
+        }
+        setAvailabilityMap(map);
+      }
+      setSiteVisibilityLoaded(true);
+    }).catch(() => { if (!cancelled) setSiteVisibilityLoaded(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  /** Toggle whether a product is listed on the customer website. */
+  const handleToggleSiteVisibility = (product: Product) => {
+    // Only server-backed products (Mongo id) can be persisted.
+    if (!/^[a-fA-F0-9]{24}$/.test(product.id)) return;
+    const current = availabilityMap[product.id];
+    const nextVisible = !(current?.visibleOnSite !== false);
+    // Preserve the current sold-out status + its auto-restore timer + reason —
+    // only visibility flips (the backend keeps unavailableUntil/reason when
+    // the caller doesn't override them, so hiding never wipes a restore timer).
+    const currentStatus = current?.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE';
+    // Optimistic flip first — the API layer queues offline writes.
+    setAvailabilityMap((prev) => ({
+      ...prev,
+      [product.id]: { ...(prev[product.id] || {}), visibleOnSite: nextVisible },
+    }));
+    setSiteTogglePending(product.id);
+    api.updateAvailabilityBulk({
+      items: [{
+        productId: product.id,
+        status: currentStatus,
+        visibleOnSite: nextVisible,
+        // Pass through any existing restore timer/reason untouched.
+        ...(current?.unavailableUntil ? { unavailableUntil: current.unavailableUntil } : {}),
+        reason: nextVisible ? (current?.reason || 'Owner re-listed on website') : (current?.reason || 'Owner removed from website'),
+      }],
+    }).catch((err) => debugWarn('ProductManager', 'site visibility toggle failed:', err))
+      .finally(() => setSiteTogglePending((cur) => (cur === product.id ? null : cur)));
+  };
+
   const openPricingModal = (product: Product) => {
     const existing: Record<string, string> = {};
     branches.filter(b => b.isActive).forEach(b => {
@@ -175,6 +229,21 @@ export default function ProductManager({
     });
     onSetBranchProductPrices?.(updated);
 
+    // BACKEND CALLED — persist the branch-price map to /api/products so the
+    // customer site (and other terminals) price this item the same way. Only
+    // products that exist server-side (Mongo id) can be updated.
+    const pid = pricingModalProduct.id;
+    if (/^[a-fA-F0-9]{24}$/.test(pid)) {
+      const branchPriceMap: Record<string, number> = {};
+      branches.filter(b => b.isActive).forEach(b => {
+        const val = pricingForm[b.id]?.trim();
+        if (val && !isNaN(Number(val))) branchPriceMap[b.id] = Number(val);
+      });
+      api.updateProduct(pid, { branchPrice: branchPriceMap })
+        .then(() => debugWarn('ProductManager', 'branch prices synced to backend'))
+        .catch(err => debugWarn('ProductManager', 'updateProduct branchPrice failed:', err));
+    }
+
     // Save variant prices
     if (pricingModalProduct.variants && pricingModalProduct.variants.length > 0) {
       const vUpdated = { ...branchVariantPrices };
@@ -200,6 +269,25 @@ export default function ProductManager({
         });
       });
       onSetBranchVariantPrices?.(vUpdated);
+
+      // BACKEND CALLED — persist the per-variant branch-price maps
+      // (variantName → branchId → price) so other terminals and future
+      // refreshes price variants the same way. The backend applies these in
+      // place and never recreates the variant docs (safe against clobbering).
+      if (/^[a-fA-F0-9]{24}$/.test(pid)) {
+        const variantBranchPrices: Record<string, Record<string, number>> = {};
+        pricingModalProduct.variants!.forEach(v => {
+          const map: Record<string, number> = {};
+          branches.filter(b => b.isActive).forEach(b => {
+            const val = variantPricingForm[b.id]?.[v.name]?.trim();
+            if (val && !isNaN(Number(val))) map[b.id] = Number(val);
+          });
+          variantBranchPrices[v.name] = map;
+        });
+        api.updateProduct(pid, { variantBranchPrices })
+          .then(() => debugWarn('ProductManager', 'variant branch prices synced to backend'))
+          .catch(err => debugWarn('ProductManager', 'updateProduct variantBranchPrices failed:', err));
+      }
     }
 
     setPricingModalProduct(null);
@@ -497,13 +585,13 @@ export default function ProductManager({
               placeholder="Search by name or code..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
             />
           </div>
 
           <button
             onClick={openAddModal}
-            className="flex items-center gap-1 bg-[#004ac6] hover:bg-[#003ea8] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer shrink-0"
+            className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
             Add New Product
@@ -535,7 +623,7 @@ export default function ProductManager({
             onClick={() => setSelectedCategory(cat)}
             className={`px-4 py-1.5 rounded-full font-semibold text-xs transition-all whitespace-nowrap cursor-pointer ${
               selectedCategory === cat
-                ? 'bg-[#004ac6] text-white shadow-sm'
+                ? 'bg-[var(--brand-color)] text-white shadow-sm'
                 : 'bg-white text-gray-600 border border-[#e1e2ed] hover:bg-[#f3f3fe]'
             }`}
           >
@@ -562,7 +650,7 @@ export default function ProductManager({
               input.value = '';
             }
           }}
-          className="flex items-center gap-1.5 border border-dashed border-gray-300 rounded-full pl-3 pr-1 py-0.5 bg-gray-50/50 hover:bg-gray-50 focus-within:border-[#004ac6] focus-within:bg-white transition-all shrink-0 ml-1"
+          className="flex items-center gap-1.5 border border-dashed border-gray-300 rounded-full pl-3 pr-1 py-0.5 bg-gray-50/50 hover:bg-gray-50 focus-within:border-[var(--brand-color)] focus-within:bg-white transition-all shrink-0 ml-1"
         >
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Add Cat:</span>
           <input 
@@ -574,7 +662,7 @@ export default function ProductManager({
           />
           <button 
             type="submit" 
-            className="p-1 rounded-full bg-[#004ac6] hover:bg-[#003ea8] text-white cursor-pointer transition-colors"
+            className="p-1 rounded-full bg-[var(--brand-color)] hover:bg-[#003ea8] text-white cursor-pointer transition-colors"
             title="Create Category"
           >
             <Plus className="w-2.5 h-2.5" />
@@ -650,7 +738,7 @@ export default function ProductManager({
                   {/* Header Title & Cat */}
                   <div className="flex justify-between items-start mb-1">
                     <h3 className="font-bold text-xs text-[#191b23] line-clamp-1">{product.name}</h3>
-                    <span className="text-[9px] font-bold bg-[#f3f3fe] text-[#004ac6] px-2 py-0.5 rounded-full uppercase">
+                    <span className="text-[9px] font-bold bg-[#f3f3fe] text-[var(--brand-color)] px-2 py-0.5 rounded-full uppercase">
                       {product.category}
                     </span>
                   </div>
@@ -693,9 +781,37 @@ export default function ProductManager({
                     {product.availability ? 'Active (Ready)' : 'Sold Out (Inact)'}
                   </button>
 
+                  {/* Customer-site visibility toggle — list/unlist on the
+                      customer website. Hidden products never appear on the site. */}
+                  <button
+                    onClick={() => handleToggleSiteVisibility(product)}
+                    disabled={siteTogglePending === product.id || !/^[a-fA-F0-9]{24}$/.test(product.id) || !siteVisibilityLoaded}
+                    title={!/^[a-fA-F0-9]{24}$/.test(product.id)
+                      ? 'Save this product to the cloud first to control website visibility'
+                      : availabilityMap[product.id]?.visibleOnSite === false
+                        ? 'Hidden from website — click to show on the customer site'
+                        : 'Shown on website — click to hide from the customer site'}
+                    className={`relative flex-1 py-1.5 px-2 rounded-lg font-bold text-[10px] transition-all cursor-pointer text-center disabled:opacity-40 disabled:cursor-not-allowed ${
+                      availabilityMap[product.id]?.visibleOnSite === false
+                        ? 'bg-gray-100 hover:bg-gray-200 text-gray-500 border border-gray-200'
+                        : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {siteTogglePending === product.id ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : availabilityMap[product.id]?.visibleOnSite === false ? (
+                        <Globe className="w-3 h-3" />
+                      ) : (
+                        <Globe2 className="w-3 h-3" />
+                      )}
+                      {availabilityMap[product.id]?.visibleOnSite === false ? 'Hidden' : 'On Site'}
+                    </span>
+                  </button>
+
                   <button
                     onClick={() => openEditModal(product)}
-                    className="p-1.5 text-gray-500 hover:text-[#004ac6] bg-[#faf8ff] hover:bg-[#e7e7f3] border border-[#e1e2ed] rounded-lg transition-all cursor-pointer"
+                    className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[#faf8ff] hover:bg-[#e7e7f3] border border-[#e1e2ed] rounded-lg transition-all cursor-pointer"
                     title="Edit Item details"
                   >
                     <Edit2 className="w-3.5 h-3.5" />
@@ -781,7 +897,7 @@ export default function ProductManager({
             <div className="p-6 pt-0 flex justify-end">
                 <button
                   onClick={() => setIsCategoryModalOpen(false)}
-                  className="px-4 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold cursor-pointer"
+                  className="px-4 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold cursor-pointer"
                 >
                   Done
                 </button>
@@ -798,7 +914,7 @@ export default function ProductManager({
             {/* Header */}
             <div className="bg-[#f3f3fe] px-6 py-4 border-b border-[#e1e2ed] flex justify-between items-center">
               <h3 className="font-bold text-[#191b23] text-sm flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#004ac6]" />
+                <Sparkles className="w-4 h-4 text-[var(--brand-color)]" />
                 {editingProduct ? `Edit ${editingProduct.name}` : 'Register New Dish/Combo'}
               </h3>
               <button 
@@ -819,7 +935,7 @@ export default function ProductManager({
                     type="text"
                     value={pCode}
                     onChange={(e) => setPCode(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -830,7 +946,7 @@ export default function ProductManager({
                   <select
                     value={pCategory}
                     onChange={(e) => setPCategory(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   >
                     {categories.filter(c => c !== 'All').map(c => (
                       <option key={c} value={c}>{c}</option>
@@ -845,7 +961,7 @@ export default function ProductManager({
                         placeholder="New category name..."
                         value={newCatInput}
                         onChange={(e) => setNewCatInput(e.target.value)}
-                        className="flex-1 px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                        className="flex-1 px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                         required
                       />
                       <button
@@ -863,7 +979,7 @@ export default function ProductManager({
                             setPCategory(categories[0] || 'Pizzas');
                           }
                         }}
-                        className="px-3 py-1.5 bg-[#004ac6] hover:bg-[#003ea8] text-white text-xs font-bold rounded-lg cursor-pointer shrink-0 transition-colors"
+                        className="px-3 py-1.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white text-xs font-bold rounded-lg cursor-pointer shrink-0 transition-colors"
                       >
                         Add
                       </button>
@@ -880,7 +996,7 @@ export default function ProductManager({
                   placeholder="e.g., Spicy Paneer Tikka Pizza"
                   value={pName}
                   onChange={(e) => setPName(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                  className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   required
                 />
               </div>
@@ -896,7 +1012,7 @@ export default function ProductManager({
                     placeholder="e.g., 14.50"
                     value={pPrice || ''}
                     onChange={(e) => setPPrice(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-bold font-mono focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-bold font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -907,7 +1023,7 @@ export default function ProductManager({
                   <select
                     value={pGst}
                     onChange={(e) => setPGst(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   >
                     <option value={0}>0% Tax Exempt</option>
                     <option value={5}>5% Food Services GST</option>
@@ -925,7 +1041,7 @@ export default function ProductManager({
                   placeholder="Paste Unsplash culinary hotlink..."
                   value={pImage}
                   onChange={(e) => setPImage(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                  className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                 />
               </div>
 
@@ -957,7 +1073,7 @@ export default function ProductManager({
                     placeholder="Variant name (e.g., Medium 10-inch)"
                     value={varName}
                     onChange={(e) => setVarName(e.target.value)}
-                    className="col-span-6 px-2 py-1 border border-[#c3c6d7] rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                    className="col-span-6 px-2 py-1 border border-[#c3c6d7] rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   />
                   <input
                     type="number"
@@ -965,12 +1081,12 @@ export default function ProductManager({
                     placeholder="Price"
                     value={varPrice || ''}
                     onChange={(e) => setVarPrice(Number(e.target.value))}
-                    className="col-span-4 px-2 py-1 border border-[#c3c6d7] rounded text-xs font-mono font-bold bg-white focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                    className="col-span-4 px-2 py-1 border border-[#c3c6d7] rounded text-xs font-mono font-bold bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   />
                   <button
                     type="button"
                     onClick={handleAddVariant}
-                    className="col-span-2 bg-[#004ac6] hover:bg-[#003ea8] text-white rounded font-bold text-xs flex items-center justify-center cursor-pointer"
+                    className="col-span-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded font-bold text-xs flex items-center justify-center cursor-pointer"
                   >
                     + Add
                   </button>
@@ -984,7 +1100,7 @@ export default function ProductManager({
                     type="checkbox"
                     checked={pAvailability}
                     onChange={(e) => setPAvailability(e.target.checked)}
-                    className="rounded text-[#004ac6] focus:ring-[#004ac6]"
+                    className="rounded text-[var(--brand-color)] focus:ring-[var(--brand-color)]"
                   />
                   <span className="text-xs text-gray-700 font-semibold">Available for Immediate Billing</span>
                 </label>
@@ -994,7 +1110,7 @@ export default function ProductManager({
                     type="checkbox"
                     checked={pFavorite}
                     onChange={(e) => setPFavorite(e.target.checked)}
-                    className="rounded text-[#004ac6] focus:ring-[#004ac6]"
+                    className="rounded text-[var(--brand-color)] focus:ring-[var(--brand-color)]"
                   />
                   <span className="text-xs text-gray-700 font-semibold flex items-center gap-1">
                     <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
@@ -1014,7 +1130,7 @@ export default function ProductManager({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-[#004ac6] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer"
+                  className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer"
                 >
                   {editingProduct ? 'Update Product Details' : 'Register Product'}
                 </button>
@@ -1072,7 +1188,7 @@ export default function ProductManager({
                           className={`w-full pl-6 pr-2 py-1.5 rounded-lg border text-xs font-mono font-bold focus:outline-none focus:ring-1 ${
                             isDifferent
                               ? 'border-purple-300 bg-white focus:ring-purple-500 text-purple-800'
-                              : 'border-[#c3c6d7] focus:ring-[#004ac6]'
+                              : 'border-[#c3c6d7] focus:ring-[var(--brand-color)]'
                           }`}
                           placeholder={`Base ${basePrice.toFixed(2)}`}
                         />
@@ -1106,7 +1222,7 @@ export default function ProductManager({
                                   className={`w-full pl-5 pr-1.5 py-1 rounded-lg border text-[10px] font-mono font-bold focus:outline-none focus:ring-1 ${
                                     vIsDiff
                                       ? 'border-pink-300 bg-pink-50/50 focus:ring-pink-500 text-pink-700'
-                                      : 'border-gray-200 focus:ring-[#004ac6]'
+                                      : 'border-gray-200 focus:ring-[var(--brand-color)]'
                                   }`}
                                   placeholder={String(v.price)}
                                 />

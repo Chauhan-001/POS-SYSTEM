@@ -19,7 +19,7 @@ const BASE = '/api';
 import { debugWarn } from '../utils/debugLog';
 import { getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './axios';
 import { syncEngine } from '../lib/syncEngine';
-import { getDBData } from '../data';
+import { getDBData, getCachedData, setCachedData, invalidateCache, CACHE_TTL } from '../data';
 
 // ─── Auth token (JWT) — synced with Axios instance ──────────────
 let _authToken: string | null = null;
@@ -206,6 +206,97 @@ function enqueueOffline(method: WriteMethod, path: string, body?: unknown): void
   }
 }
 
+/**
+ * Map API write paths to the localStorage TTL cache keys (CK.* in
+ * usePOSState, plus the inventory/finance collection caches below). After any
+ * successful write the matching cache is invalidated, marked stale in the sync
+ * engine, and announced via a window event so the owning screens re-fetch
+ * promptly. This is what makes non-polled data (products, customers,
+ * employees, bills, expenses, branches, rewards, held orders, purchases,
+ * suppliers, vendors, expense categories, recurring expenses, cash ledger —
+ * TTL 5min–1h) refresh "timely after modification" instead of waiting out the
+ * whole TTL. Polled live data (orders/tables/takeaway/…) already refreshes
+ * every 30s, so those are intentionally not marked stale.
+ */
+const WRITE_CACHE_MAP: Array<[prefix: string, cacheKey: string]> = [
+  ['/products', 'pos_products'],
+  ['/customers', 'pos_customers'],
+  ['/employees', 'pos_employees'],
+  ['/bills', 'pos_bills'],
+  ['/expenses', 'pos_expenses'],
+  ['/branches', 'pos_branches'],
+  ['/rewards', 'pos_rewards'],
+  ['/held-orders', 'pos_held_orders'],
+  // Inventory & finance sub-modules (TTL-cached in the fetch functions below).
+  ['/purchases', 'pos_purchases'],
+  ['/inventory-events', 'pos_inventory_events'],
+  ['/suppliers', 'pos_suppliers'],
+  ['/vendors', 'pos_vendors'],
+  ['/expense-categories', 'pos_expense_categories'],
+  ['/recurring-expenses', 'pos_recurring_expenses'],
+  ['/cash-ledger', 'pos_cash_ledger'],
+];
+
+/** Window event fired after a cache is invalidated so owning screens refresh. */
+export const CACHE_INVALIDATED_EVENT = 'pos:cache-invalidated';
+
+/** Invalidate + mark-stale every cached collection a write path touches. */
+function invalidateWriteCache(path: string): void {
+  const touched = new Set<string>();
+  for (const [prefix, cacheKey] of WRITE_CACHE_MAP) {
+    // Match the collection root or a nested resource (/products, /products/:id/stock).
+    if (path === prefix || path.startsWith(prefix + '/')) {
+      touched.add(cacheKey);
+    }
+  }
+  // The stock engine (POST /products/:id/stock) and the purchase flow both
+  // create InventoryEvent rows server-side. Invalidate the activity feed cache
+  // too so the Activity page refreshes immediately after a waste/adjustment/
+  // purchase instead of waiting out the 5-min poll.
+  if (/^\/products\/[^/]+\/stock$/.test(path) || path.startsWith('/purchases')) {
+    touched.add('pos_inventory_events');
+  }
+  for (const cacheKey of touched) {
+    invalidateCache(cacheKey);
+    syncEngine.markStale(cacheKey);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(CACHE_INVALIDATED_EVENT, { detail: cacheKey }));
+    }
+  }
+}
+
+/**
+ * TTL-aware cached GET — the backbone of the inventory/finance caches.
+ * Serves the last localStorage snapshot while it's still fresh; otherwise
+ * fetches fresh data and writes it through to the cache (with a timestamp).
+ * A network failure returns null WITHOUT touching the cache, so an offline
+ * device keeps showing the last known-good snapshot.
+ */
+async function cachedFetch<T>(
+  cacheKey: string,
+  ttlMs: number,
+  shouldCache: boolean,
+  fetcher: () => Promise<T | null>,
+): Promise<T | null> {
+  if (shouldCache) {
+    const cached = getCachedData<T | null>(cacheKey, null, ttlMs);
+    if (cached !== null) return cached;
+  }
+  const data = await fetcher();
+  if (data !== null) {
+    if (shouldCache) setCachedData(cacheKey, data);
+    return data;
+  }
+  // Network failure (or server error) — serve the last snapshot even if its
+  // TTL has expired, so an offline device keeps showing real data instead of
+  // an empty list or the demo fallback. Refreshes on the next successful load.
+  if (shouldCache) {
+    const stale = getDBData<T | null>(cacheKey, null);
+    if (stale !== null) return stale;
+  }
+  return null;
+}
+
 /** Skip the network call when the browser already knows it's offline. */
 async function writeOfflineAware<T>(method: WriteMethod, path: string, body: unknown): Promise<T | null> {
   if (isBrowserOffline()) {
@@ -218,6 +309,7 @@ async function writeOfflineAware<T>(method: WriteMethod, path: string, body: unk
     return null;
   }
   if (!result.ok) { apiLog(method, path, result.status); return null; }
+  invalidateWriteCache(path);
   return result.json?.data ?? result.json;
 }
 
@@ -404,25 +496,31 @@ export async function deleteProduct(id: string) {
 
 /** GET /api/suppliers — Fetch suppliers for this restaurant */
 export async function fetchSuppliers(params?: { search?: string; status?: string; limit?: number }) {
-  // BACKEND CALLED — load vendor list from cloud
-  const qs = new URLSearchParams();
-  if (params?.search) qs.set('search', params.search);
-  if (params?.status) qs.set('status', params.status);
-  if (params?.limit) qs.set('limit', String(params.limit));
-  const query = qs.toString();
-  const suppliers = await get<any[]>(`/suppliers${query ? '?' + query : ''}`);
-  if (!suppliers) return null;
-  return suppliers.map((s: any) => ({
-    id: s._id || s.id,
-    name: s.name || 'Supplier',
-    phone: s.phone || '',
-    email: s.email || '',
-    address: s.address || '',
-    gstin: s.gstin || '',
-    items: Array.isArray(s.items) ? s.items : [],
-    status: s.status || 'active',
-    notes: s.notes || '',
-  }));
+  // BACKEND CALLED — load vendor list from cloud. TTL-cached (1h) for the full
+  // unfiltered list so the Suppliers screen loads instantly and survives
+  // offline; filtered searches always hit the network.
+  const shouldCache = !params?.search && !params?.status;
+  const res = await cachedFetch('pos_suppliers', CACHE_TTL.SLOW, shouldCache, async () => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    const suppliers = await get<any[]>(`/suppliers${query ? '?' + query : ''}`);
+    if (!suppliers) return null;
+    return suppliers.map((s: any) => ({
+      id: s._id || s.id,
+      name: s.name || 'Supplier',
+      phone: s.phone || '',
+      email: s.email || '',
+      address: s.address || '',
+      gstin: s.gstin || '',
+      items: Array.isArray(s.items) ? s.items : [],
+      status: s.status || 'active',
+      notes: s.notes || '',
+    }));
+  });
+  return res;
 }
 
 /** POST /api/suppliers — Create a supplier */
@@ -795,6 +893,59 @@ export async function deleteCampaign(id: string) {
   return del<any>(`/campaigns/${id}`);
 }
 
+// ─── Marketing (Create-with-AI + Automations) ──────────────────
+
+/**
+ * POST /api/ai/marketing/generate — Build a full marketing plan (offer +
+ * audience + messages + schedule) from the owner's natural-language goal.
+ * The backend gathers trusted restaurant context server-side; the LLM is only
+ * advisory and nothing is ever sent without explicit user confirmation.
+ */
+export async function generateMarketingPlan(input: {
+  request: string;
+  tone?: 'friendly' | 'premium' | 'exciting' | 'simple' | 'festive';
+  language?: 'en' | 'hi' | 'hi-en';
+}) {
+  // BACKEND CALLED — AI marketing plan generation (server-side context)
+  return post<any>('/ai/marketing/generate', input);
+}
+
+/**
+ * POST /api/ai/offer-copy — Generate offer title/description/messages via the
+ * backend LLM (falls back to deterministic templates when AI is unavailable).
+ */
+export async function generateOfferCopy(input: {
+  type: string;
+  value: number;
+  discountValue?: string;
+  applicableCategories?: string[];
+  targetAudience?: string;
+  reason?: string;
+  minOrderValue?: number;
+  durationDays?: number;
+  language?: 'en' | 'hi';
+}) {
+  // BACKEND CALLED — LLM offer copy generation
+  return post<any>('/ai/offer-copy', input);
+}
+
+/** GET /api/automations — Marketing automation recipes (birthday/win-back/VIP) */
+export async function fetchAutomations() {
+  // BACKEND CALLED — load automation recipes for this restaurant
+  return get<any[]>('/automations');
+}
+
+/** PATCH /api/automations/:id — Toggle/edit an automation recipe (Owner/Manager) */
+export async function updateAutomation(id: string, changes: {
+  enabled?: boolean;
+  channel?: string;
+  message?: string;
+  offerTemplate?: any;
+}) {
+  // BACKEND CALLED — persist automation recipe change
+  return patch<any>(`/automations/${id}`, changes);
+}
+
 // ─── Customer CRM Reports (Phase 1.6) ────────────────────────
 
 /** GET /api/customer-reports — Full CRM report bundle (JSON/CSV) */
@@ -840,6 +991,9 @@ export async function fetchOrders(params?: { status?: string; branchId?: string;
   // for orders that have no KOTs/items yet.
   return orders.map((o: any) => ({
     ...o,
+    // Normalize _id → id so every consumer (order list keys, billing links,
+    // KDS lookups) gets a stable unique id — mirrors fetchTables/fetchTakeaway.
+    id: o.id || o._id,
     items: Array.isArray(o.items) ? o.items : [],
     kotRecords: Array.isArray(o.kotRecords) ? o.kotRecords : [],
     timeline: Array.isArray(o.timeline) ? o.timeline : [],
@@ -881,6 +1035,17 @@ export function toBackendOrder(order: any): any {
     loyaltyPointsEarned: order.loyaltyPointsEarned,
     loyaltyPointsRedeemed: order.loyaltyPointsRedeemed,
     items: Array.isArray(order.items) ? order.items : undefined,
+    kotRecords: Array.isArray(order.kotRecords)
+      ? order.kotRecords.map((kot: any) => ({
+          kotNumber: kot.kotNumber,
+          type: kot.type,
+          status: kot.status,
+          printedAt: kot.printedAt,
+          printedBy: kot.printedBy,
+          note: kot.note,
+          items: Array.isArray(kot.items) ? kot.items : [],
+        }))
+      : undefined,
   };
 }
 
@@ -919,6 +1084,146 @@ function toBackendTakeawayOrder(t: any): any {
 export async function deleteOrder(id: string) {
   // BACKEND CALLED — remove/cancel order from cloud
   return del<any>(`/orders/${id}`);
+}
+
+// ─── Online ordering: menu availability + order adjustments ────
+
+/**
+ * GET /api/availability?branchId=&status= — full menu with effective online
+ * availability states (AVAILABLE / UNAVAILABLE + optional expiry/reason).
+ * The backend scopes the response to THIS restaurant's own products only.
+ * Returns null when the network/server call fails (so callers can keep their
+ * last-known rows instead of blanking the list); a genuine empty restaurant
+ * menu arrives as an empty array.
+ */
+export async function fetchAvailability(params?: { branchId?: string; status?: string }) {
+  // BACKEND CALLED — load online availability for the whole menu
+  const qs = new URLSearchParams();
+  if (params?.branchId) qs.set('branchId', params.branchId);
+  if (params?.status) qs.set('status', params.status);
+  const query = qs.toString();
+  const res = await get<any>(`/availability${query ? '?' + query : ''}`);
+  if (!res) return null;
+  return Array.isArray(res) ? res : res.data || [];
+}
+
+/**
+ * PUT /api/availability/bulk — toggle online availability for one or many
+ * products (Owner/Manager/Inventory). Body: { branchId?, items: [...] }.
+ * Returns the effective states after the write.
+ */
+export async function updateAvailabilityBulk(body: {
+  branchId?: string | null;
+  items: Array<{
+    productId: string;
+    status: 'AVAILABLE' | 'UNAVAILABLE';
+    unavailableUntil?: string | null;
+    reason?: string;
+    /** Owner site-visibility: false hides the item from the customer site. */
+    visibleOnSite?: boolean;
+  }>;
+}) {
+  // BACKEND CALLED — persist availability toggles (audited server-side)
+  return put<any>('/availability/bulk', body);
+}
+
+/** GET /api/availability/history — audit trail for availability changes. */
+export async function fetchAvailabilityHistory(params?: { productId?: string; branchId?: string; limit?: number }) {
+  // BACKEND CALLED — load availability change history
+  const qs = new URLSearchParams();
+  if (params?.productId) qs.set('productId', params.productId);
+  if (params?.branchId) qs.set('branchId', params.branchId);
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  const res = await get<any>(`/availability/history${query ? '?' + query : ''}`);
+  if (!res) return [];
+  return Array.isArray(res) ? res : res.data || [];
+}
+
+/**
+ * POST /api/orders/:id/adjust — unavailable-item workflow (remove / replace /
+ * cancel). All refunds/additional dues are computed server-side; the manager
+ * PIN is required when a ledger refund is triggered. Idempotent via
+ * adjustmentId — safe to retry after a network blip.
+ */
+export async function adjustOrder(id: string, body: {
+  adjustmentId: string;
+  action: 'REMOVE' | 'REPLACE' | 'CANCEL';
+  items?: Array<{ orderItemId?: string; productId?: string; quantity: number; replaceWithProductId?: string }>;
+  reason: string;
+  markUnavailable?: boolean;
+  managerPin?: string;
+}) {
+  // BACKEND CALLED — apply an unavailable-item adjustment (audited, idempotent)
+  return post<any>(`/orders/${id}/adjust`, body);
+}
+
+/** GET /api/orders/:id/adjustments — append-only adjustment history. */
+export async function fetchOrderAdjustments(id: string) {
+  // BACKEND CALLED — load adjustment history for an order
+  const res = await get<any>(`/orders/${id}/adjustments`);
+  if (!res) return [];
+  return Array.isArray(res) ? res : res.data || [];
+}
+
+/** GET /api/orders/:id/refunds — refund records for an order. */
+export async function fetchOrderRefunds(id: string) {
+  // BACKEND CALLED — load refund records for an order
+  const res = await get<any>(`/orders/${id}/refunds`);
+  if (!res) return [];
+  return Array.isArray(res) ? res : res.data || [];
+}
+
+// ─── QR Studio: printable QR stickers + service requests ──────────
+
+/** GET /api/qr-tokens — list the restaurant's QR stickers (QR Studio). */
+export async function fetchQrTokens(params?: { branchId?: string }) {
+  // BACKEND CALLED — load QR stickers
+  const qs = new URLSearchParams();
+  if (params?.branchId) qs.set('branchId', params.branchId);
+  const query = qs.toString();
+  const res = await get<any>(`/qr-tokens${query ? '?' + query : ''}`);
+  if (!res) return [];
+  return res.tokens || res.data || [];
+}
+
+/** POST /api/qr-tokens — generate a table / car / pickup sticker. */
+export async function createQrToken(body: { type: 'table' | 'car' | 'pickup'; tableId?: string; parkingSlot?: string; branchId?: string }) {
+  // BACKEND CALLED — mint a new sticker (server returns token + url)
+  const res = await post<any>('/qr-tokens', body);
+  return res?.token || res;
+}
+
+/** POST /api/qr-tokens/seed — generate stickers for every unstickered table. */
+export async function seedQrTokens() {
+  // BACKEND CALLED — bulk-create table stickers
+  return post<any>('/qr-tokens/seed', {});
+}
+
+/** DELETE /api/qr-tokens/:id — retire a sticker. */
+export async function deleteQrToken(id: string) {
+  // BACKEND CALLED — remove a sticker
+  return del<any>(`/qr-tokens/${id}`);
+}
+
+/** GET /api/qr-ordering/requests?restaurantId=&status= — service requests. */
+export async function fetchWaiterRequests(params?: { restaurantId?: string; status?: string }) {
+  // BACKEND CALLED — load customer service requests (waiter bell)
+  const qs = new URLSearchParams();
+  if (params?.restaurantId) qs.set('restaurantId', params.restaurantId);
+  if (params?.status) qs.set('status', params.status);
+  const query = qs.toString();
+  // get() already unwraps json.data — the endpoint returns { success, data: [...] },
+  // so `res` IS the request array here (never re-unwrap it).
+  const res = await get<any>(`/qr-ordering/requests${query ? '?' + query : ''}`);
+  if (!res) return [];
+  return Array.isArray(res) ? res : (Array.isArray(res.data) ? res.data : []);
+}
+
+/** POST /api/qr-ordering/requests/:id/complete — mark a request done. */
+export async function completeWaiterRequest(id: string) {
+  // BACKEND CALLED — resolve a service request
+  return post<any>(`/qr-ordering/requests/${id}/complete`, {});
 }
 
 // ─── Bills ─────────────────────────────────────────────────────────
@@ -967,6 +1272,23 @@ export async function fetchNextInvoiceNumber(): Promise<number | null> {
   }
 }
 
+/** GET /api/orders/next-number — Get the next atomic order number from server */
+export async function fetchNextOrderNumber(): Promise<number | null> {
+  // BACKEND CALLED — get atomic order counter from server. Guarantees the same
+  // order number is never handed to two different terminals.
+  try {
+    const res = await fetch(`${BASE}/orders/next-number`, {
+      headers: buildHeaders(),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.orderNumber ?? null;
+  } catch (err) {
+    debugWarn('API', 'fetchNextOrderNumber failed:', err);
+    return null;
+  }
+}
+
 /** DELETE /api/bills/:id — Void/delete a bill */
 export async function deleteBill(id: string, voidData?: { reason?: string; voidedBy?: string; managerPin?: string }) {
   // BACKEND CALLED — void a bill entry in cloud (with audit trail)
@@ -1007,6 +1329,12 @@ export async function updateEmployee(id: string, employee: any) {
 export async function deleteEmployee(id: string) {
   // BACKEND CALLED — remove staff member from cloud
   return del<any>(`/employees/${id}`);
+}
+
+/** POST /api/auth/generate-credentials — mint a unique User ID + password (Owner). */
+export async function generateCredentials(payload: { name: string; role: string; avoid?: string[] }) {
+  // BACKEND CALLED — generate unique staff credentials (returns userId + password once)
+  return post<{ userId: string; password: string; passwordHash: string; role: string }>('/auth/generate-credentials', payload);
 }
 
 // ─── Expenses (Phase 1.7) ───────────────────────────────────────
@@ -1070,9 +1398,13 @@ export async function exportExpenses(params?: { startDate?: string; endDate?: st
 // ─── Expense Categories (Phase 1.7) ──────────────────────────────
 
 export async function fetchExpenseCategories(): Promise<any[]> {
-  const res = await get<any>(`/expense-categories`);
-  if (!res) return [];
-  return Array.isArray(res) ? res : res.data || [];
+  // TTL-cached (1h) — reference data that only changes on write.
+  const res = await cachedFetch('pos_expense_categories', CACHE_TTL.SLOW, true, async () => {
+    const r = await get<any>(`/expense-categories`);
+    if (r === null) return null;
+    return Array.isArray(r) ? r : r.data || [];
+  });
+  return res ?? [];
 }
 
 export async function createExpenseCategory(data: any) {
@@ -1090,15 +1422,22 @@ export async function deleteExpenseCategory(id: string) {
 // ─── Vendors (Phase 1.7) ─────────────────────────────────────────
 
 export async function fetchVendors(params?: { search?: string; status?: string; page?: number; limit?: number }) {
-  const qs = new URLSearchParams();
-  if (params?.search) qs.set('search', params.search);
-  if (params?.status) qs.set('status', params.status);
-  if (params?.page !== undefined) qs.set('page', String(params.page));
-  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
-  const query = qs.toString();
-  const res = await get<any>(`/vendors${query ? '?' + query : ''}`);
-  if (!res) return { data: [], total: 0, page: 1, limit: 20, totalPages: 1 };
-  return Array.isArray(res) ? { data: res, total: res.length, page: 1, limit: params?.limit || 20, totalPages: 1 } : res;
+  // TTL-cached (1h) for the full vendor directory; filtered/paged calls always
+  // hit the network.
+  const shouldCache = !params?.search && !params?.status && params?.page === undefined;
+  const res = await cachedFetch('pos_vendors', CACHE_TTL.SLOW, shouldCache, async () => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    const r = await get<any>(`/vendors${query ? '?' + query : ''}`);
+    if (r === null) return null;
+    return Array.isArray(r) ? { data: r, total: r.length, page: 1, limit: params?.limit || 20, totalPages: 1 } : r;
+  });
+  if (res === null) return { data: [], total: 0, page: 1, limit: 20, totalPages: 1 };
+  return res;
 }
 
 export async function createVendor(data: any) {
@@ -1121,13 +1460,19 @@ export async function fetchVendorSummary(id: string) {
 // ─── Recurring Expenses (Phase 1.7) ──────────────────────────────
 
 export async function fetchRecurringExpenses(params?: { page?: number; limit?: number }) {
-  const qs = new URLSearchParams();
-  if (params?.page !== undefined) qs.set('page', String(params.page));
-  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
-  const query = qs.toString();
-  const res = await get<any>(`/recurring-expenses${query ? '?' + query : ''}`);
-  if (!res) return { data: [], total: 0, page: 1, limit: 20, totalPages: 1 };
-  return Array.isArray(res) ? { data: res, total: res.length, page: 1, limit: params?.limit || 20, totalPages: 1 } : res;
+  // TTL-cached (1h) for the default list; explicit paging hits the network.
+  const shouldCache = params?.page === undefined;
+  const res = await cachedFetch('pos_recurring_expenses', CACHE_TTL.SLOW, shouldCache, async () => {
+    const qs = new URLSearchParams();
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    const r = await get<any>(`/recurring-expenses${query ? '?' + query : ''}`);
+    if (r === null) return null;
+    return Array.isArray(r) ? { data: r, total: r.length, page: 1, limit: params?.limit || 20, totalPages: 1 } : r;
+  });
+  if (res === null) return { data: [], total: 0, page: 1, limit: 20, totalPages: 1 };
+  return res;
 }
 
 export async function createRecurringExpense(data: any) {
@@ -1157,15 +1502,23 @@ export async function runRecurringExpenses() {
 // ─── Cash Ledger (Phase 1.7) ────────────────────────────────────
 
 export async function fetchCashLedger(params?: { page?: number; limit?: number; startDate?: string; endDate?: string }) {
-  const qs = new URLSearchParams();
-  if (params?.page !== undefined) qs.set('page', String(params.page));
-  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
-  if (params?.startDate) qs.set('startDate', params.startDate);
-  if (params?.endDate) qs.set('endDate', params.endDate);
-  const query = qs.toString();
-  const res = await get<any>(`/cash-ledger${query ? '?' + query : ''}`);
-  if (!res) return { data: [], total: 0, page: 1, limit: 20, totalPages: 1, balance: 0 };
-  return Array.isArray(res) ? { data: res, total: res.length, page: 1, limit: params?.limit || 20, totalPages: 1, balance: 0 } : res;
+  // TTL-cached (5 min) — transactional data: refreshes on a short interval and
+  // immediately after every cash write (open/in/out/close). Date-filtered
+  // queries always hit the network.
+  const shouldCache = params?.page === undefined && !params?.startDate && !params?.endDate;
+  const res = await cachedFetch('pos_cash_ledger', CACHE_TTL.MEDIUM, shouldCache, async () => {
+    const qs = new URLSearchParams();
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.startDate) qs.set('startDate', params.startDate);
+    if (params?.endDate) qs.set('endDate', params.endDate);
+    const query = qs.toString();
+    const r = await get<any>(`/cash-ledger${query ? '?' + query : ''}`);
+    if (r === null) return null;
+    return Array.isArray(r) ? { data: r, total: r.length, page: 1, limit: params?.limit || 20, totalPages: 1, balance: 0 } : r;
+  });
+  if (res === null) return { data: [], total: 0, page: 1, limit: 20, totalPages: 1, balance: 0 };
+  return res;
 }
 
 export async function openCashDrawer(data: { amount: number; date?: string; note?: string }) {
@@ -1210,11 +1563,14 @@ function reportParams(startDate?: string, endDate?: string, extra: Record<string
 }
 
 async function getCached<T>(name: string, params: Record<string, string | undefined>, path: string): Promise<{ data: T; fromCache: boolean }> {
+  // NOTE: get() already unwraps the common { success, data } envelope, so the
+  // payload here is the report payload itself (array or object). A null means
+  // the network/server call failed — then fall back to the last snapshot.
   try {
     const res = await get<any>(path);
-    if (res && res.data !== undefined) {
-      try { localStorage.setItem(reportCacheKey(name, params), JSON.stringify({ savedAt: Date.now(), data: res.data })); } catch { /* storage full */ }
-      return { data: res.data, fromCache: false };
+    if (res !== null && res !== undefined) {
+      try { localStorage.setItem(reportCacheKey(name, params), JSON.stringify({ savedAt: Date.now(), data: res })); } catch { /* storage full */ }
+      return { data: res, fromCache: false };
     }
   } catch { /* fall through to cache */ }
   try {
@@ -1265,8 +1621,28 @@ export async function fetchProductMenuEngineering(startDate?: string, endDate?: 
 export async function fetchInventoryStock(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('inventory-stock', { startDate, endDate }, `/reports/inventory/stock?${reportParams(startDate, endDate)}`);
 }
+export async function fetchInventoryLowStock(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
+  return getCached('inventory-low-stock', { startDate, endDate }, `/reports/inventory/low-stock?${reportParams(startDate, endDate)}`);
+}
 export async function fetchInventoryValuation(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('inventory-valuation', { startDate, endDate }, `/reports/inventory/valuation?${reportParams(startDate, endDate)}`);
+}
+export async function fetchInventoryMovement(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
+  return getCached('inventory-movement', { startDate, endDate }, `/reports/inventory/movement?${reportParams(startDate, endDate)}`);
+}
+export async function fetchInventoryWaste(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
+  return getCached('inventory-waste', { startDate, endDate }, `/reports/inventory/waste?${reportParams(startDate, endDate)}`);
+}
+export async function fetchInventorySuppliers(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
+  return getCached('inventory-suppliers', { startDate, endDate }, `/reports/inventory/suppliers?${reportParams(startDate, endDate)}`);
+}
+
+/**
+ * Expiry report — items expired or expiring within `days` (default 30).
+ * Rows: { name, category, currentStock, expiryDate, batchNumber, daysLeft, status }
+ */
+export async function fetchInventoryExpiry(days = 30): Promise<ReportFetchResult<any>> {
+  return getCached('inventory-expiry', { days: String(days) }, `/reports/inventory/expiry?${reportParams(undefined, undefined, { days })}`);
 }
 export async function fetchEmployeePerformance(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('employees-performance', { startDate, endDate }, `/reports/employees/performance?${reportParams(startDate, endDate)}`);
@@ -1294,6 +1670,8 @@ const SETTINGS_CACHE_KEY = 'pos_settings_effective_v1';
 
 export interface EffectiveSettings {
   settings: Record<string, any>;
+  /** Public store token embedded in the loyalty QR (minted lazily by the server). */
+  publicToken?: string | null;
   meta: {
     version: number;
     scope: 'restaurant' | 'branch' | 'device';
@@ -1421,7 +1799,9 @@ export async function fetchPrinters(params: { branchId?: string; deviceId?: stri
   if (params.type) p.set('type', params.type);
   const qs = p.toString();
   const res = await get<any>(`/settings/printers?${qs}`);
-  return res?.data ?? [];
+  // get() already unwraps the { data, total } envelope, so res is the array
+  // itself; tolerate the envelope shape too so the list can never be blank.
+  return Array.isArray(res) ? res : (res?.data ?? []);
 }
 
 export async function createPrinter(input: Omit<PrinterRecord, '_id' | 'restaurantId' | 'healthStatus' | 'lastTestedAt' | 'lastError' | 'copies' | 'paperSize' | 'encoding' | 'enabled' | 'isDefault'> & Partial<Pick<PrinterRecord, 'copies' | 'paperSize' | 'encoding' | 'enabled' | 'isDefault'>>): Promise<PrinterRecord | null> {
@@ -1491,30 +1871,37 @@ export async function fetchVendorDues() {
 
 /** GET /api/purchases — Fetch inventory purchase history for this restaurant */
 export async function fetchPurchases(params?: { branchId?: string; supplier?: string; item?: string; startDate?: string; endDate?: string; limit?: number }) {
-  // BACKEND CALLED — load stock-in purchase history from cloud
-  const qs = new URLSearchParams();
-  if (params?.branchId) qs.set('branchId', params.branchId);
-  if (params?.supplier) qs.set('supplier', params.supplier);
-  if (params?.item) qs.set('item', params.item);
-  if (params?.startDate) qs.set('startDate', params.startDate);
-  if (params?.endDate) qs.set('endDate', params.endDate);
-  if (params?.limit) qs.set('limit', String(params.limit));
-  const query = qs.toString();
-  const purchases = await get<any[]>(`/purchases${query ? '?' + query : ''}`);
-  if (!purchases) return null;
-  // Normalize Mongo docs into the frontend Purchase shape so the UI never
-  // crashes on missing fields (supplier/item/unit defaults).
-  return purchases.map((p: any) => ({
-    id: p._id || p.id,
-    supplier: p.supplier || '—',
-    item: p.item || 'Item',
-    quantity: p.quantity ?? 0,
-    unit: p.unit || 'kg',
-    price: p.price ?? 0,
-    total: p.total ?? (p.quantity ?? 0) * (p.price ?? 0),
-    date: p.date || (p.createdAt ? String(p.createdAt).slice(0, 10) : ''),
-    status: p.status || 'completed',
-  }));
+  // BACKEND CALLED — load stock-in purchase history from cloud. TTL-cached
+  // (5 min) for the full unfiltered list; filtered queries always hit network.
+  const shouldCache = !params?.branchId && !params?.supplier && !params?.item && !params?.startDate && !params?.endDate;
+  const res = await cachedFetch('pos_purchases', CACHE_TTL.MEDIUM, shouldCache, async () => {
+    const qs = new URLSearchParams();
+    if (params?.branchId) qs.set('branchId', params.branchId);
+    if (params?.supplier) qs.set('supplier', params.supplier);
+    if (params?.item) qs.set('item', params.item);
+    if (params?.startDate) qs.set('startDate', params.startDate);
+    if (params?.endDate) qs.set('endDate', params.endDate);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    const purchases = await get<any[]>(`/purchases${query ? '?' + query : ''}`);
+    if (!purchases) return null;
+    // Normalize Mongo docs into the frontend Purchase shape so the UI never
+    // crashes on missing fields (supplier/item/unit defaults).
+    return purchases.map((p: any) => ({
+      id: p._id || p.id,
+      supplier: p.supplier || '—',
+      brand: p.brand || '',
+      expiryDate: p.expiryDate || '',
+      item: p.item || 'Item',
+      quantity: p.quantity ?? 0,
+      unit: p.unit || 'kg',
+      price: p.price ?? 0,
+      total: p.total ?? (p.quantity ?? 0) * (p.price ?? 0),
+      date: p.date || (p.createdAt ? String(p.createdAt).slice(0, 10) : ''),
+      status: p.status || 'completed',
+    }));
+  });
+  return res;
 }
 
 /** POST /api/purchases — Record a new stock-in purchase */
@@ -1550,25 +1937,31 @@ export async function deletePurchase(id: string) {
  * API is unreachable (offline) so callers fall back to static data.
  */
 export async function fetchInventoryEvents(params?: { type?: string; startDate?: string; endDate?: string; limit?: number }) {
-  // BACKEND CALLED — load real inventory activity (sold/adjusted/waste/closing)
-  const qs = new URLSearchParams();
-  if (params?.type) qs.set('type', params.type);
-  if (params?.startDate) qs.set('startDate', params.startDate);
-  if (params?.endDate) qs.set('endDate', params.endDate);
-  if (params?.limit) qs.set('limit', String(params.limit));
-  const query = qs.toString();
-  const events = await get<any[]>(`/inventory-events${query ? '?' + query : ''}`);
-  if (!events) return null;
-  return events.map((e: any) => ({
-    id: e._id || e.id,
-    type: e.type || 'sold',
-    item: e.item || 'Item',
-    quantity: e.quantity ?? 0,
-    unit: e.unit || 'pcs',
-    timestamp: e.eventDate || (e.createdAt ? String(e.createdAt).slice(0, 10) : ''),
-    operator: e.operator || 'System',
-    details: e.details || '',
-  }));
+  // BACKEND CALLED — load real inventory activity (sold/adjusted/waste/closing).
+  // TTL-cached (1h) for the full activity feed; filtered queries (e.g. the
+  // dashboard's type='waste' call) always hit the network.
+  const shouldCache = !params?.type && !params?.startDate && !params?.endDate;
+  const res = await cachedFetch('pos_inventory_events', CACHE_TTL.SLOW, shouldCache, async () => {
+    const qs = new URLSearchParams();
+    if (params?.type) qs.set('type', params.type);
+    if (params?.startDate) qs.set('startDate', params.startDate);
+    if (params?.endDate) qs.set('endDate', params.endDate);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    const events = await get<any[]>(`/inventory-events${query ? '?' + query : ''}`);
+    if (!events) return null;
+    return events.map((e: any) => ({
+      id: e._id || e.id,
+      type: e.type || 'sold',
+      item: e.item || 'Item',
+      quantity: e.quantity ?? 0,
+      unit: e.unit || 'pcs',
+      timestamp: e.eventDate || (e.createdAt ? String(e.createdAt).slice(0, 10) : ''),
+      operator: e.operator || 'System',
+      details: e.details || '',
+    }));
+  });
+  return res;
 }
 
 // ─── Branches ──────────────────────────────────────────────────────
@@ -1921,8 +2314,27 @@ export async function executePendingOperation(op: {
   // latest persisted state instead — otherwise the backend order stays stuck at
   // "New" and the paid/closed transition never arrives.
   if (op.method === 'POST' && op.path === '/orders' && op.body && typeof (op.body as any).orderNumber === 'number') {
-    const latest = getDBData<any[]>('pos_orders', []).find((o: any) => o.orderNumber === (op.body as any).orderNumber);
+    const orderNumber = (op.body as any).orderNumber;
+    const latest = getDBData<any[]>('pos_orders', []).find((o: any) => o.orderNumber === orderNumber);
     if (latest) op.body = toBackendOrder(latest);
+    // IDEMPOTENCY: a previous replay may have already created this order (e.g.
+    // the replay succeeded but the app reloaded before the queue entry was
+    // dequeued). Re-creating it would duplicate the order server-side — and the
+    // orphaned duplicate would keep its table stuck at Occupied forever via
+    // reconcileTable. If the server already has this orderNumber, treat the
+    // replay as done and let the sync engine dequeue the entry.
+    try {
+      const existing = await fetch(`${BASE}/orders?limit=500`, { headers: buildHeaders() });
+      if (existing.ok) {
+        const data = await existing.json();
+        const list = Array.isArray(data) ? data : ((data as any)?.data || []);
+        if (list.some((o: any) => Number(o.orderNumber) === orderNumber)) {
+          return true;
+        }
+      }
+    } catch {
+      // Can't verify — fall through to the create below (same as before).
+    }
   }
   // Same reconcile for takeaway rows — queued creates carry the creation-time
   // snapshot (Preparing/$0/[]), which would otherwise overwrite later offline
@@ -1940,6 +2352,7 @@ export async function executePendingOperation(op: {
       // silently bypass the backend's manager authorization check.
       body: op.body !== undefined ? JSON.stringify(op.body) : undefined,
     });
+    if (res.ok) invalidateWriteCache(op.path);
     return res.ok;
   } catch {
     return false;
@@ -1958,6 +2371,16 @@ export async function fetchPlans() {
 /** GET /api/subscription/status — Get current subscription status */
 export async function fetchSubscriptionStatus() {
   return get<any>('/subscription/status');
+}
+
+/** GET /api/subscription/status — like fetchSubscriptionStatus, but keeps the
+   *  raw HTTP status so the UI can tell "backend error" from "session expired
+   *  (401)" instead of showing a silent blank card. httpStatus 0 = network error.
+   */
+export async function fetchSubscriptionStatusDetailed() {
+  const result = await request('GET', '/subscription/status');
+  if (!result) return { data: null, httpStatus: 0, ok: false };
+  return { data: result.json?.data ?? result.json, httpStatus: result.status, ok: result.ok };
 }
 
 /** POST /api/subscription/create-order — Create a Razorpay order for payment */
@@ -2040,13 +2463,14 @@ export function getCurrentRestaurantId(): string | null {
  * When not logged in (no restaurant known) the keys fall back to the legacy
  * non-namespaced names — callers should treat a missing restaurant as "no cache".
  */
-export function getSubscriptionCacheKeys(): { status: string; features: string; cache: string } {
+export function getSubscriptionCacheKeys(): { status: string; features: string; cache: string; plans: string } {
   const rid = getCurrentRestaurantId();
   const suffix = rid ? `_${rid}` : '';
   return {
     status: `pos_subscription_status${suffix}`,
     features: `pos_subscription_features${suffix}`,
     cache: `pos_subscription_cache${suffix}`,
+    plans: `pos_subscription_plans`,
   };
 }
 
@@ -2062,6 +2486,7 @@ export function clearSubscriptionCache() {
     localStorage.removeItem(k.status);
     localStorage.removeItem(k.features);
     localStorage.removeItem(k.cache);
+    localStorage.removeItem(k.plans);
     // Also remove legacy non-namespaced keys from before per-restaurant namespacing.
     localStorage.removeItem('pos_subscription_status');
     localStorage.removeItem('pos_subscription_features');
@@ -2151,10 +2576,10 @@ export async function refreshOfferSegments() {
   return post<any>('/offers/segments/refresh', {});
 }
 
-/** GET /api/offers/analytics — Fetch offer analytics */
-export async function fetchOfferAnalytics() {
+/** GET /api/offers/analytics — Fetch offer analytics (optionally for one offer) */
+export async function fetchOfferAnalytics(offerId?: string) {
   // BACKEND CALLED — load offer performance data
-  return get<any>('/offers/analytics');
+  return get<any>(`/offers/analytics${offerId ? `/${offerId}` : ''}`);
 }
 
 /** POST /api/offers — Create a new offer */
@@ -2179,6 +2604,108 @@ export async function updateOfferStatus(id: string, status: string) {
 export async function deleteOffer(id: string) {
   // BACKEND CALLED — remove offer from cloud
   return del<any>(`/offers/${id}`);
+}
+
+export interface OfferValidationResult {
+  /** HTTP request reached the server (vs offline/network failure). */
+  ok: boolean;
+  /** Authoritative server decision. */
+  valid: boolean;
+  /** Human-friendly reason when invalid (server-computed, never raw codes). */
+  reason?: string;
+  /** Server-computed discount amount (authoritative). */
+  discount?: number;
+  /** Sanitized offer the server validated. */
+  offer?: any;
+  /** Redemption record when the apply endpoint claimed usage. */
+  redemption?: any;
+  /** True when the apply was queued for offline replay (browser offline). */
+  queuedOffline?: boolean;
+}
+
+/**
+ * POST /api/offers/validate — Server-side offer/coupon validation (no mutation).
+ * The server decides eligibility AND computes the authoritative discount.
+ * Unlike plain post(), this surfaces the server's friendly rejection reason
+ * (a 400 carries { error, ...result }) instead of collapsing to null.
+ */
+export async function validateOffer(input: {
+  offerId?: string;
+  couponCode?: string;
+  customerId?: string;
+  customerPhone?: string;
+  billSubtotal?: number;
+  billItems?: any[];
+  branchId?: string;
+}): Promise<OfferValidationResult> {
+  // BACKEND CALLED — authoritative eligibility + discount
+  if (isBrowserOffline()) {
+    return { ok: false, valid: false, reason: 'You seem to be offline. Offers are validated on the server, so check your connection.' };
+  }
+  const result = await request('POST', '/offers/validate', input);
+  if (!result) return { ok: false, valid: false, reason: 'Could not reach the server. Please try again.' };
+  if (!result.ok) {
+    const body = result.json || {};
+    return { ok: true, valid: false, reason: body.error || 'This offer cannot be applied right now.', discount: body.discount };
+  }
+  const body = result.json?.data ?? result.json ?? {};
+  return {
+    ok: true,
+    valid: !!body.valid,
+    reason: body.reason,
+    discount: body.discount,
+    // Lean Mongo docs carry _id; normalize so callers can read offer.id (checkout
+    // redemption recording, applied-offer highlighting) without guessing.
+    offer: body.offer ? { ...body.offer, id: String(body.offer._id || body.offer.id) } : body.offer,
+  };
+}
+
+/**
+ * POST /api/offers/apply — Validate AND record a redemption (usage ledger).
+ * The backend claims the usage slot atomically (TOCTOU-safe) and updates
+ * analytics, so usage caps and counts stay authoritative across terminals.
+ * Offline: the redemption is queued for replay (never double-claims — the
+ * server idempotency-keyed claim dedupes by billId).
+ */
+export async function applyOffer(input: {
+  offerId?: string;
+  couponCode?: string;
+  customerId?: string;
+  customerPhone?: string;
+  billSubtotal?: number;
+  billItems?: any[];
+  billId?: string;
+  branchId?: string;
+}): Promise<OfferValidationResult> {
+  // BACKEND CALLED — record the redemption (usage claim server-side)
+  if (isBrowserOffline()) {
+    enqueueOffline('POST', '/offers/apply', input);
+    return { ok: false, valid: false, queuedOffline: true, reason: 'Offline — redemption will be recorded when back online.' };
+  }
+  const result = await request('POST', '/offers/apply', input);
+  if (!result) {
+    enqueueOffline('POST', '/offers/apply', input);
+    return { ok: false, valid: false, queuedOffline: true, reason: 'Offline — redemption will be recorded when back online.' };
+  }
+  if (!result.ok) {
+    const body = result.json || {};
+    return { ok: true, valid: false, reason: body.error || 'This offer cannot be applied right now.', discount: body.discount };
+  }
+  const body = result.json?.data ?? result.json ?? {};
+  return {
+    ok: true,
+    valid: !!body.valid,
+    reason: body.reason,
+    discount: body.discount,
+    offer: body.offer ? { ...body.offer, id: String(body.offer._id || body.offer.id) } : body.offer,
+    redemption: body.redemption,
+  };
+}
+
+/** GET /api/offers/lookup/:code — Resolve a coupon code to its offer. */
+export async function lookupOfferByCode(code: string) {
+  // BACKEND CALLED — resolve coupon code to an offer
+  return get<any>(`/offers/lookup/${encodeURIComponent(String(code).trim())}`);
 }
 
 /** GET /api/health — Check if backend is live */

@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Package, ShoppingCart, AlertTriangle, TrendingUp, ArrowRight, Sparkles, Brain, AlertCircle, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { INVENTORY_ALERTS } from '../data';
-import type { InventoryPage } from '../types';
-import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction } from '../../../src/ai/aiData';
+import { daysUntilExpiry } from '../expiryUtils';
+import type { InventoryPage, InventoryAlert } from '../types';
+import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction, AiSource } from '../../../src/ai/aiData';
 import { useInventory } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
 import AICard from '../../../src/ai/AICard';
@@ -15,6 +15,29 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
   const { purchases, synced } = usePurchases();
   const totalValue = items.reduce((s, i) => s + i.currentStock * i.averageCost, 0);
   const lowItems = items.filter(i => i.status === 'low' || i.status === 'critical');
+
+  // Real alerts computed from the MongoDB product catalog (stock thresholds +
+  // expiry dates) — no hardcoded/demo alerts. Critical first, capped at 4.
+  const realAlerts = useMemo<InventoryAlert[]>(() => {
+    const alerts: InventoryAlert[] = [];
+    for (const i of items) {
+      if (i.status === 'critical') {
+        alerts.push({ id: `al_low_${i.id}`, type: 'low_stock', item: i.name, severity: 'critical', message: `${i.name} is out of stock (${i.currentStock} ${i.unit} left, minimum ${i.minStock} ${i.unit}).`, timestamp: new Date().toLocaleTimeString() });
+      } else if (i.status === 'low') {
+        alerts.push({ id: `al_low_${i.id}`, type: 'low_stock', item: i.name, severity: 'warning', message: `${i.name} is low on stock (${i.currentStock} ${i.unit} left, minimum ${i.minStock} ${i.unit}).`, timestamp: new Date().toLocaleTimeString() });
+      }
+      if (i.expiryDate) {
+        const d = daysUntilExpiry(i.expiryDate);
+        if (d < 0) {
+          alerts.push({ id: `al_exp_${i.id}`, type: 'expiry', item: i.name, severity: 'critical', message: `${i.name} expired ${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} ago (${i.expiryDate}).`, timestamp: new Date().toLocaleTimeString() });
+        } else if (d <= 7) {
+          alerts.push({ id: `al_exp_${i.id}`, type: 'expiry', item: i.name, severity: 'warning', message: `${i.name} expires in ${d} day${d === 1 ? '' : 's'} (${i.expiryDate}).`, timestamp: new Date().toLocaleTimeString() });
+        }
+      }
+    }
+    const rank = { critical: 0, warning: 1, info: 2 } as const;
+    return alerts.sort((a, b) => rank[a.severity] - rank[b.severity]).slice(0, 4);
+  }, [items]);
 
   // Real week-over-week purchase spend change for the Stock Value card.
   const purchaseTrend = useMemo(() => {
@@ -33,9 +56,16 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
     return Math.round(((thisWeek - prevWeek) / prevWeek) * 100);
   }, [purchases]);
 
-  const [healthScore, setHealthScore] = useState<InventoryHealthScore>(() => ({ overall: 75, stockHealth: 70, wasteRate: 80, expiryRisk: 75, trend: 'stable', recommendations: [] }));
+  // Null until computed — no fake starting number, just a brief loading state.
+  const [healthScore, setHealthScore] = useState<InventoryHealthScore | null>(null);
   const [purchaseRecs, setPurchaseRecs] = useState<PurchaseRecommendation[]>([]);
   const [lowStockPreds, setLowStockPreds] = useState<LowStockPrediction[]>([]);
+  // Provenance of each AI card — 'live' (backend AI) vs 'local' (offline
+  // fallback computation). Null until the fetch resolves so the badge never
+  // flashes "Offline estimate" on load while the backend is still answering.
+  const [healthSource, setHealthSource] = useState<AiSource | null>(null);
+  const [recsSource, setRecsSource] = useState<AiSource | null>(null);
+  const [lowStockSource, setLowStockSource] = useState<AiSource | null>(null);
   const [aiLoading, setAiLoading] = useState(true);
 
   useEffect(() => {
@@ -46,12 +76,24 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
       generatePurchaseRecs(items),
       predictLowStock(items),
     ]).then(([h, p, l]) => {
-      setHealthScore(h);
-      setPurchaseRecs(p);
-      setLowStockPreds(l);
+      setHealthScore(h.data);
+      setHealthSource(h.source);
+      setPurchaseRecs(p.data);
+      setRecsSource(p.source);
+      setLowStockPreds(l.data);
+      setLowStockSource(l.source);
       setAiLoading(false);
     }).catch(() => setAiLoading(false));
   }, [items]);
+
+  // Small pill that tells the user whether an AI card is powered by the live
+  // AI backend or by an offline/local estimation. Rendered only after the
+  // fetch resolves (source is non-null) to avoid a misleading flash on load.
+  const AiSourceBadge = ({ source }: { source: AiSource }) => source === 'live' ? (
+    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">AI live</span>
+  ) : (
+    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200" title="AI unavailable — estimated locally on this device">Offline estimate</span>
+  );
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -73,7 +115,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
     }
   };
 
-  const healthColor = healthScore.overall >= 80 ? '#10b981' : healthScore.overall >= 50 ? '#f59e0b' : '#ef4444';
+  const healthColor = !healthScore ? '#f59e0b' : healthScore.overall >= 80 ? '#10b981' : healthScore.overall >= 50 ? '#f59e0b' : '#ef4444';
 
   return (
     <div className="p-6 md:p-8 space-y-8 max-w-6xl mx-auto">
@@ -88,13 +130,17 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
               <Brain className="w-3.5 h-3.5 text-white" />
             </div>
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">AI Inventory Health</span>
-            <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-              healthScore.trend === 'improving' ? 'bg-emerald-50 text-emerald-700' :
-              healthScore.trend === 'declining' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
-            }`}>
-              {healthScore.trend}
-            </span>
+            {healthSource && <AiSourceBadge source={healthSource} />}
+            {healthScore && (
+              <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
+                healthScore.trend === 'improving' ? 'bg-emerald-50 text-emerald-700' :
+                healthScore.trend === 'declining' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
+              }`}>
+                {healthScore.trend}
+              </span>
+            )}
           </div>
+          {healthScore ? (
           <div className="flex items-center gap-6 flex-1">
             <div className="relative w-28 h-28 shrink-0">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
@@ -132,7 +178,13 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
               </div>
             </div>
           </div>
-          {healthScore.recommendations.length > 0 && (
+          ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+            <span className="text-xs text-gray-400 ml-2">Calculating…</span>
+          </div>
+          )}
+          {healthScore && healthScore.recommendations.length > 0 && (
             <div className="mt-3 pt-3 border-t border-[#e1e2ed]">
               <p className="text-[10px] text-gray-500 flex items-center gap-1">
                 <AlertCircle className="w-3 h-3 text-purple-500" />
@@ -159,11 +211,17 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                       {purchaseTrend >= 0 ? '+' : ''}{purchaseTrend}% this week
                     </span>
                   </>
+                ) : synced ? (
+                  // Online but no purchase history — honest label, not a fake %.
+                  <span className="text-[10px] text-gray-400 font-semibold" title="No purchase history on this device yet">
+                    No trend data yet
+                  </span>
                 ) : (
-                  <>
-                    <TrendingUp className="w-3 h-3 text-emerald-500" />
-                    <span className="text-[10px] text-emerald-600 font-semibold">+2.4%</span>
-                  </>
+                  // No live purchase data (offline) — honest placeholder instead
+                  // of a fake trend percentage.
+                  <span className="text-[10px] text-gray-400 font-semibold" title="Live purchase data unavailable — showing local values">
+                    Offline — no live trend
+                  </span>
                 )}
               </div>
             </div>
@@ -186,13 +244,13 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
 
           <div className="flex gap-3">
             <button onClick={() => onNavigate('purchase')}
-              className="flex-1 py-3.5 bg-[#004ac6] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
             >
               <ShoppingCart className="w-5 h-5" />
               Add Stock
             </button>
             <button onClick={() => onNavigate('items')}
-              className="flex-1 py-3.5 bg-white border border-[#e1e2ed] text-gray-700 rounded-2xl text-sm font-bold hover:border-[#004ac6]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 bg-white border border-[#e1e2ed] text-gray-700 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
             >
               <Package className="w-5 h-5" />
               View Items
@@ -213,12 +271,13 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                 <Sparkles className="w-3 h-3 text-white" />
               </div>
               <h2 className="text-sm font-bold">AI Recommendations</h2>
+              {recsSource && <AiSourceBadge source={recsSource} />}
             </div>
-            <ShoppingCart className="w-4 h-4 text-[#004ac6]" />
+            <ShoppingCart className="w-4 h-4 text-[var(--brand-color)]" />
           </div>
           <div className="space-y-3">
-            {purchaseRecs.slice(0, 5).map(rec => (
-              <div key={rec.item} className="flex items-center justify-between py-2 border-b border-[#e1e2ed] last:border-0">
+            {purchaseRecs.slice(0, 5).map((rec, i) => (
+              <div key={`${rec.item}-${i}`} className="flex items-center justify-between py-2 border-b border-[#e1e2ed] last:border-0">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
                     rec.urgency === 'high' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
@@ -232,13 +291,13 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                   </div>
                 </div>
                 <button onClick={() => onNavigate('purchase')}
-                  className="px-3 py-1.5 bg-[#004ac6] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer shrink-0 ml-2"
+                  className="px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer shrink-0 ml-2"
                 >
                   Order
                 </button>
               </div>
             ))}
-            <button onClick={() => onNavigate('purchase')} className="w-full py-2 text-center text-[10px] text-[#004ac6] font-semibold hover:underline cursor-pointer">
+            <button onClick={() => onNavigate('purchase')} className="w-full py-2 text-center text-[10px] text-[var(--brand-color)] font-semibold hover:underline cursor-pointer">
               View all recommendations
             </button>
           </div>
@@ -255,6 +314,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                 <Brain className="w-3 h-3 text-white" />
               </div>
               <h2 className="text-sm font-bold">Low Stock Predictions</h2>
+              {lowStockSource && <AiSourceBadge source={lowStockSource} />}
             </div>
             <AlertTriangle className="w-4 h-4 text-amber-500" />
           </div>
@@ -295,28 +355,35 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.15 }}
           className="space-y-3"
         >
-          {moduleSettings?.enableAIWeather !== false && <WeatherWidget compact />}
+          {moduleSettings?.enableAIWeather !== false && <WeatherWidget compact menuItems={items.map(i => i.name).filter(Boolean)} />}
           <div className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold">Alerts</h2>
               <AlertTriangle className="w-4 h-4 text-amber-500" />
             </div>
             <div className="space-y-3">
-              {INVENTORY_ALERTS.slice(0, 4).map(alert => {
-                const severityColor = alert.severity === 'critical' ? 'border-red-200 bg-red-50' : alert.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50';
-                const dotColor = alert.severity === 'critical' ? 'bg-red-500' : alert.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500';
-                return (
-                  <div key={alert.id} className={`rounded-xl border ${severityColor} p-3`}>
-                    <div className="flex items-start gap-2.5">
-                      <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${dotColor}`} />
-                      <div>
-                        <p className="text-xs font-bold">{alert.item}</p>
-                        <p className="text-[10px] mt-0.5 opacity-75">{alert.message}</p>
+              {realAlerts.length === 0 ? (
+                <div className="text-center py-6 text-gray-400">
+                  <AlertTriangle className="w-6 h-6 mx-auto mb-2 opacity-40" />
+                  <p className="text-xs font-medium">No alerts — all stock is healthy</p>
+                </div>
+              ) : (
+                realAlerts.map(alert => {
+                  const severityColor = alert.severity === 'critical' ? 'border-red-200 bg-red-50' : alert.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50';
+                  const dotColor = alert.severity === 'critical' ? 'bg-red-500' : alert.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500';
+                  return (
+                    <div key={alert.id} className={`rounded-xl border ${severityColor} p-3`}>
+                      <div className="flex items-start gap-2.5">
+                        <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${dotColor}`} />
+                        <div>
+                          <p className="text-xs font-bold">{alert.item}</p>
+                          <p className="text-[10px] mt-0.5 opacity-75">{alert.message}</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </motion.div>
@@ -347,7 +414,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
               </div>
             ))}
           </div>
-          <button onClick={() => onNavigate('items')} className="w-full py-2.5 mt-3 text-center text-xs text-[#004ac6] font-semibold hover:bg-blue-50 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1">
+          <button onClick={() => onNavigate('items')} className="w-full py-2.5 mt-3 text-center text-xs text-[var(--brand-color)] font-semibold hover:bg-blue-50 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1">
             View all items <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </motion.div>

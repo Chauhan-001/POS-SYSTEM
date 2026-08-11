@@ -26,6 +26,10 @@
 
 import type { ISTTProvider, STTResult, STTOptions } from '../types';
 import { aiConfig } from '../../ai/config';
+import { recordQuotaSnapshot } from '../../ai/services/aiQuotaTracker';
+import { SttProviderManager, createBreaker, type SttProviderEntry } from './SttProviderManager';
+import { createGoogleCloudSttProvider } from '../providers/googleCloudStt';
+import { createDeepgramFluxProvider } from '../providers/deepgramFlux';
 
 // ====================================================================
 // PROVIDER CONFIGURATION
@@ -71,6 +75,7 @@ export function configureSTT(config: Partial<STTConfig>): void {
   _sttConfig = { ..._sttConfig, ...config };
   if (config.provider) {
     _providerInstance = null; // Reset cached instance on config change
+    _manager = null;          // Rebuild the provider chain
   }
 }
 
@@ -437,6 +442,18 @@ function createGroqProvider(): ISTTProvider {
 
       console.log(`[SpeechService] Groq STT response: HTTP ${response.status}`);
 
+      // Feed the admin quota tracker from the STT response headers (same
+      // per-account quota as the LLM — Whisper usage counts against it).
+      // Skip when no key is configured so we never record an empty-key entry.
+      if (apiKey) {
+        recordQuotaSnapshot(apiKey, response.headers, {
+          model: _sttConfig.model || 'whisper-large-v3-turbo',
+          baseUrl,
+          success: response.ok,
+          status: response.status,
+        });
+      }
+
       if (!response.ok) {
         const err = await response.text().catch(() => 'Unknown error');
         const diagErr: any = new Error(`Groq STT error (${response.status}): ${err}`);
@@ -466,11 +483,109 @@ function createGroqProvider(): ISTTProvider {
 }
 
 // ====================================================================
+// PROVIDER CHAIN (PRODUCTION)
+// ====================================================================
+
+let _manager: SttProviderManager | null = null;
+
+/**
+ * Build the production STT provider chain:
+ *   1. Google Cloud STT (primary)    — GOOGLE_API_KEY / STT_API_KEY
+ *   2. Deepgram Flux (fallback)      — DEEPGRAM_API_KEY
+ *   3. Legacy configured provider    — STT_PROVIDER (browser/azure/custom/groq)
+ *
+ * Each entry gets its own circuit breaker via SttProviderManager. The first
+ * provider that returns a non-empty transcript wins.
+ */
+function getManager(): SttProviderManager {
+  if (_manager) return _manager;
+
+  const entries: Array<Omit<SttProviderEntry, 'breaker'>> = [];
+  const providerKey = _sttConfig.provider;
+  const deepgramConfigured = !!process.env.DEEPGRAM_API_KEY;
+  const googleConfigured = !!(
+    _sttConfig.apiKey ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GOOGLE_APPLICATION_CREDENTIALS
+  );
+
+  // Production chain, in priority order:
+  //   1. Deepgram Flux (primary when DEEPGRAM_API_KEY is set — the current
+  //      production setup; no Google key required).
+  //   2. Google Cloud STT — included only when a key is actually present.
+  //   3. Explicit legacy single-provider (STT_PROVIDER=azure/custom/groq).
+  //   4. Auto-detect last resort (Groq Whisper etc.).
+  //
+  // When BOTH Deepgram and Google keys exist, Deepgram stays first (matches
+  // the user's current deployment preference) and Google is the fallback.
+  if (providerKey === 'google' && deepgramConfigured) {
+    entries.push({ key: 'deepgram', displayName: 'Deepgram Flux', provider: createDeepgramFluxProvider() });
+  } else if (!deepgramConfigured && providerKey === 'google') {
+    entries.push({ key: 'google', displayName: 'Google Cloud STT', provider: createGoogleCloudSttProvider() });
+  } else if (
+    !deepgramConfigured &&
+    (providerKey === 'azure' || providerKey === 'custom' || providerKey === 'groq' || providerKey === 'browser')
+  ) {
+    entries.push({ key: providerKey, displayName: `Legacy:${providerKey}`, provider: getLegacyProvider(providerKey) });
+  } else if (deepgramConfigured) {
+    // Deepgram primary (default production path), Google fallback if keyed.
+    entries.push({ key: 'deepgram', displayName: 'Deepgram Flux', provider: createDeepgramFluxProvider() });
+  } else {
+    // Nothing configured yet — Google Cloud attempt + auto-detect.
+    entries.push({ key: 'google', displayName: 'Google Cloud STT', provider: createGoogleCloudSttProvider() });
+  }
+
+  // Google appended as a fallback when Deepgram leads and Google has a key.
+  if (entries[0]?.key === 'deepgram' && googleConfigured) {
+    entries.push({ key: 'google', displayName: 'Google Cloud STT', provider: createGoogleCloudSttProvider() });
+  }
+
+  // Auto-detect legacy provider as the last resort when the chain has no
+  // usable primary credentials. `getProvider()` lazily builds one.
+  if (!entries.some((e) => e.key === _sttConfig.provider)) {
+    try {
+      const auto = getProvider();
+      entries.push({ key: _sttConfig.provider, displayName: `Auto:${_sttConfig.provider}`, provider: auto });
+    } catch {
+      // ignore — chain will still try the produced entries
+    }
+  }
+
+  _manager = new SttProviderManager(
+    entries.map((e) => ({
+      ...e,
+      breaker: createBreaker(e.key),
+    }))
+  );
+  return _manager;
+}
+
+/**
+ * Map a legacy provider key to its pre-existing provider instance. The old
+ * single-provider behaviour is preserved as an entry inside the chain.
+ */
+function getLegacyProvider(key: 'azure' | 'custom' | 'groq' | 'browser'): ISTTProvider {
+  switch (key) {
+    case 'azure':
+      return createAzureProvider();
+    case 'custom':
+      return createCustomProvider();
+    case 'groq':
+      return createGroqProvider();
+    case 'browser':
+      return createBrowserProvider();
+  }
+}
+
+// ====================================================================
 // PUBLIC API
 // ====================================================================
 
 /**
- * Transcribe audio to text using the configured STT provider.
+ * Transcribe audio to text using the configured provider chain.
+ * Google Cloud STT is tried first; Deepgram Flux and the legacy provider act
+ * as fallbacks. A successful result carries `provider`, `costUsd`, and the
+ * attempt trace so the controller can surface cost/ineability metrics.
  *
  * @param audioBlob - Raw audio data blob
  * @param options - Optional transcription options
@@ -480,28 +595,51 @@ export async function transcribeAudio(
   audioBlob: Blob,
   options?: STTOptions
 ): Promise<STTResult> {
-  const provider = getProvider();
   const startTime = Date.now();
   const audioSizeKb = Math.round((audioBlob.size || 0) / 1024);
+  const manager = getManager();
   console.log(
     `[SpeechService] Audio received: ${audioSizeKb} KB, type=${audioBlob.type || 'unknown'}, ` +
-    `provider=${provider.name}, sttModel=${_sttConfig.model || 'default'}`
+    `chain=[${manager.list().join(' → ')}]`
   );
 
   try {
-    const result = await provider.transcribe(audioBlob, options);
+    const outcome = await manager.transcribe(audioBlob, options);
+
+    if (!outcome.success || !outcome.result) {
+      console.warn(
+        `[SpeechService] All STT providers failed: ${
+          outcome.error || 'unknown'
+        } | attempts=${JSON.stringify(outcome.attemptHistory)}`
+      );
+      return {
+        transcript: '',
+        confidence: 0,
+        isFinal: true,
+        durationMs: Date.now() - startTime,
+        language: options?.language || _sttConfig.language || 'hi-en',
+        attemptHistory: outcome.attemptHistory,
+        error: {
+          message: outcome.error || 'No STT provider available',
+        },
+      };
+    }
+
+    const r = outcome.result;
     console.log(
-      `[SpeechService] STT model=${_sttConfig.model || 'default'} transcribed in ${result.durationMs}ms: "${result.transcript.slice(0, 80)}"`
+      `[SpeechService] Transcribed via ${outcome.provider} in ${r.durationMs}ms: "${r.transcript.slice(0, 80)}"` +
+      (outcome.costUsd ? ` (≈$${outcome.costUsd})` : '')
     );
-    return result;
+
+    return {
+      ...r,
+      provider: outcome.provider,
+      costUsd: outcome.costUsd,
+      attemptHistory: outcome.attemptHistory,
+    };
   } catch (error: any) {
     const elapsed = Date.now() - startTime;
     console.error(`[SpeechService] Transcription failed after ${elapsed}ms:`, error.message);
-
-    // Return a fallback error result but PRESERVE the full diagnostic chain
-    // (status, request URL, model, endpoint method, response body, stack)
-    // so the controller can surface the actual error instead of a generic
-    // "No speech detected".
     return {
       transcript: '',
       confidence: 0,
@@ -522,20 +660,46 @@ export async function transcribeAudio(
 }
 
 /**
- * Check if the configured STT provider is available and configured.
+ * Check if the configured STT provider chain has at least one usable provider.
  */
 export function isSTTConfigured(): boolean {
+  if (process.env.DEEPGRAM_API_KEY) return true;
   switch (_sttConfig.provider) {
-    case 'google':
     case 'azure':
     case 'custom':
       return !!_sttConfig.apiKey;
     case 'groq':
       return !!_sttConfig.apiKey || !!aiConfig.apiKey;
+    case 'google':
+      return !!(
+        _sttConfig.apiKey ||
+        process.env.GOOGLE_API_KEY ||
+        process.env.GOOGLE_APPLICATION_CREDENTIALS
+      );
     case 'browser':
-    default:
       return true; // Always available on frontend
+    default:
+      return true;
   }
+}
+
+/**
+ * Currently configured provider chain (for /status and telemetry).
+ */
+export function getSttProviderChain(): string[] {
+  try {
+    return getManager().list();
+  } catch {
+    return [_sttConfig.provider];
+  }
+}
+
+/**
+ * Reset any cached provider manager (used by configureSTT after a config change).
+ */
+function resetManager(): void {
+  _manager = null;
+  _providerInstance = null; // also clear the legacy singleton cache
 }
 
 // ====================================================================

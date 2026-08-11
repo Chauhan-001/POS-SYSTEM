@@ -28,6 +28,9 @@ export interface IInventoryEvent extends Document {
   details: string;
   /** YYYY-MM-DD event date — same convention as purchases. */
   eventDate: string;
+  /** Optional source reference (e.g. the VoiceAuditLog id that created this
+   *  event) so a voice undo can remove exactly the rows it produced. */
+  refId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +46,9 @@ const InventoryEventSchema = new Schema<IInventoryEvent>(
     operator: { type: String, default: 'System', trim: true },
     details: { type: String, required: true, trim: true },
     eventDate: { type: String, required: true, trim: true },
+    /** Optional source reference (e.g. the VoiceAuditLog id that created this
+     *  event) so a voice undo can remove exactly the rows it produced. */
+    refId: { type: String, trim: true, default: undefined },
   },
   { timestamps: true }
 );

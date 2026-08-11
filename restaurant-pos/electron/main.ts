@@ -48,6 +48,16 @@ let isFramelessMode = false;
 const MAX_LOAD_RETRIES = 5;
 let loadRetryAttempts = 0;
 
+// ─── Renderer self-heal crash signatures ────────────────────────
+// Messages that indicate the renderer crashed into the React error boundary
+// (as opposed to benign noise like "Failed to fetch" network errors).
+const RENDERER_CRASH_SIGNATURES =
+  /uncaught|cannot destructure|cannot read propert|is not a function|context is unavailable/i;
+
+// Renderer exit reasons that indicate an actual crash (vs. a clean exit during
+// shutdown or a launch/integrity failure) — these are recoverable by reload.
+const CRASH_LIKE_REASONS = new Set(['crashed', 'oom', 'abnormal-exit', 'killed']);
+
 // ─── Window creation ─────────────────────────────────────────────
 function createWindow(): Electron.BrowserWindow {
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -113,16 +123,46 @@ function createWindow(): Electron.BrowserWindow {
   });
 
   // ─── Error handling ──────────────────────────────────────
+  // One-shot self-heal budget for this window, shared by the JS-exception
+  // guard (console-message below) and the process-crash guard
+  // (render-process-gone here). Never reset, so at most ONE auto-reload per
+  // window creation — a crash that recurs afterwards is surfaced to the user.
+  let selfHealReloaded = false;
+  // True while a self-heal reload timer is in flight — suppresses the manual
+  // error dialog so it never pops right before the app reloads itself.
+  let pendingSelfHealReload = false;
+
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    console.error(`[Electron] Renderer process crashed: ${details.reason}`);
-    if (mainWindow) {
-      dialog.showErrorBox(
-        'POS Terminal Error',
-        'The application encountered an unexpected error.\n\n' +
-        `Reason: ${details.reason}\n\n` +
-        'Please restart the application.'
-      );
+    console.error(`[Electron] Renderer process gone: ${details.reason}`);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // A real crash (renderer died, OOM, killed, abnormal exit) can usually be
+    // recovered by ONE reload. Clean exits (e.g. during shutdown) and
+    // launch/integrity failures are NOT reloadable — and if the crash recurs
+    // after the self-heal reload the user needs to see it — so those fall
+    // back to the manual error dialog.
+    if (CRASH_LIKE_REASONS.has(details.reason) && !selfHealReloaded) {
+      selfHealReloaded = true;
+      pendingSelfHealReload = true;
+      console.warn(`[Electron] Renderer crashed (${details.reason}) — self-heal reload (once)`);
+      // Give the dead renderer a moment to fully tear down before relaunching.
+      setTimeout(() => {
+        pendingSelfHealReload = false;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.reload();
+        }
+      }, 500);
+      return;
     }
+    // A self-heal reload may already be in flight (e.g. the JS-exception guard
+    // scheduled one just before the process died) — don't pop a scary dialog
+    // on top of an imminent reload.
+    if (pendingSelfHealReload) return;
+    dialog.showErrorBox(
+      'POS Terminal Error',
+      'The application encountered an unexpected error.\n\n' +
+      `Reason: ${details.reason}\n\n` +
+      'Please restart the application.'
+    );
   });
 
   mainWindow.webContents.on('unresponsive', () => {
@@ -136,6 +176,42 @@ function createWindow(): Electron.BrowserWindow {
   mainWindow.webContents.on('did-finish-load', () => {
     // A load eventually completed — reset the retry budget for later.
     loadRetryAttempts = 0;
+  });
+
+  // ─── Renderer self-heal (stale-bundle crash guard) ───────────
+  // A renderer that crashes into the React error boundary (e.g. a stale
+  // bundle holding two split context instances) can usually be recovered by
+  // ONE reload, which picks up the freshly built code. Watch for
+  // uncaught-exception console errors and reload the window once per window
+  // creation. The flag is never reset, so a crash that recurs AFTER the
+  // reload (a genuine bug) is surfaced to the user instead of looping.
+  // Network/fetch noise ("Failed to fetch") and warnings are ignored — only
+  // messages that look like real exceptions trigger the self-heal.
+  // (selfHealReloaded is declared above next to the render-process-gone
+  // handler and shared by both self-heal paths.)
+  // Electron 35 emits (event, details: MessageDetails) — read details.level /
+  // details.message. Older versions used positional (event, level, message,
+  // ...) — read args[1] as level and args[2] as message. The d.ts declares
+  // both overloads, so overload resolution is ambiguous — use a rest-args
+  // listener and read the version-safe shape manually.
+  mainWindow.webContents.on('console-message', (...args: any[]) => {
+    if (selfHealReloaded) return;
+    const details = args[1];
+    const isObjectForm = typeof details === 'object' && details !== null;
+    const level = isObjectForm ? Number(details.level) : Number(details);
+    if (level !== 3) return; // 0 verbose, 1 info, 2 warning, 3 error
+    const text = isObjectForm ? String(details.message || '') : String(args[2] || '');
+    if (!RENDERER_CRASH_SIGNATURES.test(text)) return;
+    selfHealReloaded = true;
+    pendingSelfHealReload = true;
+    console.warn(`[Electron] Renderer error detected — self-heal reload (once): ${text.slice(0, 200)}`);
+    // Small delay so the error boundary finishes rendering before the reload.
+    setTimeout(() => {
+      pendingSelfHealReload = false;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.reload();
+      }
+    }, 300);
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription,

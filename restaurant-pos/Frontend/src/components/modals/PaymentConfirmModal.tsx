@@ -18,6 +18,7 @@ interface PaymentConfirmModalProps {
   paymentMethod: string;
   searchedCustomer: any;
   appliedReward: any;
+  appliedOffer?: any;
   splitDetails: { cashAmount: number; cardAmount: number; upiAmount: number; walletAmount: number };
   onClose: () => void;
   onConfirmPayment: () => void;
@@ -41,6 +42,7 @@ export default function PaymentConfirmModal({
   paymentMethod,
   searchedCustomer,
   appliedReward,
+  appliedOffer,
   splitDetails,
   onClose,
   onConfirmPayment,
@@ -160,7 +162,9 @@ export default function PaymentConfirmModal({
             {discount > 0 && (
               <div className="flex justify-between text-xs">
                 <span className="text-green-600 flex items-center gap-1">
-                  <Tag className="w-3 h-3" /> Discount{appliedReward ? ` (${appliedReward.title})` : ''}
+                  <Tag className="w-3 h-3" /> Discount
+                  {appliedReward ? ` (${appliedReward.title})` : ''}
+                  {appliedOffer?.offer?.title ? ` (${appliedOffer.offer.title}${appliedOffer.offer.couponCode ? ` · ${appliedOffer.offer.couponCode}` : ''})` : ''}
                 </span>
                 <span className="font-mono font-medium text-green-600">-{currencySymbol}{discount.toFixed(2)}</span>
               </div>
@@ -188,7 +192,7 @@ export default function PaymentConfirmModal({
             )}
             <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-[#e1e2ed]">
               <span className="text-[#191b23]">Grand Total</span>
-              <span className="font-mono text-[#004ac6]">{currencySymbol}{grandTotal.toFixed(2)}</span>
+              <span className="font-mono text-[var(--brand-color)]">{currencySymbol}{grandTotal.toFixed(2)}</span>
             </div>
           </div>
 

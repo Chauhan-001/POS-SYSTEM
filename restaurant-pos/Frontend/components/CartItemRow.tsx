@@ -71,13 +71,13 @@ function CartItemRow({
   };
 
   return (
-    <div className={`bg-gray-50 rounded-lg p-2.5 border border-[#e1e2ed] group transition-all ${locked ? 'opacity-80 border-[#c3c6d7] bg-gray-100' : 'hover:border-[#004ac6]/30'}`}>
+    <div className={`bg-gray-50 rounded-lg p-2.5 border border-[#e1e2ed] group transition-all ${locked ? 'opacity-80 border-[#c3c6d7] bg-gray-100' : 'hover:border-[var(--brand-color)]/30'}`}>
       <div className="flex justify-between items-start">
         <div className="flex items-start gap-2">
           <div className="w-7 h-7 rounded-md overflow-hidden shrink-0 border border-[#e1e2ed] bg-white flex items-center justify-center">
             {item.product.image
               ? <img src={item.product.image} alt={item.product.name} className="w-full h-full object-cover" />
-              : <div className="w-3 h-3 rounded-sm bg-[#004ac6]/10" />
+              : <div className="w-3 h-3 rounded-sm bg-[var(--brand-color)]/10" />
             }
           </div>
           <div className="min-w-0">
@@ -140,7 +140,7 @@ function CartItemRow({
           placeholder="Add note..."
           value={item.notes || ''}
           disabled={locked}
-          className={`mt-1 w-full px-1.5 py-0.5 text-[9px] border border-dashed border-gray-300 rounded focus:outline-none focus:border-[#004ac6] focus:ring-0 ${locked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
+          className={`mt-1 w-full px-1.5 py-0.5 text-[9px] border border-dashed border-gray-300 rounded focus:outline-none focus:border-[var(--brand-color)] focus:ring-0 ${locked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onUpdateItemNotes(item.id, e.target.value)}
         />

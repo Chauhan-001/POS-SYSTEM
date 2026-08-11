@@ -32,6 +32,8 @@ const parsedItemSchema = z.object({
   item: z.string().min(1).max(200).nullable().optional(),
   quantity: z.number().min(0).nullable().optional(),
   unit: z.string().nullable().optional(),
+  /** Purchase rate (₹ per unit) — captured instead of discarded. */
+  rate: z.number().min(0).max(1_000_000).nullable().optional(),
 });
 
 const voiceLLMOutputSchema = z.object({
@@ -48,6 +50,14 @@ const voiceLLMOutputSchema = z.object({
   confidence: z.number().min(0).max(1).default(0),
   language: z.enum(['en', 'hi', 'hi-en']).optional().default('hi-en'),
   originalText: z.string().optional().default(''),
+  /** Supplier/vendor name spoken in the command ("from Verka Dairy"). */
+  supplier: z.string().max(200).nullable().optional(),
+  /** Purchase date — ISO YYYY-MM-DD or a resolvable relative word (kal/aaj). */
+  date: z.string().max(40).nullable().optional(),
+  /** Brand/variant spoken in the command ("Amul brand butter"). */
+  brand: z.string().max(200).nullable().optional(),
+  /** Expiry date for the incoming batch ("expiry 31 Dec 2026"). */
+  expiryDate: z.string().max(40).nullable().optional(),
 });
 
 type VoiceLLMOutput = z.infer<typeof voiceLLMOutputSchema>;
@@ -146,7 +156,7 @@ export async function parseTranscript(
       // failed schema validation, fall through to the direct LLM call and the
       // keyword fallback so voice input keeps working even without the LLM.
       if (!validated.error) {
-        return validated;
+        return applyRateBackstop(validated, transcript);
       }
       console.warn('[AIParser] AI service output failed validation — falling through');
     }
@@ -178,7 +188,7 @@ export async function parseTranscript(
 
       // Only return if LLM succeeded with confidence > 0
       if (validated.confidence > 0) {
-        return validated;
+        return applyRateBackstop(validated, transcript);
       }
     } catch {
       console.warn('[AIParser] Direct LLM call also failed, using keyword fallback');
@@ -186,7 +196,10 @@ export async function parseTranscript(
 
     // Third try: Keyword-based rule parsing as ultimate fallback
     console.warn('[AIParser] LLM failed, applying keyword-based Hinglish parsing');
-    const keywordParsed = keywordFallbackParse(transcript);
+    const keywordParsed = applyRateBackstop(
+      keywordFallbackParse(transcript),
+      transcript
+    );
     const elapsed = Date.now() - startTime;
     console.log(
       `[AIParser] Keyword fallback in ${elapsed}ms: intent=${keywordParsed.intent}, items=${keywordParsed.items.length}`
@@ -226,6 +239,11 @@ function validateLLMOutput(
         item: item.item == null ? null : item.item.trim().slice(0, 200),
         quantity: item.quantity == null ? 0 : Math.max(0, item.quantity),
         unit: item.unit || 'pcs',
+        // Sanitize the spoken rate — never trust the LLM's raw number.
+        rate:
+          item.rate == null || !isFinite(item.rate) || item.rate <= 0
+            ? undefined
+            : Math.min(Math.round(item.rate * 100) / 100, 1_000_000),
       }));
 
     // Auto-detect language from original text
@@ -237,6 +255,22 @@ function validateLLMOutput(
       confidence: result.confidence,
       originalText: originalText,
       language: detectedLanguage,
+      // Supplier — the LLM's clean structured value wins; scan the raw
+      // transcript when the LLM dropped the field entirely.
+      supplier: extractSpokenSupplier(String(result.supplier || '')) || extractSpokenSupplier(originalText),
+      // Date — the DETERMINISTIC transcript extraction wins. LLMs routinely
+      // hallucinate "today" ("aaj") into a wrong year, and only the raw
+      // transcript is ground truth for relative words like kal/aaj/parso.
+      // The LLM's value is used only as a fallback for absolute dates.
+      date: extractSpokenDate(originalText) || extractSpokenDate(String(result.date || '')),
+      // Brand — the LLM's clean structured value wins; fall back to explicit
+      // "X brand"/"brand X" markers in the transcript when the LLM dropped it.
+      brand: extractSpokenBrand(String(result.brand || '')) || extractSpokenBrand(originalText),
+      // Expiry date — the DETERMINISTIC marker-based transcript extraction wins
+      // (only after an explicit "expiry/exp/expires" marker), so a purchase
+      // date or quantity is never mistaken for an expiry. The LLM's ISO value
+      // is used as a fallback when the transcript has no marker.
+      expiryDate: extractSpokenExpiry(originalText) || extractSpokenExpiry(String(result.expiryDate || '')),
     };
   } catch (validationError: any) {
     console.warn(
@@ -252,6 +286,10 @@ function validateLLMOutput(
       items,
       confidence: Math.min(raw?.confidence || 0, 0.5), // Penalize confidence for invalid output
       originalText,
+      supplier: extractSpokenSupplier(raw?.supplier ? String(raw.supplier) : originalText),
+      date: extractSpokenDate(originalText) || extractSpokenDate(raw?.date ? String(raw.date) : ''),
+      brand: extractSpokenBrand(raw?.brand ? String(raw.brand) : originalText),
+      expiryDate: extractSpokenExpiry(originalText) || extractSpokenExpiry(raw?.expiryDate ? String(raw.expiryDate) : ''),
       error: 'Output validation failed, partial extraction used',
     };
   }
@@ -271,6 +309,10 @@ function extractItemsFromRaw(raw: any): ParsedItem[] {
           item: String(i.item || '').trim().slice(0, 200),
           quantity: Math.max(0, Number(i.quantity) || 0),
           unit: String(i.unit || 'pcs').trim() || 'pcs',
+          rate:
+            i.rate != null && isFinite(Number(i.rate)) && Number(i.rate) > 0
+              ? Math.min(Math.round(Number(i.rate) * 100) / 100, 1_000_000)
+              : undefined,
         }));
     }
     // Single item at top level
@@ -280,6 +322,10 @@ function extractItemsFromRaw(raw: any): ParsedItem[] {
           item: String(raw.item).trim().slice(0, 200),
           quantity: Math.max(0, Number(raw.quantity) || 0),
           unit: String(raw.unit || 'pcs').trim() || 'pcs',
+          rate:
+            raw.rate != null && isFinite(Number(raw.rate)) && Number(raw.rate) > 0
+              ? Math.min(Math.round(Number(raw.rate) * 100) / 100, 1_000_000)
+              : undefined,
         },
       ];
     }
@@ -495,6 +541,101 @@ function extractUnit(text: string): string {
 }
 
 /**
+ * Deterministic purchase-rate backstop, applied to the FINAL parse result
+ * regardless of which path produced it (LLM service, direct LLM, keyword
+ * fallback). Many LLMs drop the optional "rate" field even when told to
+ * extract it, so we recover it straight from the raw transcript — a spoken
+ * rate is never silently lost.
+ *
+ * Phrasing rules:
+ *   - "40 rupaye ke rate par" / "at ₹56" / "56 rs per kg" → per-unit rate
+ *   - "200 rupaye mein N kg" → amount is the TOTAL → divide by quantity
+ */
+function applyRateBackstop(
+  parsed: VoiceParseOutput,
+  transcript: string
+): VoiceParseOutput {
+  const transcriptRate = extractRate(transcript);
+  if (transcriptRate == null && parsed.items.length === 0) return parsed;
+
+  // "X rupaye mein / में N kg" phrases the amount as the TOTAL for the
+  // quantity. "X rupaye ke rate par" / "per kg" is already per-unit and must
+  // NOT be divided — so only "mein/में" (or nothing) right after the amount
+  // counts as total phrasing. ("ka" is excluded: "40 rupaye ka rate" is also
+  // a per-unit rate.)
+  const totalForQtyPhrasing = /(?:rupaye|rs\.?|rupees?|₹|inr)\s*(?:mein|में)(?:\s|$)/i.test(
+    transcript
+  );
+  const singleItem = parsed.items.length === 1;
+
+  // Unit backstop: the unit the speaker actually used ("5 kg aloo") is a
+  // deterministic fact of the transcript. Stamp it onto every item so a later
+  // resolver default can never downgrade "kg" to "pcs".
+  const spokenUnit = extractUnit(transcript);
+
+  const items = parsed.items.map((it) => {
+    let next: ParsedItem = it;
+
+    // Unit — only override when the speaker clearly stated one (extractUnit
+    // returns 'pcs' as its default too, so keep the parser's unit when the
+    // transcript had none).
+    if (spokenUnit && spokenUnit !== 'pcs' && (!it.unit || it.unit === 'pcs')) {
+      next = { ...next, unit: spokenUnit };
+    }
+
+    // Rate — fill when missing and the transcript mentions one.
+    if (transcriptRate != null && !(next.rate != null && next.rate > 0)) {
+      let rate = transcriptRate;
+      if (totalForQtyPhrasing && singleItem && next.quantity > 0) {
+        rate = rate / next.quantity;
+      }
+      next = {
+        ...next,
+        rate: Math.min(Math.max(Math.round(rate * 100) / 100, 0.01), 1_000_000),
+      };
+    }
+
+    return next;
+  });
+
+  return { ...parsed, items };
+}
+
+/**
+ * Extract a spoken purchase rate from text.
+ *
+ * Handles common Indian price phrasings:
+ *   - "40 rupaye ke rate par" / "at ₹56" / "56 rupees per kg"  → 56
+ *   - "₹40/kg" → 40
+ *   - "200 rupaye mein 5 kg" → 40 (total ÷ quantity, done by the caller)
+ * Returns the raw per-unit number, or null when no rate is mentioned.
+ */
+function extractRate(text: string): number | null {
+  const lower = text.toLowerCase();
+
+  // Pattern A — number BEFORE the currency word (most common in Hinglish):
+  //   "40 rupaye ke rate par", "200 rupaye mein", "40 रुपये किलो"
+  // The number must be IMMEDIATELY followed by the currency word (only spaces
+  // between) so a quantity like "5 kg aloo" is never mistaken for a rate.
+  const numberFirst = lower.match(
+    /(?:^|[^\d])(\d+(?:\.\d+)?)\s*(?:rs\.?|rupees?|rupay[ae]?|inr|रुपये|रुपए|रुपे)(?:\s|$)/i
+  );
+  if (numberFirst) return parseFloat(numberFirst[1]);
+
+  // "₹40" or "₹ 40" — the ₹ glyph sits right before the number.
+  const rupeeGlyph = lower.match(/₹\s*(\d+(?:\.\d+)?)/i);
+  if (rupeeGlyph) return parseFloat(rupeeGlyph[1]);
+
+  // Pattern B — currency word BEFORE the number:
+  //   "rate par 40", "rupees 56 per kg", "at 56 rs"
+  const currencyFirst = lower.match(
+    /(?:rs\.?|rupees?|rupay[ae]?|inr|rate|रुपये|रुपए|रुपे)\s*[:@]?\s*(\d+(?:\.\d+)?)/i
+  );
+  if (currencyFirst) return parseFloat(currencyFirst[1]);
+  return null;
+}
+
+/**
  * Keyword-based Hinglish fallback parser.
  * Used when the LLM fails to parse Hinglish input.
  * Handles common patterns like:
@@ -503,10 +644,12 @@ function extractUnit(text: string): string {
  *   - "do crate ThumsUp aa gaya"
  */
 function keywordFallbackParse(text: string): VoiceParseOutput {
-  // Strip out price clauses like "40 रुपे के रेट पर", "56 rupees per", etc. so they don't confuse quantity
+  // Keep price clauses for rate extraction, but strip them from the text we
+  // scan for quantities so "40 rupaye" is never mistaken for a quantity.
   const cleanedText = text.replace(/\d+\s*(?:रुपे|रुपये|rs|rupees|rs\.|inr).*?(?:rate|पर|mein|me|per|$)/gi, '');
   const lower = cleanedText.toLowerCase().trim();
   const intent = detectIntent(text);
+  const rawRate = extractRate(text);
 
   // Split by connectors to handle multi-item
   const separators = /\s+(?:and|aur|और|&)\s+|\s*,\s*/;
@@ -521,7 +664,15 @@ function keywordFallbackParse(text: string): VoiceParseOutput {
     const unit = extractUnit(part);
 
     if (itemName && quantity > 0) {
-      items.push({ item: itemName, quantity, unit });
+      // A "X rupaye mein 5 kg" (total-for-quantity) phrasing → divide to get
+      // the per-unit rate. "X rupaye ke rate par" is already per-unit and is
+      // left untouched (applyRateBackstop applies the same rule afterwards).
+      const isTotalPhrasing = /(?:rupaye|rs\.?|rupees?|₹|inr)\s*(?:mein|में)(?:\s|$)/i.test(part);
+      let rate = rawRate ?? undefined;
+      if (rawRate != null && parts.length === 1 && isTotalPhrasing && quantity > 0) {
+        rate = Math.round((rawRate / quantity) * 100) / 100;
+      }
+      items.push({ item: itemName, quantity, unit, rate });
       totalConfidence += 0.7; // base confidence per item
     }
   }
@@ -532,7 +683,16 @@ function keywordFallbackParse(text: string): VoiceParseOutput {
     const fullItem = extractItem(cleanedText);
     const fullUnit = extractUnit(cleanedText);
     if (fullItem && fullQuantity > 0) {
-      items.push({ item: fullItem, quantity: fullQuantity, unit: fullUnit });
+      const isTotalPhrasing = /(?:rupaye|rs\.?|rupees?|₹|inr)\s*(?:mein|में)(?:\s|$)/i.test(cleanedText);
+      items.push({
+        item: fullItem,
+        quantity: fullQuantity,
+        unit: fullUnit,
+        rate:
+          rawRate != null && isTotalPhrasing && fullQuantity > 0
+            ? Math.round((rawRate / fullQuantity) * 100) / 100
+            : rawRate ?? undefined,
+      });
       totalConfidence = 0.65;
     }
   }
@@ -549,7 +709,265 @@ function keywordFallbackParse(text: string): VoiceParseOutput {
     confidence,
     language: detectedLang,
     originalText: text,
+    supplier: extractSpokenSupplier(text),
+    date: extractSpokenDate(text),
+    brand: extractSpokenBrand(text),
+    expiryDate: extractSpokenExpiry(text),
   };
+}
+
+/**
+ * Extract a spoken expiry date from a voice command.
+ *
+ * Requires an explicit marker ("expiry / exp / expires") so a purchase date
+ * or a quantity is never confused with an expiry. Supports:
+ *   - ISO: "expiry 2026-12-31" / "expires on 2026-12-31"
+ *   - "expiry 31-12-2026" / "expiry 31/12/2026" / "expiry 31.12.26"
+ *   - named month: "expiry 31 Dec 2026" / "expiry December 2026"
+ *   - month/year: "exp 12/2026" → the LAST day of December 2026 (the common
+ *     food/batch convention for a month-only expiry).
+ * Returns undefined when no expiry is mentioned.
+ */
+function extractSpokenExpiry(text: string): string | undefined {
+  const t = (text || '').trim();
+  if (!t) return undefined;
+  const lower = ` ${t.toLowerCase().replace(/[.,!?]+/g, ' ')} `;
+
+  // Locate the expiry marker, then look at the token(s) right after it.
+  const markerMatch = lower.match(
+    /(?:^|\s)(?:expiry|expir(?:es|y)?|exp)(?:\s+date)?(?:\s+(?:on|is|ka|ki|tak|till|until))?\s*/
+  );
+  if (!markerMatch) return undefined;
+  const after = lower.slice((markerMatch.index || 0) + markerMatch[0].length).slice(0, 40);
+  if (!after) return undefined;
+
+  // Local-date ISO helper — avoids the UTC-off-by-one-day trap that
+  // .toISOString() produces for dates near midnight in positive TZ offsets.
+  const isoLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // 1. ISO date.
+  const isoMatch = after.match(/^(\d{4})-(\d{2})-(\d{2})\b/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  // 2. Month/year ("12/2026" or "12-2026") → last day of that month.
+  const myMatch = after.match(/^(\d{1,2})[/-](\d{2,4})\b/);
+  if (myMatch) {
+    let y = Number(myMatch[2]);
+    if (y < 100) y += 2000;
+    const m = Number(myMatch[1]);
+    if (m >= 1 && m <= 12) {
+      const d = new Date(y, m, 0);
+      if (!isNaN(d.getTime())) return isoLocal(d);
+    }
+  }
+
+  // 3. dd-mm-yyyy / dd/mm/yyyy / dd.mm.yy.
+  // NOTE: separators are REQUIRED ([-/.]) so that concatenated digits like
+  // "31122026" are never parsed as a valid date — only real date formats with
+  // explicit dashes, dots, or slashes ("31-12-2026") are accepted.
+  const numMatch = after.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/);
+  if (numMatch && numMatch[1].length <= 2 && numMatch[2].length <= 2) {
+    let yyyy = Number(numMatch[3]);
+    if (yyyy < 100) yyyy += 2000;
+    const d = new Date(yyyy, Number(numMatch[2]) - 1, Number(numMatch[1]));
+    if (!isNaN(d.getTime()) && d.getFullYear() === yyyy) return isoLocal(d);
+  }
+
+  // 4. Named month: "31 Dec 2026" (day + month [+ year]) or "December 2026"
+  //    (month-only → last day of that month).
+  const months: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
+  const monthRe =
+    '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+  const dayMonthYear = after.match(
+    new RegExp(`^(\\d{1,2})(?:st|nd|rd|th)?\\s+${monthRe}\\b\\s*,?\\s*(\\d{2,4})?`)
+  );
+  if (dayMonthYear) {
+    // Groups: [0]=full, [1]=day, [2]=month, [3]=year
+    const mm = months[dayMonthYear[2].slice(0, 3)];
+    let yyyy = dayMonthYear[3] ? Number(dayMonthYear[3]) : new Date().getFullYear();
+    if (yyyy < 100) yyyy += 2000;
+    const day = Number(dayMonthYear[1]);
+    const d = new Date(yyyy, mm - 1, day);
+    if (!isNaN(d.getTime()) && d.getFullYear() === yyyy) return isoLocal(d);
+  }
+  const monthYear = after.match(new RegExp(`^${monthRe}\\b\\s*,?\\s*(\\d{2,4})`));
+  if (monthYear) {
+    // Groups: [0]=full, [1]=month, [2]=year
+    const mm = months[monthYear[1].slice(0, 3)];
+    let yyyy = Number(monthYear[2]);
+    if (yyyy < 100) yyyy += 2000;
+    const d = new Date(yyyy, mm, 0);
+    if (!isNaN(d.getTime())) return isoLocal(d);
+  }
+
+  return undefined;
+}
+
+/**
+ * A short (≤60 char), digit-free, letters/spaces/punctuation-only name — the
+ * shape of a bare brand/supplier value returned by the LLM. Guards against a
+ * quantity or a full sentence ever being captured as a name.
+ */
+function extractBareName(text: string): string | undefined {
+  const t = (text || '').trim();
+  if (!t || t.length > 60 || /\d/.test(t)) return undefined;
+  return /^[A-Za-z][A-Za-z0-9 .'&-]{0,59}$/.test(t)
+    ? t.slice(0, 200)
+    : undefined;
+}
+
+/**
+ * Extract a spoken brand/variant name from a voice command.
+ *
+ * Conservative by design — a brand is only captured when the speaker makes it
+ * explicit, so "5 kg paneer" can never be mistaken for a brand:
+ *   - Bare brand name (what the LLM returns for "brand"): short, no digits.
+ *   - "X brand" ("Amul brand butter") / "brand X" ("brand Amul") markers,
+ *     English or Devanagari (ब्रांड).
+ */
+function extractSpokenBrand(text: string): string | undefined {
+  const t = (text || '').trim();
+  if (!t) return undefined;
+
+  // 1. Bare brand name — short, no digits, letters/spaces/punctuation only,
+  //    so a quantity or a full sentence can never sneak through.
+  const bare = extractBareName(t);
+  if (bare) return bare;
+
+  // 2. Explicit "X brand" / "brand X" markers.
+  const nameClass = "[A-Za-z][A-Za-z .'&-]{1,30}";
+  const beforeBrand = t.match(
+    new RegExp(`\\b(${nameClass})\\s+(?:brand|ब्रांड)\\b`, 'i')
+  );
+  if (beforeBrand && beforeBrand[1]) return beforeBrand[1].trim().slice(0, 200);
+  const afterBrand = t.match(
+    new RegExp(`\\b(?:brand|ब्रांड)\\s+(${nameClass})\\b`, 'i')
+  );
+  if (afterBrand && afterBrand[1]) return afterBrand[1].trim().slice(0, 200);
+  return undefined;
+}
+
+/**
+ * Extract a spoken supplier/vendor name from a voice command.
+ *
+ * Handles common phrasings:
+ *   - "... from Verka Dairy" / "... Verka Dairy se" / "... से"
+ *   - "... ke paas se" / "... के पास से"
+ * The name is trimmed at common connectors so a trailing clause ("from Verka
+ * Dairy and 5 kg paneer") never swallows the whole rest of the command.
+ */
+function extractSpokenSupplier(text: string): string | undefined {
+  const t = (text || '').trim();
+  if (!t) return undefined;
+
+  // 1. Bare vendor name — this is what the LLM returns for "supplier"
+  //    ("Verka Dairy"). Short, no digits, letters/spaces/punctuation only,
+  //    so a quantity or a full sentence can never sneak through.
+  const bare = extractBareName(t);
+  if (bare) return bare;
+
+  // 2. Pattern-based extraction from a full command:
+  //    - "from Verka Dairy" (English — supplier AFTER "from")
+  //    - "Verka Dairy se ..." (Hinglish — supplier BEFORE "se")
+  // Supplier names are usually capitalized brand names, so the primary match
+  // starts with an uppercase letter — this stops "5 kg paneer" from being
+  // captured. A lowercase fallback ("verka dairy se") then grabs the last
+  // two words before "se" after stripping leading unit/quantity tokens.
+  const nameClass = "[A-Z][A-Za-z .'&-]{1,40}";
+  const fromMatch = t.match(new RegExp(`\\bfrom\\s+(${nameClass})`, 'i'));
+  const seMatch = t.match(new RegExp(`(${nameClass})\\s+(?:se|से)(?:\\s|$)`));
+  let raw = (fromMatch && fromMatch[1]) || (seMatch && seMatch[1]) || undefined;
+  if (!raw) {
+    // Lowercase Hinglish supplier — capture the LAST run of letters before
+    // "se", then keep only the final two words (brand names are short).
+    const lowMatch = t.match(/([A-Za-z][A-Za-z .'&-]{1,40})\s+(?:se|से)(?:\s|$)/i);
+    if (lowMatch) {
+      const words = String(lowMatch[1]).trim().split(/\s+/);
+      const tail = words.slice(-2).join(' ').trim();
+      if (tail.length >= 2) raw = tail;
+    }
+  }
+  if (raw) {
+    const cut = String(raw)
+      .split(/\s+(?:and|aur|और|for|on|date|aaj|aj|kal|ke|ko|liye|per|at|add|daalo|lao|karo|kar|do)\b/i)[0]
+      .trim();
+    const name = cut.replace(/[.,;!?]+$/g, '').trim();
+    if (name.length >= 2 && !/^(the|a|an|my|me|it|is|of|to|thee)$/i.test(name)) {
+      return name.slice(0, 200);
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Extract a spoken purchase date from a voice command, returning YYYY-MM-DD.
+ *
+ * Resolves in priority order:
+ *   1. Relative words — aaj/today (today), kal/yesterday (−1), parso (+2),
+ *      narso (−2) — with Devanagari variants.
+ *   2. ISO dates (2026-08-05).
+ *   3. Numeric dates (05-08-2026, 05/08/26).
+ *   4. Named months ("5 august", "5 aug 2026").
+ * Returns undefined when no date was spoken (the caller defaults to today).
+ */
+function extractSpokenDate(text: string): string | undefined {
+  if (!text || !text.trim()) return undefined;
+  const lower = ` ${String(text).toLowerCase().replace(/[.,!?]+/g, ' ')} `;
+  const today = new Date();
+  // Local-date ISO helper — avoids the UTC-off-by-one-day trap that
+  // .toISOString() produces for dates near midnight in positive TZ offsets.
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // 1. Relative day words (word boundaries — Devanagari has no \b).
+  const relatives: Array<[RegExp, number]> = [
+    [/(?:^|\s)(?:aaj|aj|today|आज)(?:\s|$)/, 0],
+    [/(?:^|\s)(?:kal|yesterday|कल)(?:\s|$)/, -1],
+    [/(?:^|\s)(?:parso|parson|day after tomorrow|परसों)(?:\s|$)/, 2],
+    [/(?:^|\s)(?:narso|day before yesterday|नरसों)(?:\s|$)/, -2],
+  ];
+  for (const [re, offset] of relatives) {
+    if (re.test(lower)) {
+      const d = new Date(today);
+      d.setDate(d.getDate() + offset);
+      return iso(d);
+    }
+  }
+
+  // 2. ISO date.
+  const isoMatch = lower.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  // 3. Numeric date (dd-mm-yyyy | dd/mm/yyyy | dd.mm.yy).
+  // NOTE: separators are REQUIRED so concatenated digits are never matched.
+  const numMatch = lower.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/);
+  if (numMatch && numMatch[1].length <= 2 && numMatch[2].length <= 2) {
+    let yyyy = Number(numMatch[3]);
+    if (yyyy < 100) yyyy += 2000;
+    const d = new Date(yyyy, Number(numMatch[2]) - 1, Number(numMatch[1]));
+    if (!isNaN(d.getTime()) && d.getFullYear() === yyyy) return iso(d);
+  }
+
+  // 4. Named month ("5 august", "5 aug 2026").
+  const months: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
+  const namedMatch = lower.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b\s*,?\s*(\d{2,4})?\b/
+  );
+  if (namedMatch) {
+    const mm = months[namedMatch[2].slice(0, 3)];
+    let yyyy = namedMatch[3] ? Number(namedMatch[3]) : today.getFullYear();
+    if (yyyy < 100) yyyy += 2000;
+    const d = new Date(yyyy, mm - 1, Number(namedMatch[1]));
+    if (!isNaN(d.getTime())) return iso(d);
+  }
+
+  return undefined;
 }
 
 /**

@@ -6,6 +6,10 @@
 export interface ProductVariant {
   name: string;
   price: number;
+  /** Per-branch price overrides (branchId → price). Server-authoritative —
+   *  the POS mirrors these into its local branchVariantPrices map so dine-in
+   *  orders price variants exactly like the backend. */
+  branchPrice?: Record<string, number>;
 }
 
 export interface Product {
@@ -20,6 +24,10 @@ export interface Product {
   favorite?: boolean;
   code: string; // SKU or short-code for typing/barcode search
   branchId?: string;
+  /** Per-branch price overrides (branchId → price). Server-authoritative — the
+   *  customer site prices from this; the POS mirrors it into its local
+   *  branchProductPrices map so dine-in orders use the same override. */
+  branchPrice?: Record<string, number>;
 }
 
 export interface CartItem {
@@ -257,6 +265,9 @@ export interface Bill {
   customerPhone?: string;
   customerName?: string;
   customerId?: string; // Phase 1.6 — bill → customer reference (phone snapshot kept)
+  /** Online-ordering: links this bill to its source order (unavailable-item
+   *  adjustments resolve + refund the correct bill through this). */
+  orderId?: string;
   pointsEarned: number;
   pointsRedeemed: number;
   redeemedRewardTitle?: string;
@@ -425,6 +436,61 @@ export type OrderType =
   | 'Website'
   | 'Phone Orders';
 
+// ============================================================
+// ONLINE ORDERING: AVAILABILITY + ADJUSTMENTS
+// ============================================================
+
+/** Effective online-availability state for one product (backend authoritative). */
+export interface MenuAvailabilityState {
+  productId: string;
+  name: string;
+  category: string;
+  price: number;
+  code: string;
+  image?: string | null;
+  onlineAvailable: boolean;
+  status: 'AVAILABLE' | 'UNAVAILABLE';
+  unavailableUntil?: string | null;
+  reason?: string | null;
+  /** Owner site-visibility: false = NOT listed on the customer website at all. */
+  visibleOnSite?: boolean;
+}
+
+/** An append-only unavailable-item adjustment applied to an order. */
+export interface OrderAdjustmentRecord {
+  _id: string;
+  adjustmentId: string;
+  orderId: string;
+  action: 'REMOVE' | 'REPLACE' | 'CANCEL';
+  itemsBefore: Array<{ orderItemId?: string; productId?: string; productName: string; quantity: number; price: number }>;
+  itemsAfter: Array<{ productId?: string; productName: string; quantity: number; price: number }>;
+  originalTotal: number;
+  newTotal: number;
+  delta: number;
+  refundRequired: number;
+  additionalDue: number;
+  reason: string;
+  markUnavailable: boolean;
+  performedBy: string;
+  createdAt: string;
+}
+
+/** Refund record for an order (state machine driven by the payment system). */
+export interface RefundRecord {
+  _id: string;
+  refundId: string;
+  orderId: string;
+  billId?: string | null;
+  amount: number;
+  status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED';
+  gateway: 'ledger' | 'razorpay' | 'manual';
+  paymentRef?: string;
+  providerRefundId?: string;
+  reason: string;
+  performedBy: string;
+  createdAt: string;
+}
+
 /** A single event in the order timeline */
 export interface TimelineEvent {
   id: string;
@@ -513,6 +579,10 @@ export interface Order {
   tableId?: string;
   tableNumber?: number;
   platform?: OrderPlatform;
+  /** QR ordering context (customer website / public-store). */
+  mode?: 'TABLE' | 'CAR' | 'PICKUP' | 'DELIVERY' | 'TAKEAWAY' | string;
+  parkingSlot?: string | null;
+  carPlate?: string | null;
   branchId?: string;
   customerPhone?: string;
   customerName?: string;
@@ -589,6 +659,9 @@ export interface ModuleSettings {
   enableDineInModule?: boolean;
   enableExpenseManagement?: boolean;
   enableDiscountOnBilling?: boolean;
+  enableProducts?: boolean;
+  enableStaff?: boolean;
+  enableOffers?: boolean;
   // ─── AI Feature Toggles ──────────────────────────────
   enableAISummary?: boolean;       // Dashboard AI Daily Summary
   enableAIInventoryHealth?: boolean; // Inventory Health Score
@@ -598,6 +671,12 @@ export interface ModuleSettings {
   enableAIVoiceEntry?: boolean;     // Voice Inventory Entry
   enableAIWeather?: boolean;        // Weather-Based Recommendations
   enableAIClosingAssistant?: boolean; // Closing Time Assistant
+  // ─── Online Ordering ────────────────────────────────────
+  /** When a cashier marks an item unavailable from an incoming order, also
+   *  block it for NEW online orders (explicit opt-in, default OFF). */
+  autoMarkSoldOutFromOrder?: boolean;
+  /** Master switch for the online Menu Availability controls. */
+  enableMenuAvailability?: boolean;
 }
 
 export interface SystemSettings {
@@ -634,6 +713,10 @@ export interface SystemSettings {
   roundOffTotal?: boolean;
   groupItemsInKOT?: boolean;
   kotFooterNote?: string;
+  /** Where KOTs are delivered when sent to the kitchen:
+   *  'print' → paper ticket only, 'kds' → kitchen display only, 'both' → both.
+   *  Defaults to 'both' (current behaviour) when unset. */
+  kotOutputMode?: 'print' | 'kds' | 'both';
   receiptFooterMessage?: string;
   receiptFooterImageUrl?: string;
   showTaxSummaryOnReceipt?: boolean;
@@ -695,6 +778,10 @@ export interface SystemSettings {
     pinPolicy?: { minLength?: number; requireNumbers?: boolean };
     failedLoginLockThreshold?: number;
     twoFactorEnabled?: boolean;
+    /** How the POS asks for sign-in each time: 'password' | 'role_pin' | 'pin' | 'tap_only' */
+    loginMethod?: 'password' | 'role_pin' | 'pin' | 'tap_only';
+    /** Idle time before the terminal auto-locks (Off = 0). Re-login uses loginMethod. */
+    autoLockMinutes?: number;
   };
   // Integrations (secrets stored encrypted server-side)
   integrations?: {

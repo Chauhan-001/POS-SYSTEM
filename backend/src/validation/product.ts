@@ -43,7 +43,19 @@ export const createProductSchema = z.object({
   variants: z.array(z.object({
     name: nonEmptyString.max(100),
     price: requiredNonNegative.max(999999),
+    // Per-branch variant price overrides (branchId → price) — mirrors the
+    // product-level branchPrice so variant prices can differ per branch too.
+    branchPrice: z.record(z.string(), z.number().min(0)).optional(),
   })).max(50).optional(),
+  // In-place per-variant branch price updates: variantName → branchId → price.
+  // Applied to the existing ProductVariant docs without replacing the whole
+  // variant set (unlike `variants`, which is a wholesale replace).
+  variantBranchPrices: z.record(
+    z.string().min(1).max(100),
+    z.record(z.string(), z.number().min(0)).optional(),
+  ).refine((m) => Object.keys(m).length <= 50, {
+    message: 'Too many variant price entries (max 50)',
+  }).optional(),
 }).strict();
 
 export const updateProductSchema = createProductSchema.partial();

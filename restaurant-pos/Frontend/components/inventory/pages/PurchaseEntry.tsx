@@ -1,34 +1,42 @@
-import { useState } from 'react';
-import { ShoppingCart, Check, X, History, Trash2, Pencil } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ShoppingCart, Check, X, History, Trash2, Pencil, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { PURCHASES } from '../data';
 import { createPurchase } from '../../../src/api/client';
 import { useNotify, useInventory, usePurchasesCtx } from '../InventoryManager';
-import type { Purchase } from '../types';
+import type { Purchase, InventoryItem } from '../types';
 
 interface SaveResult {
   success: boolean;
   id?: string;
 }
 
-const QUICK_ITEMS = [
-  { name: 'Milk', unit: 'L', defaultPrice: 56, defaultSupplier: 'Amul Dairy', emoji: '🥛' },
-  { name: 'Bread', unit: 'pcs', defaultPrice: 35, defaultSupplier: 'Modern Bakery', emoji: '🍞' },
-  { name: 'Tea Powder', unit: 'kg', defaultPrice: 340, defaultSupplier: 'Tata Consumer', emoji: '🫖' },
-  { name: 'Sugar', unit: 'kg', defaultPrice: 42, defaultSupplier: 'Local Vendor', emoji: '🍚' },
-  { name: 'Cooking Oil', unit: 'L', defaultPrice: 195, defaultSupplier: 'Fortune Oil', emoji: '🫒' },
-  { name: 'Potato', unit: 'kg', defaultPrice: 28, defaultSupplier: 'Local Vendor', emoji: '🥔' },
-  { name: 'Lemon', unit: 'pcs', defaultPrice: 5, defaultSupplier: 'Local Vendor', emoji: '🍋' },
-  { name: 'Chicken', unit: 'kg', defaultPrice: 220, defaultSupplier: 'Poultry Farm', emoji: '🍗' },
+const UNITS = ['kg', 'L', 'g', 'ml', 'pcs', 'box', 'pack', 'bottle', 'bag', 'dozen', 'carton', 'packet'];
+
+// Tile colors for catalog quick-picks (no emoji on real catalog items).
+const TILE_COLORS = [
+  'from-[var(--brand-color)]/15 to-blue-100 text-[var(--brand-color)]',
+  'from-emerald-500/15 to-emerald-100 text-emerald-600',
+  'from-amber-500/15 to-amber-100 text-amber-600',
+  'from-purple-500/15 to-purple-100 text-purple-600',
+  'from-rose-500/15 to-rose-100 text-rose-600',
+  'from-cyan-500/15 to-cyan-100 text-cyan-600',
 ];
+
+interface QuickForm {
+  item: string;
+  quantity: string;
+  unit: string;
+  price: string;
+  supplier: string;
+}
+
+const EMPTY_FORM: QuickForm = { item: '', quantity: '', unit: 'kg', price: '', supplier: '' };
 
 export default function PurchaseEntry() {
   const notify = useNotify();
-  const { refreshItems } = useInventory();
+  const { items, refreshItems } = useInventory();
   const { purchases, synced, addPurchase, updatePurchase, removePurchase } = usePurchasesCtx();
-  const [selectedItem, setSelectedItem] = useState<typeof QUICK_ITEMS[0] | null>(null);
-  const [qty, setQty] = useState('');
-  const [price, setPrice] = useState('');
+  const [form, setForm] = useState<QuickForm>(EMPTY_FORM);
   const [saved, setSaved] = useState<{ item: string; qty: string; unit: string }[]>([]);
 
   // Edit modal state
@@ -36,25 +44,78 @@ export default function PurchaseEntry() {
   const [editForm, setEditForm] = useState({ item: '', supplier: '', quantity: '', unit: '', price: '' });
 
   // Real history comes from the shared purchases context (loaded once by
-  // InventoryManager). Falls back to the static demo list when offline — a
-  // successful-but-empty result shows the empty state instead.
-  const recentPurchases: Purchase[] = purchases ?? PURCHASES;
+  // InventoryManager). No demo fallback — an empty list shows the honest
+  // "No purchases recorded yet" state.
+  const recentPurchases: Purchase[] = purchases ?? [];
 
-  const handleQuickTap = (item: typeof QUICK_ITEMS[0]) => {
-    setSelectedItem(item);
-    setPrice(String(item.defaultPrice));
-    setQty('');
+  // Quick-pick tiles come from the REAL inventory catalog so the user taps the
+  // items they actually stock (low-stock first = what needs restocking), not a
+  // hardcoded demo list. Offline (items === demo) the catalog itself is the
+  // demo, so the fallback is still honest.
+  const catalogTiles = useMemo(() => {
+    const priority = { critical: 0, low: 1, normal: 2, healthy: 3 } as const;
+    return [...items]
+      .sort((a, b) => {
+        const pa = priority[a.status] ?? 4;
+        const pb = priority[b.status] ?? 4;
+        return pa - pb || a.name.localeCompare(b.name);
+      })
+      .slice(0, 12);
+  }, [items]);
+
+  // Exact/partial catalog match for the typed item → prefill unit + supplier +
+  // average cost so a manual entry is still catalog-aware.
+  const matchedItem = useMemo(
+    () => items.find(i => i.name.toLowerCase() === form.item.trim().toLowerCase()) ?? null,
+    [items, form.item]
+  );
+
+  const applyCatalogItem = (item: InventoryItem) => {
+    setForm(f => ({
+      ...f,
+      item: item.name,
+      unit: item.unit || f.unit || 'kg',
+      price: item.averageCost ? String(item.averageCost) : f.price,
+      supplier: item.supplier || f.supplier,
+    }));
+  };
+
+  // Typing a catalog item name (or picking it from the datalist) auto-fills
+  // the real unit + supplier + average cost — same behavior as tapping a tile.
+  // A trailing space after the name still matches (trimmed) so the pick from
+  // the suggestions list lands exactly.
+  const handleItemChange = (value: string) => {
+    const match = items.find(i => i.name.toLowerCase() === value.trim().toLowerCase());
+    if (match) {
+      applyCatalogItem(match);
+      return;
+    }
+    setForm(f => ({ ...f, item: value }));
+  };
+
+  const handleQuickTap = (item: InventoryItem) => {
+    applyCatalogItem(item);
+    setForm(f => ({ ...f, quantity: '' }));
   };
 
   const handleSave = async () => {
-    if (!qty || parseFloat(qty) <= 0) {
+    if (!form.item.trim()) {
+      notify('Enter or pick an item', 'warning');
+      return;
+    }
+    if (!form.quantity || parseFloat(form.quantity) <= 0) {
       notify('Enter a quantity', 'warning');
       return;
     }
-    const name = selectedItem?.name || '';
-    const qtyNum = parseFloat(qty);
-    const unit = selectedItem?.unit || 'kg';
-    const priceNum = parseFloat(price) || 0;
+    const name = form.item.trim();
+    const qtyNum = parseFloat(form.quantity);
+    const unit = form.unit.trim() || matchedItem?.unit || 'kg';
+    const priceNum = parseFloat(form.price) || 0;
+    if (priceNum <= 0) {
+      notify('Enter a price per unit', 'warning');
+      return;
+    }
+    const supplier = form.supplier.trim() || matchedItem?.supplier || 'Local Vendor';
 
     // Persist to the backend. The backend purchase service now increases stock
     // through the centralized stock engine (stock + avg cost + event + audit),
@@ -67,7 +128,7 @@ export default function PurchaseEntry() {
         quantity: qtyNum,
         unit,
         price: priceNum,
-        supplier: selectedItem?.defaultSupplier || 'Local Vendor',
+        supplier,
         date: new Date().toISOString().slice(0, 10),
         status: 'completed',
       });
@@ -75,7 +136,7 @@ export default function PurchaseEntry() {
       if (created && created._id) {
         addPurchase({
           id: created._id,
-          supplier: created.supplier || 'Local Vendor',
+          supplier: created.supplier || supplier,
           item: created.item || name,
           quantity: created.quantity ?? qtyNum,
           unit: created.unit || unit,
@@ -93,14 +154,12 @@ export default function PurchaseEntry() {
     }
 
     if (result.success) {
-      setSaved(prev => [{ item: name, qty, unit }, ...prev]);
-      notify(`${qty} ${unit} ${name} added`, 'success');
+      setSaved(prev => [{ item: name, qty: form.quantity, unit }, ...prev]);
+      notify(`${form.quantity} ${unit} ${name} added`, 'success');
+      setForm(EMPTY_FORM);
     } else {
       notify('Purchase saved locally — could not sync to server', 'warning');
     }
-    setSelectedItem(null);
-    setQty('');
-    setPrice('');
   };
 
   const openEdit = (p: Purchase) => {
@@ -147,92 +206,142 @@ export default function PurchaseEntry() {
     notify(ok ? `${item} purchase removed` : `Could not delete ${item} — try again`, ok ? 'info' : 'warning');
   };
 
+  const total = form.quantity && form.price
+    ? (parseFloat(form.quantity) * parseFloat(form.price)).toFixed(2)
+    : null;
+
   return (
-    <div className="p-6 md:p-8 max-w-5xl mx-auto space-y-8">
+    <div className="p-6 md:p-8 max-w-5xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold">Add Stock</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Tap what you received, enter quantity, done.</p>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Pick an item from your catalog (low stock first) or type any item — set quantity, done.
+        </p>
       </div>
 
-      {/* Quick items — large tappable buttons */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {QUICK_ITEMS.map((item, i) => {
-            const isSelected = selectedItem?.name === item.name;
-            return (
-              <motion.button key={item.name} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: i * 0.03 }}
-                onClick={() => handleQuickTap(item)}
-                className={`relative rounded-2xl border-2 p-5 text-left transition-all cursor-pointer ${
-                  isSelected ? 'border-[#004ac6] bg-[#004ac6]/5 shadow-md' : 'border-[#e1e2ed] bg-white hover:border-[#004ac6]/30 hover:shadow-md'
-                }`}
-              >
-                {isSelected && (
-                  <div className="absolute -top-2 -right-2 w-7 h-7 bg-[#004ac6] rounded-full flex items-center justify-center shadow-sm">
-                    <Check className="w-4 h-4 text-white" />
+      {/* Quick picks — REAL catalog items needing restock first */}
+      {catalogTiles.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {catalogTiles.map((item, i) => {
+              const isSelected = form.item.toLowerCase() === item.name.toLowerCase();
+              return (
+                <motion.button key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: i * 0.02 }}
+                  onClick={() => handleQuickTap(item)}
+                  className={`relative rounded-2xl border-2 p-4 text-left transition-all cursor-pointer ${
+                    isSelected ? 'border-[var(--brand-color)] bg-[var(--brand-color)]/5 shadow-md' : 'border-[#e1e2ed] bg-white hover:border-[var(--brand-color)]/30 hover:shadow-md'
+                  }`}
+                >
+                  {isSelected && (
+                    <div className="absolute -top-2 -right-2 w-6 h-6 bg-[var(--brand-color)] rounded-full flex items-center justify-center shadow-sm">
+                      <Check className="w-3.5 h-3.5 text-white" />
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`w-9 h-9 rounded-xl bg-gradient-to-br flex items-center justify-center text-base font-black shrink-0 ${TILE_COLORS[i % TILE_COLORS.length]}`}>
+                      {item.name.charAt(0).toUpperCase()}
+                    </div>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                      item.status === 'critical' ? 'bg-red-50 text-red-600' :
+                      item.status === 'low' ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-400'
+                    }`}>
+                      {item.status === 'critical' ? 'Out' : item.status === 'low' ? 'Low' : `${item.currentStock} ${item.unit}`}
+                    </span>
                   </div>
-                )}
-                <div className="text-2xl mb-2">{item.emoji}</div>
-                <p className="text-base font-bold">{item.name}</p>
-                <p className="text-sm text-gray-500 mt-0.5">₹{item.defaultPrice}/{item.unit}</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">{item.defaultSupplier}</p>
-              </motion.button>
-            );
-          })}
+                  <p className="text-sm font-bold truncate">{item.name}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                    {item.supplier || '—'}
+                    {item.averageCost > 0 && ` · ₹${item.averageCost}/${item.unit}`}
+                  </p>
+                </motion.button>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Add-stock form — always available, works for catalog items AND new items */}
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+        className="bg-white rounded-2xl border border-[var(--brand-color)]/20 shadow-lg overflow-hidden"
+      >
+        <div className="p-5 bg-gradient-to-r from-[var(--brand-color)]/5 to-blue-50 border-b border-[var(--brand-color)]/10">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="w-4 h-4 text-[var(--brand-color)]" />
+              <p className="text-sm font-bold">Record Stock In</p>
+            </div>
+            {matchedItem && (
+              <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                In catalog · {matchedItem.currentStock} {matchedItem.unit} in stock
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1.5">Item</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                list="inventory-item-list"
+                value={form.item}
+                onChange={e => handleItemChange(e.target.value)}
+                placeholder="Type item name — known items auto-fill"
+                autoFocus
+                className="w-full pl-9 pr-3 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+              />
+              <datalist id="inventory-item-list">
+                {items.map(i => <option key={i.id} value={i.name} />)}
+              </datalist>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
+            <div>
+              <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
+              <input type="number" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} placeholder="e.g. 20" min={0} step={0.5}
+                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                onKeyDown={e => e.key === 'Enter' && handleSave()}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-700 block mb-1.5">Unit</label>
+              <select value={form.unit || matchedItem?.unit || 'kg'} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}
+                className="w-full px-3 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+              >
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className="text-xs font-semibold text-gray-700 block mb-1.5">Price per unit (₹)</label>
+              <input type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0"
+                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier</label>
+            <input type="text" value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name"
+              className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between pt-1">
+            <p className="text-sm text-gray-500">
+              Total: <span className="text-emerald-600 font-bold font-mono text-lg">₹{total ?? '0.00'}</span>
+            </p>
+            <button onClick={handleSave}
+              className="w-full sm:w-auto px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2 whitespace-nowrap"
+            >
+              <ShoppingCart className="w-5 h-5" />
+              Save Purchase
+            </button>
+          </div>
         </div>
       </motion.div>
-
-      {/* Quick form */}
-      <AnimatePresence>
-        {selectedItem && (
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}
-            className="bg-white rounded-2xl border border-[#004ac6]/20 shadow-lg overflow-hidden"
-          >
-            <div className="p-5 bg-gradient-to-r from-[#004ac6]/5 to-blue-50 border-b border-[#004ac6]/10">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="text-3xl">{selectedItem.emoji}</div>
-                  <div>
-                    <p className="text-base font-bold">{selectedItem.name}</p>
-                    <p className="text-xs text-gray-500">{selectedItem.defaultSupplier}</p>
-                  </div>
-                </div>
-                <button onClick={() => setSelectedItem(null)} className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-white/50 rounded-xl cursor-pointer transition-all">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="p-5">
-              <div className="flex flex-col sm:flex-row gap-3 items-end">
-                <div className="flex-1 w-full">
-                  <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity ({selectedItem.unit})</label>
-                  <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="e.g. 20" autoFocus
-                    className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
-                    onKeyDown={e => e.key === 'Enter' && handleSave()}
-                  />
-                </div>
-                <div className="flex-1 w-full">
-                  <label className="text-xs font-semibold text-gray-700 block mb-1.5">Price per {selectedItem.unit} (₹)</label>
-                  <input type="number" value={price} onChange={e => setPrice(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
-                  />
-                </div>
-                <button onClick={handleSave}
-                  className="w-full sm:w-auto px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2 whitespace-nowrap"
-                >
-                  <ShoppingCart className="w-5 h-5" />
-                  Save {qty && price ? `₹${(parseFloat(qty) * parseFloat(price)).toFixed(0)}` : ''}
-                </button>
-              </div>
-              {qty && price && (
-                <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
-                  Total: <span className="text-emerald-600 font-bold font-mono text-base">₹{(parseFloat(qty) * parseFloat(price)).toFixed(2)}</span>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Recent purchases */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.1 }}
@@ -244,11 +353,12 @@ export default function PurchaseEntry() {
           {synced ? (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-semibold">Synced</span>
           ) : (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 font-semibold">Offline demo</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 font-semibold">Offline</span>
           )}
+          <span className="text-[10px] text-gray-400 ml-auto">{recentPurchases.length} total</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {recentPurchases.slice(0, 8).map(p => (
+          {recentPurchases.slice(0, 12).map(p => (
             <div key={p.id} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-gray-50 transition-colors">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
@@ -262,7 +372,7 @@ export default function PurchaseEntry() {
                 </div>
                 <button onClick={() => openEdit(p)}
                   title="Edit purchase"
-                  className="p-1.5 rounded-lg text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 transition-all cursor-pointer"
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 transition-all cursor-pointer"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
@@ -299,7 +409,7 @@ export default function PurchaseEntry() {
             <motion.div initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }} transition={{ duration: 0.18 }}
               className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
             >
-              <div className="px-5 py-4 bg-gradient-to-r from-[#004ac6]/5 to-blue-50 border-b border-[#004ac6]/10 flex items-center justify-between">
+              <div className="px-5 py-4 bg-gradient-to-r from-[var(--brand-color)]/5 to-blue-50 border-b border-[var(--brand-color)]/10 flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-bold">Edit Purchase</h3>
                   <p className="text-xs text-gray-500">Correct the details — the total updates automatically.</p>
@@ -312,33 +422,33 @@ export default function PurchaseEntry() {
                 <div>
                   <label className="text-xs font-semibold text-gray-700 block mb-1.5">Item</label>
                   <input type="text" value={editForm.item} onChange={e => setEditForm(f => ({ ...f, item: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier</label>
                   <input type="text" value={editForm.supplier} onChange={e => setEditForm(f => ({ ...f, supplier: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
                     <input type="number" value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                     />
                   </div>
                   <div>
                     <label className="text-xs font-semibold text-gray-700 block mb-1.5">Unit</label>
                     <input type="text" value={editForm.unit} onChange={e => setEditForm(f => ({ ...f, unit: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                     />
                   </div>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-700 block mb-1.5">Price per unit (₹)</label>
                   <input type="number" value={editForm.price} onChange={e => setEditForm(f => ({ ...f, price: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                     onKeyDown={e => e.key === 'Enter' && handleSaveEdit()}
                   />
                 </div>
@@ -355,7 +465,7 @@ export default function PurchaseEntry() {
                     Cancel
                   </button>
                   <button onClick={handleSaveEdit}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-[#004ac6] hover:bg-[#003da6] text-white text-sm font-bold transition-all cursor-pointer shadow-sm"
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-[var(--brand-color)] hover:bg-[#003da6] text-white text-sm font-bold transition-all cursor-pointer shadow-sm"
                   >
                     Save Changes
                   </button>

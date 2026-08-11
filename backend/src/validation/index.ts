@@ -34,3 +34,5 @@ export * from './support';
 export * from './audit';
 export * from './adminReports';
 export * from './security';
+export * from './availability';
+export * from './orderAdjustment';

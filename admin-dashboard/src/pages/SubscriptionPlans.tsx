@@ -37,35 +37,9 @@ import { getPlans, createPlan, updatePlan, deletePlan } from '../api/subscriptio
 import type { SubscriptionPlan } from '../types'
 import { formatCurrency } from '../utils/format'
 
-const AVAILABLE_FEATURES = [
-  'core_pos',
-  'basic_reports',
-  'ai',
-  'inventory',
-  'loyalty',
-  'reservations',
-  'multi_branch',
-  'analytics',
-  'custom_branding',
-  'advanced_reports',
-  'api_access',
-  'priority_support',
-]
+import { FEATURE_CATALOG, FEATURE_GROUPS } from '../constants/planFeatures'
 
-const FEATURE_DESCRIPTIONS: Record<string, string> = {
-  core_pos: 'Billing, orders, table management, and payment processing',
-  basic_reports: 'Daily sales summaries, order history, and performance metrics',
-  ai: 'AI-powered menu recommendations and demand forecasting',
-  inventory: 'Stock tracking, purchase orders, and low-stock alerts',
-  loyalty: 'Customer rewards program, points tracking, and promotions',
-  reservations: 'Online and walk-in table booking with availability management',
-  multi_branch: 'Centralized management across multiple restaurant locations',
-  analytics: 'Advanced data visualizations and business intelligence dashboards',
-  custom_branding: 'White-label experience with custom logo and branding',
-  advanced_reports: 'Profit & loss, tax reports, and custom exportable data',
-  api_access: 'REST API access for third-party integrations and custom tools',
-  priority_support: 'Dedicated support with priority ticketing and SLAs',
-}
+const AVAILABLE_FEATURES = FEATURE_CATALOG.map((f) => f.key)
 
 const DEFAULT_LIMITS = {
   maxBranches: 1,
@@ -196,16 +170,36 @@ export default function SubscriptionPlans() {
       </div>
 
       <div className="space-y-3">
-        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300">Features</label>
-        <div className="grid grid-cols-4 gap-3">
-          {AVAILABLE_FEATURES.map((f) => (
-            <Toggle
-              key={f}
-              enabled={formData.features.includes(f)}
-              onChange={() => toggleFeature(f)}
-              label={f.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
-              description={FEATURE_DESCRIPTIONS[f]}
-            />
+        <div className="flex items-center justify-between">
+          <label className="block text-sm font-medium text-surface-700 dark:text-surface-300">Features</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setFormData({ ...formData, features: AVAILABLE_FEATURES })}
+              className="px-2 py-1 rounded-md text-[11px] font-semibold bg-surface-100 text-surface-600 hover:bg-surface-200 dark:bg-surface-800 dark:text-surface-300 dark:hover:bg-surface-700 transition-colors cursor-pointer">Select All</button>
+            <button type="button" onClick={() => setFormData({ ...formData, features: ['core_pos'] })}
+              className="px-2 py-1 rounded-md text-[11px] font-semibold bg-surface-100 text-surface-600 hover:bg-surface-200 dark:bg-surface-800 dark:text-surface-300 dark:hover:bg-surface-700 transition-colors cursor-pointer">Clear</button>
+          </div>
+        </div>
+        <p className="text-[11px] text-surface-400">Features not included in the plan are hidden in the restaurant's POS for every role.</p>
+        <div className="max-h-80 overflow-y-auto rounded-xl border border-surface-200 dark:border-surface-700 p-3 space-y-4">
+          {FEATURE_GROUPS.map((group) => (
+            <div key={group}>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-surface-400 mb-2">{group}</p>
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                {FEATURE_CATALOG.filter((f) => f.group === group).map((f) => {
+                  const locked = f.required
+                  const checked = formData.features.includes(f.key)
+                  return (
+                    <Toggle
+                      key={f.key}
+                      enabled={checked || locked}
+                      onChange={() => !locked && toggleFeature(f.key)}
+                      label={locked ? `${f.label} (required)` : f.label}
+                      description={f.description}
+                    />
+                  )
+                })}
+              </div>
+            </div>
           ))}
         </div>
       </div>

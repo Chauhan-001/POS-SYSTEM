@@ -192,3 +192,28 @@ export const adminApiLimiter = rateLimit({
     error: 'Too many admin API requests. Please slow down.',
   },
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// VOICE API RATE LIMITER (per-restaurant)
+// ══════════════════════════════════════════════════════════════════════
+// Applied to /api/voice-inventory/* (parse, transcribe, confirm, converse).
+// Unlike `apiLimiter` (per-IP), this keys on the authenticated restaurantId
+// so one noisy terminal can't exhaust another tenant's quota. Falls back to
+// the client IP for unauthenticated requests (e.g. /status).
+
+export const voiceApiLimiter = rateLimit({
+  windowMs: config.rateLimiting.voice.windowMs,
+  max: config.rateLimiting.voice.maxRequests,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const restaurantId = (req as any).user?.restaurantId;
+    if (typeof restaurantId === 'string' && restaurantId) {
+      return `voice:tenant:${restaurantId}`;
+    }
+    return `voice:ip:${req.ip || 'unknown'}`;
+  },
+  message: {
+    error: 'Too many voice requests for this restaurant. Please slow down.',
+  },
+});

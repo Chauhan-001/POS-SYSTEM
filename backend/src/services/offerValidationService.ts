@@ -18,6 +18,7 @@ import CustomerSegment from '../models/CustomerSegment';
 import CouponRedemption from '../models/CouponRedemption';
 import { AppError } from '../utils/AppError';
 import { couponRedemptionRepo, customerActivityRepo, auditLogRepo } from '../repositories';
+import { recordOfferRedemption } from './offerAnalyticsService';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
@@ -160,6 +161,12 @@ export class OfferValidationService {
   /**
    * Record an offer/coupon application (usage ledger). Throws on violations.
    * Returns the recorded redemption.
+   *
+   * TOCTOU FIX (Phase 20): the usage slot is claimed with a CONDITIONAL atomic
+   * update (`$inc currentUses` only when currentUses < maxUses), so two
+   * simultaneous redemptions can never exceed maxUses. The per-customer limit
+   * is enforced by count-and-void on the ledger. Never trust the POS client's
+   * discount — the server computes eligibility itself.
    */
   async recordApplication(
     restaurantId: string,
@@ -174,6 +181,25 @@ export class OfferValidationService {
       redeemedBy?: string;
     },
   ): Promise<any> {
+    // 1. Fresh offer read — enforce status/ownership server-side, never from
+    //    a value the client could have replayed.
+    const offer = await Offer.findOne({
+      _id: objectId(opts.offerId),
+      restaurantId: objectId(restaurantId),
+      isDeleted: { $ne: true },
+    }).lean().exec();
+    if (!offer) throw new AppError(404, 'Offer not found');
+    if (offer.status !== 'active') throw new AppError(400, `Offer is ${offer.status}`);
+
+    // 2. Atomic claim of the usage slot (TOCTOU-safe against maxUses).
+    const claimFilter: any = { _id: objectId(opts.offerId), restaurantId: objectId(restaurantId) };
+    if (typeof offer.maxUses === 'number' && offer.maxUses > 0) {
+      claimFilter.currentUses = { $lt: offer.maxUses };
+    }
+    const claimed = await Offer.findOneAndUpdate(claimFilter, { $inc: { currentUses: 1 } }, { new: true }).exec();
+    if (!claimed) throw new AppError(409, 'Offer usage limit reached');
+
+    // 3. Record the redemption ledger entry.
     const redemption = await couponRedemptionRepo.forTenant(restaurantId).create({
       restaurantId: objectId(restaurantId),
       offerId: objectId(opts.offerId),
@@ -187,8 +213,22 @@ export class OfferValidationService {
       redeemedBy: opts.redeemedBy,
     } as any);
 
-    // Increment the offer's usage counter.
-    await Offer.updateOne({ _id: objectId(opts.offerId) }, { $inc: { currentUses: 1 } }).exec();
+    // 4. Per-customer limit — count on the ledger; on overflow void + refund
+    //    the slot so the counter and the ledger never drift.
+    if (typeof offer.maxPerCustomer === 'number' && offer.maxPerCustomer > 0) {
+      const used = await CouponRedemption.countDocuments({
+        restaurantId: objectId(restaurantId),
+        offerId: objectId(opts.offerId),
+        ...(opts.customerId ? { customerId: objectId(opts.customerId) } : {}),
+        ...(opts.customerPhone ? { customerPhone: opts.customerPhone } : {}),
+        status: 'applied',
+      });
+      if (used > offer.maxPerCustomer) {
+        await CouponRedemption.updateOne({ _id: redemption._id }, { $set: { status: 'voided' } }).exec();
+        await Offer.updateOne({ _id: objectId(opts.offerId) }, { $inc: { currentUses: -1 } }).exec();
+        throw new AppError(409, 'Per-customer usage limit reached');
+      }
+    }
 
     if (opts.customerId) {
       await customerActivityRepo.forTenant(restaurantId).create({
@@ -210,6 +250,9 @@ export class OfferValidationService {
       performedBy: opts.redeemedBy || 'System',
       details: { code: opts.code, customerPhone: opts.customerPhone, discount: opts.discountAmount },
     } as any);
+
+    // 5. Populate OfferAnalytics from the real redemption event (Phase 23).
+    await recordOfferRedemption(restaurantId, opts.offerId, opts.discountAmount);
 
     return redemption?.toObject();
   }

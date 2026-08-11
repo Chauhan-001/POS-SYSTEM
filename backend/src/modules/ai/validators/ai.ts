@@ -144,3 +144,63 @@ export const offerRecommendationsSchema = z.object({
   }).optional(),
   employee: employeeSchema.optional(),
 }).strict();
+
+// ─── MARKETING (Create-with-AI) ──────────────────────────────────
+
+const offerTypeEnum = z.enum([
+  'percentage', 'flat', 'bogo', 'free_item', 'combo', 'cashback',
+  'reward_points', 'coupon', 'festival', 'referral', 'loyalty_bonus',
+]);
+
+/** Request schema for POST /api/ai/marketing/generate. */
+export const marketingGenerateSchema = z.object({
+  /** The owner's goal in natural language, e.g. "bring back customers who haven't visited in a month". */
+  request: z.string().min(3, 'Describe your goal in a few words').max(500),
+  tone: z.enum(['friendly', 'premium', 'exciting', 'simple', 'festive']).optional(),
+  language: z.enum(['en', 'hi', 'hi-en']).optional(),
+}).strict();
+
+/**
+ * Server-side contract for the LLM's marketing plan output (Phase 9).
+ * LLM output is UNTRUSTED input — every field is validated, bounded and
+ * defaulted here before it can be shown to the owner or saved to MongoDB.
+ */
+export const marketingPlanSchema = z.object({
+  objective: z.string().max(500),
+  summaryInsight: z.string().max(500).optional().default(''),
+  offer: z.object({
+    title: z.string().min(1).max(100),
+    description: z.string().min(1).max(1000),
+    type: offerTypeEnum,
+    value: z.number().min(0).max(1_000_000),
+    minOrderValue: z.number().min(0).max(10_000_000).nullable().optional(),
+    maxDiscount: z.number().min(0).max(1_000_000).nullable().optional(),
+  }),
+  audience: z.object({
+    type: z.string().max(20).optional().default('segment'),
+    segmentNames: z.array(z.string().max(120)).optional().default([]),
+  }),
+  messages: z.object({
+    whatsapp: z.string().max(500).optional().default(''),
+    sms: z.string().max(300).optional().default(''),
+    push: z.string().max(200).optional().default(''),
+    emailSubject: z.string().max(200).optional().default(''),
+    emailBody: z.string().max(2000).optional().default(''),
+  }),
+  schedule: z.object({ type: z.string().max(20).optional().default('now') }).optional(),
+  reason: z.string().max(1000).optional().default(''),
+  estimatedImpact: z.string().max(500).optional().default(''),
+}).strict();
+
+/** Request schema for POST /api/ai/offer-copy (Offer Builder copy fields). */
+export const offerCopySchema = z.object({
+  type: offerTypeEnum,
+  value: z.number().min(0).max(1_000_000),
+  discountValue: z.string().max(100).optional(),
+  applicableCategories: z.array(z.string().max(100)).optional().default([]),
+  targetAudience: z.string().max(200).optional().default('all customers'),
+  reason: z.string().max(500).optional().default('promotion'),
+  minOrderValue: z.number().min(0).max(10_000_000).optional(),
+  durationDays: z.number().int().min(1).max(365).optional().default(7),
+  language: z.enum(['en', 'hi']).optional().default('en'),
+}).strict();

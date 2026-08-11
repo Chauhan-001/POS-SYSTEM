@@ -180,7 +180,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
             </div>
             <div>
               <h3 className="text-sm font-bold text-gray-900 leading-tight">{product.name}</h3>
-              <p className="text-[11px] font-mono font-semibold text-[#004ac6]">{currencySymbol}{displayPrice.toFixed(2)}</p>
+              <p className="text-[11px] font-mono font-semibold text-[var(--brand-color)]">{currencySymbol}{displayPrice.toFixed(2)}</p>
             </div>
           </div>
           <button onClick={onCancel} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
@@ -200,7 +200,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
                     onClick={() => setSelectedVariant(v)}
                     className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
                       selectedVariant?.name === v.name
-                        ? 'bg-[#004ac6] text-white shadow-sm'
+                        ? 'bg-[var(--brand-color)] text-white shadow-sm'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-transparent'
                     }`}
                   >
@@ -224,7 +224,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
               <span className="w-10 text-center text-sm font-bold font-mono">{quantity}</span>
               <button
                 onClick={() => setQuantity(Math.min(99, quantity + 1))}
-                className="w-8 h-8 rounded-lg bg-[#004ac6] hover:bg-[#003a9e] text-white flex items-center justify-center transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-lg bg-[var(--brand-color)] hover:bg-[#003a9e] text-white flex items-center justify-center transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -242,7 +242,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
                   onClick={() => toggleAddOn(opt.id)}
                   className={`flex items-center justify-between px-3 py-2 rounded-lg text-[11px] font-medium transition-all cursor-pointer border ${
                     selectedAddOns.includes(opt.id)
-                      ? 'bg-blue-50 border-[#004ac6] text-[#004ac6]'
+                      ? 'bg-blue-50 border-[var(--brand-color)] text-[var(--brand-color)]'
                       : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
                   }`}
                 >
@@ -264,7 +264,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
               onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g. Less oil, well done, no ice..."
               rows={2}
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]/30 focus:border-[#004ac6] resize-none"
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30 focus:border-[var(--brand-color)] resize-none"
             />
           </div>
         </div>
@@ -284,7 +284,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
             </button>
             <button
               onClick={handleConfirm}
-              className="px-5 py-2 rounded-xl bg-[#004ac6] text-white text-xs font-bold hover:bg-[#003a9e] transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              className="px-5 py-2 rounded-xl bg-[var(--brand-color)] text-white text-xs font-bold hover:bg-[#003a9e] transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <ShoppingCart className="w-3.5 h-3.5" />
               Add to Bill

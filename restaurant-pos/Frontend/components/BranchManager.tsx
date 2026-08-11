@@ -263,7 +263,7 @@ const handleSaveBranchSettings = () => {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#e1e2ed]">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-blue-50 text-[#004ac6]">
+          <div className="p-2 rounded-xl bg-blue-50 text-[var(--brand-color)]">
             <Building2 className="w-5 h-5" />
           </div>
           <div>
@@ -296,7 +296,7 @@ const handleSaveBranchSettings = () => {
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
               subscriptionLimits && typeof subscriptionLimits.remainingBranches === 'number' && subscriptionLimits.remainingBranches <= 0
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-[#004ac6] text-white hover:bg-[#003ea8]'
+                : 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8]'
             }`}
             title={subscriptionLimits && typeof subscriptionLimits.remainingBranches === 'number' && subscriptionLimits.remainingBranches <= 0 ? 'Branch limit reached' : 'Add new branch'}
           >
@@ -354,9 +354,9 @@ const handleSaveBranchSettings = () => {
 
         {/* Add branch form */}
         {isAdding && (
-          <div className="bg-white rounded-xl border border-[#004ac6] p-5 mb-4 shadow-sm">
+          <div className="bg-white rounded-xl border border-[var(--brand-color)] p-5 mb-4 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
-              <Plus className="w-4 h-4 text-[#004ac6]" />
+              <Plus className="w-4 h-4 text-[var(--brand-color)]" />
               <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider">New Branch</h3>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
@@ -366,7 +366,7 @@ const handleSaveBranchSettings = () => {
                   type="text"
                   value={newBranch.name || ''}
                   onChange={(e) => setNewBranch(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   placeholder="e.g. Downtown Branch"
                   autoFocus
                 />
@@ -377,7 +377,7 @@ const handleSaveBranchSettings = () => {
                   type="text"
                   value={newBranch.phone || ''}
                   onChange={(e) => setNewBranch(prev => ({ ...prev, phone: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   placeholder="+91 22 2200 4400"
                 />
               </div>
@@ -387,7 +387,7 @@ const handleSaveBranchSettings = () => {
                   type="text"
                   value={newBranch.address || ''}
                   onChange={(e) => setNewBranch(prev => ({ ...prev, address: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   placeholder="Branch address"
                 />
               </div>
@@ -396,7 +396,7 @@ const handleSaveBranchSettings = () => {
               <button
                 type="button"
                 onClick={handleAddBranch}
-                className="px-4 py-2 bg-[#004ac6] text-white rounded-xl text-xs font-bold hover:bg-[#003ea8] transition-colors cursor-pointer flex items-center gap-1"
+                className="px-4 py-2 bg-[var(--brand-color)] text-white rounded-xl text-xs font-bold hover:bg-[#003ea8] transition-colors cursor-pointer flex items-center gap-1"
               >
                 <Check className="w-3.5 h-3.5" />
                 Create Branch
@@ -429,7 +429,7 @@ const handleSaveBranchSettings = () => {
                 <div
                   key={branch.id}
                   className={`bg-white rounded-xl border p-4 transition-all ${
-                    isCurrent ? 'border-[#004ac6] shadow-sm' : 'border-[#e1e2ed]'
+                    isCurrent ? 'border-[var(--brand-color)] shadow-sm' : 'border-[#e1e2ed]'
                   }`}
                 >
                   {/* Branch header row */}
@@ -439,7 +439,7 @@ const handleSaveBranchSettings = () => {
                         {branch.isHeadBranch ? (
                           <Crown className="w-4 h-4 text-purple-600" />
                         ) : (
-                          <Building2 className="w-4 h-4 text-[#004ac6]" />
+                          <Building2 className="w-4 h-4 text-[var(--brand-color)]" />
                         )}
                       </div>
                       <div className="min-w-0">
@@ -468,7 +468,7 @@ const handleSaveBranchSettings = () => {
                         onClick={() => onSetCurrentBranch(branch.id === currentBranchId ? null : branch.id)}
                         className={`px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                           isCurrent
-                            ? 'bg-[#004ac6] text-white'
+                            ? 'bg-[var(--brand-color)] text-white'
                             : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                         }`}
                       >
@@ -502,7 +502,7 @@ const handleSaveBranchSettings = () => {
                             type="text"
                             value={branch.name}
                             onChange={(e) => handleUpdateBranch(branch.id, { name: e.target.value })}
-                            className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                            className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                           />
                         </div>
                         <div>
@@ -511,7 +511,7 @@ const handleSaveBranchSettings = () => {
                             type="text"
                             value={branch.phone || ''}
                             onChange={(e) => handleUpdateBranch(branch.id, { phone: e.target.value })}
-                            className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                            className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                           />
                         </div>
                         <div className="sm:col-span-2">
@@ -520,7 +520,7 @@ const handleSaveBranchSettings = () => {
                             type="text"
                             value={branch.address || ''}
                             onChange={(e) => handleUpdateBranch(branch.id, { address: e.target.value })}
-                            className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                            className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                           />
                         </div>
                       </div>
@@ -531,7 +531,7 @@ const handleSaveBranchSettings = () => {
                             type="checkbox"
                             checked={branch.isHeadBranch}
                             onChange={() => handleUpdateBranch(branch.id, { isHeadBranch: !branch.isHeadBranch })}
-                            className="w-4 h-4 rounded border-gray-300 text-[#004ac6] focus:ring-[#004ac6]"
+                            className="w-4 h-4 rounded border-gray-300 text-[var(--brand-color)] focus:ring-[var(--brand-color)]"
                           />
                           <span className="text-xs font-bold text-gray-700">Set as Head Branch</span>
                         </label>
@@ -551,7 +551,7 @@ const handleSaveBranchSettings = () => {
                         <button
                           type="button"
                           onClick={() => handleOpenSettings(branch.id)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-[#004ac6] hover:bg-blue-100 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-[var(--brand-color)] hover:bg-blue-100 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
                         >
                           <Settings className="w-3.5 h-3.5" />
                           Branch Settings
@@ -611,7 +611,7 @@ const handleSaveBranchSettings = () => {
               <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 border border-[#e1e2ed] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                 <div className="p-5 border-b border-[#e1e2ed] flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Settings className="w-4 h-4 text-[#004ac6]" />
+                    <Settings className="w-4 h-4 text-[var(--brand-color)]" />
                     <h3 className="font-bold text-sm text-[#191b23]">Settings Override: {branch.name}</h3>
                   </div>
                   <button onClick={() => setEditingSettingsBranch(null)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
@@ -632,7 +632,7 @@ const handleSaveBranchSettings = () => {
                           ...prev,
                           [key]: type === 'number' ? (e.target.value ? Number(e.target.value) : '') : e.target.value,
                         }))}
-                        className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                        className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                         placeholder={placeholder}
                       />
                     </div>
@@ -672,7 +672,7 @@ const handleSaveBranchSettings = () => {
                     <button
                       type="button"
                       onClick={handleSaveBranchSettings}
-                      className="px-4 py-2 bg-[#004ac6] text-white rounded-xl text-xs font-bold hover:bg-[#003ea8] transition-colors cursor-pointer flex items-center gap-1"
+                      className="px-4 py-2 bg-[var(--brand-color)] text-white rounded-xl text-xs font-bold hover:bg-[#003ea8] transition-colors cursor-pointer flex items-center gap-1"
                     >
                       <Check className="w-3.5 h-3.5" />
                       Save Settings
@@ -875,7 +875,7 @@ const handleSaveBranchSettings = () => {
 
         {/* Info box */}
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mt-6 flex items-start gap-2.5">
-          <Info className="w-4 h-4 text-[#004ac6] shrink-0 mt-0.5" />
+          <Info className="w-4 h-4 text-[var(--brand-color)] shrink-0 mt-0.5" />
           <div className="text-[11px] text-blue-800">
             <p className="font-bold mb-1">How Multi-Branch Works</p>
             <ul className="space-y-1 list-disc list-inside text-[10px] opacity-80">

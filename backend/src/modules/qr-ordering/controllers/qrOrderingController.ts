@@ -11,6 +11,7 @@
  */
 
 import { Request, Response } from 'express';
+import type { AuthenticatedRequest } from '../../../middleware/authMiddleware';
 import mongoose from 'mongoose';
 import QROrderingSession from '../models/QROrderingSession';
 import CustomerRequest from '../models/CustomerRequest';
@@ -203,12 +204,19 @@ export async function createCustomerRequest(req: Request, res: Response): Promis
  */
 export async function listCustomerRequests(req: Request, res: Response): Promise<void> {
   try {
+    const auth = req as AuthenticatedRequest;
     const { sessionId, restaurantId, status, type, priority, assignedTo } = req.query;
-    
-    // Build filter
-    const filter: any = {};
+
+    // Build filter — tenant isolation: the authenticated restaurant is the
+    // default scope; a client-supplied restaurantId is only honored for
+    // super_admin (platform console). Ordinary staff can never read another
+    // tenant's service requests.
+    const filter: any = {
+      restaurantId: new mongoose.Types.ObjectId(
+        String(auth.user?.role === 'super_admin' && restaurantId ? restaurantId : auth.user?.restaurantId || '')
+      ),
+    };
     if (sessionId) filter.sessionId = sessionId as string;
-    if (restaurantId) filter.restaurantId = new mongoose.Types.ObjectId(restaurantId as string);
     if (status) filter.status = status as string;
     if (type) filter.type = type as string;
     if (priority) filter.priority = priority as string;
@@ -239,9 +247,14 @@ export async function listCustomerRequests(req: Request, res: Response): Promise
  */
 export async function getCustomerRequest(req: Request, res: Response): Promise<void> {
   try {
+    const auth = req as AuthenticatedRequest;
     const { id } = req.params;
-    
-    const request = await CustomerRequest.findById(id).populate('assignedTo', 'name role').lean();
+
+    // Tenant isolation: only the owning restaurant can fetch a request.
+    const request = await CustomerRequest.findOne({
+      _id: id,
+      restaurantId: new mongoose.Types.ObjectId(String(auth.user?.restaurantId || '')),
+    }).populate('assignedTo', 'name role').lean();
     if (!request) {
       res.status(404).json({ success: false, error: 'Customer request not found' });
       return;
@@ -266,11 +279,16 @@ export async function getCustomerRequest(req: Request, res: Response): Promise<v
  */
 export async function updateCustomerRequest(req: Request, res: Response): Promise<void> {
   try {
+    const auth = req as AuthenticatedRequest;
     const { id } = req.params;
     const updateData = req.body as Partial<IQRRequest>;
-    
-    const updatedRequest = await CustomerRequest.findByIdAndUpdate(
-      id,
+
+    // Tenant isolation: only the owning restaurant can update a request.
+    const updatedRequest = await CustomerRequest.findOneAndUpdate(
+      {
+        _id: id,
+        restaurantId: new mongoose.Types.ObjectId(String(auth.user?.restaurantId || '')),
+      },
       { $set: updateData },
       { new: true, runValidators: true }
     ).populate('assignedTo', 'name role').lean();
@@ -300,9 +318,14 @@ export async function updateCustomerRequest(req: Request, res: Response): Promis
  */
 export async function deleteCustomerRequest(req: Request, res: Response): Promise<void> {
   try {
+    const auth = req as AuthenticatedRequest;
     const { id } = req.params;
-    
-    const deletedRequest = await CustomerRequest.findByIdAndDelete(id);
+
+    // Tenant isolation: only the owning restaurant can delete a request.
+    const deletedRequest = await CustomerRequest.findOneAndDelete({
+      _id: id,
+      restaurantId: new mongoose.Types.ObjectId(String(auth.user?.restaurantId || '')),
+    });
     if (!deletedRequest) {
       res.status(404).json({ success: false, error: 'Customer request not found' });
       return;
@@ -327,6 +350,7 @@ export async function deleteCustomerRequest(req: Request, res: Response): Promis
  */
 export async function assignRequest(req: Request, res: Response): Promise<void> {
   try {
+    const auth = req as AuthenticatedRequest;
     const { id } = req.params;
     const { assignedTo } = req.body;
     
@@ -334,9 +358,13 @@ export async function assignRequest(req: Request, res: Response): Promise<void> 
       res.status(400).json({ success: false, error: 'assignedTo is required' });
       return;
     }
-    
-    const request = await CustomerRequest.findByIdAndUpdate(
-      id,
+
+    // Tenant isolation: only the owning restaurant can assign a request.
+    const request = await CustomerRequest.findOneAndUpdate(
+      {
+        _id: id,
+        restaurantId: new mongoose.Types.ObjectId(String(auth.user?.restaurantId || '')),
+      },
       {
         $set: {
           assignedTo: new mongoose.Types.ObjectId(assignedTo),
@@ -372,11 +400,16 @@ export async function assignRequest(req: Request, res: Response): Promise<void> 
  */
 export async function completeRequest(req: Request, res: Response): Promise<void> {
   try {
+    const auth = req as AuthenticatedRequest;
     const { id } = req.params;
     const { completedBy } = req.body;
-    
-    const request = await CustomerRequest.findByIdAndUpdate(
-      id,
+
+    // Tenant isolation: only the owning restaurant can complete a request.
+    const request = await CustomerRequest.findOneAndUpdate(
+      {
+        _id: id,
+        restaurantId: new mongoose.Types.ObjectId(String(auth.user?.restaurantId || '')),
+      },
       {
         $set: {
           status: 'COMPLETED',

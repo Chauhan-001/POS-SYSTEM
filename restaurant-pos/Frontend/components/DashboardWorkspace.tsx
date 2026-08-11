@@ -6,15 +6,15 @@
  * peak hours analysis, payment breakdown, and quick action shortcuts.
  */
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
 import {
   TrendingUp, DollarSign, ShoppingCart, Users, Clock, Star,
   ArrowRight, Activity, CreditCard, Smartphone, Wallet, Banknote,
   ChefHat, UtensilsCrossed, PieChart, BarChart3, Zap, Calendar,
-  Percent, Receipt, Package, Layers, Coffee, TrendingDown, Sparkles
+  Percent, Receipt, Package, Layers, Coffee, TrendingDown, Sparkles, RefreshCw
 } from 'lucide-react';
-import type { DailySales, Bill, Order, TableInfo, Employee, Customer } from '../src/types';
+import type { DailySales, Bill, Order, TableInfo, Employee } from '../src/types';
 import { generateDailySummary, type DailyAISummary } from '../src/ai/aiData';
 import { fetchInventoryEvents, fetchSalesPeakHours, fetchSalesOrderTypes } from '../src/api/client';
 import WeatherWidget from '../src/ai/WeatherWidget';
@@ -25,7 +25,6 @@ interface DashboardWorkspaceProps {
   bills: Bill[];
   orders: Order[];
   tables: TableInfo[];
-  customers: Customer[];
   employees: Employee[];
   products?: any[];
   currentEmployee: Employee;
@@ -34,10 +33,13 @@ interface DashboardWorkspaceProps {
   totalExpensesToday?: number;
   totalExpensesThisMonth?: number;
   moduleSettings?: Record<string, boolean>;
+  /** Plan-gated flags from the POS state (strict plan enforcement). */
+  hasInventory?: boolean;
   onNavigate: (ws: string) => void;
   onOpenDailySales: () => void;
   onOpenZReport: () => void;
-  onOpenSyncPanel: () => void;
+  /** Force-refetch all backend data (bills, orders, products, expenses…) from the POS state hook. */
+  onRefreshData?: () => void;
   currentBranchName?: string;
   showBranchIndicator?: boolean;
 }
@@ -125,11 +127,12 @@ const Sparkline = React.memo(function Sparkline({ data, color, height = 40 }: { 
 });
 
 export default function DashboardWorkspace({
-  dailySales, bills, orders, tables, customers, employees,
+  dailySales, bills, orders, tables, employees,
   products = [], currentEmployee, settings, currencySymbol,
   totalExpensesToday = 0, totalExpensesThisMonth = 0,
   moduleSettings = {} as Record<string, boolean>,
-  onNavigate, onOpenDailySales, onOpenZReport, onOpenSyncPanel,
+  hasInventory = false,
+  onNavigate, onOpenDailySales, onOpenZReport, onRefreshData,
   currentBranchName, showBranchIndicator
 }: DashboardWorkspaceProps) {
   const greeting = getGreeting();
@@ -143,22 +146,63 @@ export default function DashboardWorkspace({
     orderTypes: { type: string; count: number; revenue: number }[] | null;
   }>({ hourly: null, orderTypes: null });
 
+  // Refresh button state + last-successful-update timestamp (shown in the footer).
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // Fetches today's backend-computed hourly/order-type charts. Called on mount,
+  // on the manual Refresh button, and by the auto-refresh timer below — the
+  // getCached API client always hits the network first, so this never serves
+  // a stale chart after a refresh.
+  const loadBackendToday = useCallback(async () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const [h, ot] = await Promise.all([
+      fetchSalesPeakHours(todayStr, todayStr),
+      fetchSalesOrderTypes(todayStr, todayStr),
+    ]);
+    setBackendToday({
+      hourly: h.data && Array.isArray(h.data.hourly) ? h.data.hourly : null,
+      orderTypes: ot.data && Array.isArray(ot.data) ? ot.data : null,
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    const todayStr = new Date().toISOString().slice(0, 10);
     (async () => {
-      const [h, ot] = await Promise.all([
-        fetchSalesPeakHours(todayStr, todayStr),
-        fetchSalesOrderTypes(todayStr, todayStr),
-      ]);
+      await loadBackendToday();
       if (cancelled) return;
-      setBackendToday({
-        hourly: h.data && Array.isArray(h.data.hourly) ? h.data.hourly : null,
-        orderTypes: ot.data && Array.isArray(ot.data) ? ot.data : null,
-      });
+      setLastUpdated(new Date());
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [loadBackendToday]);
+
+  // Manual Refresh + auto-refresh: re-pull the backend values that drive the
+  // dashboard (bills/orders/products/expenses via onRefreshData, plus the
+  // backend-computed charts) so every number stays correct. All fetchers are
+  // offline-safe, so a failed refresh keeps the current data on screen.
+  const handleRefresh = useCallback(async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      if (onRefreshData) onRefreshData();
+      await loadBackendToday();
+      setLastUpdated(new Date());
+    } catch {
+      /* offline — keep current data */
+    } finally {
+      if (!silent) setIsRefreshing(false);
+    }
+  }, [onRefreshData, loadBackendToday]);
+
+  // Auto-refresh every 60s while the dashboard is mounted and online, so the
+  // KPI cards and charts update on their own. (Orders/tables/takeaway already
+  // poll every 30s inside usePOSState — this covers bills + the chart
+  // aggregations that would otherwise sit stale.)
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (navigator.onLine) handleRefresh(true);
+    }, 60000);
+    return () => clearInterval(id);
+  }, [handleRefresh]);
 
   // Compute peak hours — backend aggregation when available.
   const hourlyData = useMemo(() => {
@@ -265,12 +309,14 @@ export default function DashboardWorkspace({
     return () => { cancelled = true; };
   }, [dailySales.totalRevenue, bills, orders, todayCustomerCount]);
 
-  // Quick action buttons
+  // Quick action buttons (plan-gated: Kitchen & Inventory only render when the
+  // subscription plan + module toggles include them)
+  const kitchenEnabled = moduleSettings?.enableKitchenDisplay !== false;
   const quickActions = [
     { icon: ShoppingCart, label: 'New Order', action: () => onNavigate('Orders'), color: 'bg-blue-500 hover:bg-blue-600' },
     { icon: Zap, label: 'Billing', action: () => onNavigate('Billing'), color: 'bg-green-500 hover:bg-green-600' },
-    { icon: UtensilsCrossed, label: 'Kitchen', action: () => onNavigate('Kitchen'), color: 'bg-amber-500 hover:bg-amber-600' },
-    { icon: Layers, label: 'Inventory', action: () => onNavigate('More'), color: 'bg-purple-500 hover:bg-purple-600' },
+    ...(kitchenEnabled ? [{ icon: UtensilsCrossed, label: 'Kitchen', action: () => onNavigate('Kitchen'), color: 'bg-amber-500 hover:bg-amber-600' }] : []),
+    ...(hasInventory ? [{ icon: Layers, label: 'Inventory', action: () => onNavigate('More'), color: 'bg-purple-500 hover:bg-purple-600' }] : []),
   ];
 
   return (
@@ -296,13 +342,18 @@ export default function DashboardWorkspace({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => handleRefresh()}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
             <button onClick={onOpenDailySales}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[#004ac6] hover:text-[#004ac6] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <Receipt className="w-3.5 h-3.5" />
               Daily Sales
             </button>
             <button onClick={onOpenZReport}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[#004ac6] hover:text-[#004ac6] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <BarChart3 className="w-3.5 h-3.5" />
               Z-Report
             </button>
@@ -740,7 +791,7 @@ export default function DashboardWorkspace({
           )}
 
           {/* AI Weather Widget */}
-          {moduleSettings.enableAIWeather !== false && <WeatherWidget />}
+          {moduleSettings.enableAIWeather !== false && <WeatherWidget menuItems={products.map((p: any) => p.name).filter(Boolean)} />}
 
           {/* Quick Stats / Summary */}
           <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
@@ -779,10 +830,15 @@ export default function DashboardWorkspace({
 
         {/* ===== FOOTER ===== */}
         <div className="flex items-center justify-between py-3 border-t border-[#e1e2ed] text-[9px] text-gray-400">
-          <span>Dashboard auto-updates · Data for {dateStr}</span>
+          <span>
+            Data for {dateStr} · Updated{' '}
+            {lastUpdated
+              ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              : '…'} · Auto-refreshes every 60s
+          </span>
           <div className="flex items-center gap-2">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />
-            <span>Live</span>
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${isRefreshing ? 'bg-amber-400 animate-pulse' : 'bg-green-400'}`} />
+            <span>{isRefreshing ? 'Refreshing…' : 'Live'}</span>
           </div>
         </div>
       </div>

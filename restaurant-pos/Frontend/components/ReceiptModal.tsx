@@ -193,7 +193,7 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
         <div className="p-4 bg-[#e7e7f3] border-b border-[#e1e2ed] flex gap-3 justify-center print-modal-chrome">
           <button
             onClick={handlePrint}
-            className="flex items-center gap-2 bg-[#004ac6] hover:bg-[#003ea8] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
+            className="flex items-center gap-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             {isPreview ? 'Print Running Bill' : `Print (${settings.printSize})`}

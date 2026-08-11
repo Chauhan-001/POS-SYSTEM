@@ -46,6 +46,8 @@ export class AuthService {
     phone?: string;
     username?: string;
     password: string;
+    /** Which credential to verify: 'password' (bcrypt password) or 'pin' (quick PIN). */
+    mode?: 'password' | 'pin' | 'role_pin';
     rememberMe?: boolean;
     ipAddress?: string;
     userAgent?: string;
@@ -83,7 +85,10 @@ export class AuthService {
         const emp = await employeeRepo.findOne({ username: data.username, isDeleted: { $ne: true } } as any);
         if (emp) {
           if (emp.status !== 'Active') throw new Error('Account is inactive or suspended. Contact your owner.');
-          const isValidEmp = await verifyPin(data.password, emp.pin);
+          const usePassword = data.mode === 'password' && !!(emp as any).password;
+          const isValidEmp = usePassword
+            ? await verifyPin(data.password, (emp as any).password)
+            : await verifyPin(data.password, emp.pin);
           if (!isValidEmp) throw new Error('Invalid username or password');
 
           if (!emp.restaurantId) throw new Error('Restaurant not found');
@@ -295,6 +300,13 @@ export class AuthService {
       } else {
         restaurant = await restaurantRepo.findById(payload.userId);
         if (!restaurant || restaurant.isDeleted) throw new Error('User not found');
+        // Restaurant-identity login: the JWT userId is the restaurant _id and
+        // there is no separate User doc — treat the restaurant as the user so
+        // the new refresh-token row below (userId: user._id) is minted against
+        // the same identity. Previously `user` stayed null here and
+        // user._id.toString() threw → POST /auth/refresh always 500'd for
+        // owner logins, breaking the frontend's 401 self-heal (empty POS).
+        user = restaurant;
         isRestaurantLogin = true;
       }
     }
@@ -362,6 +374,41 @@ export class AuthService {
   async ownerExists(): Promise<boolean> {
     const count = await Employee.countDocuments({ role: 'Owner', isDeleted: { $ne: true } }).limit(1).exec();
     return count > 0;
+  }
+
+  /**
+   * Generate a unique staff User ID + a secure random password (bcrypt-hashed)
+   * so the Owner (or admin) never has to invent credentials. The returned
+   * userId/password must be handed to the staff member; only the hash is stored.
+   * Used by the POS "Generate credentials" action and by admin provisioning.
+   */
+  async generateStaffCredentials(name: string, role: 'Owner' | 'Manager' | 'Cashier' = 'Cashier', avoid?: string[]) {
+    const base = (name || role || 'user')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 20) || 'staff';
+    const prefix = base;
+    const blacklist = new Set((avoid || []).map((u: string) => u.toLowerCase()));
+
+    // Unique username — retry on collision with an incrementing suffix count.
+    let userId = `${prefix}_${Math.random().toString(36).slice(2, 6)}`;
+    let attempts = 0;
+    while ((await employeeRepo.findOne({ username: userId as any } as any)) || blacklist.has(userId)) {
+      attempts += 1;
+      userId = `${prefix}_${Math.random().toString(36).slice(2, 6)}${attempts}`;
+      if (attempts > 20) break;
+    }
+
+    // 8-char alphanumeric password (no ambiguous characters).
+    const password = Array.from({ length: 8 }, () => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+      return chars.charAt(crypto.randomInt(chars.length));
+    }).join('');
+
+    const passwordHash = await hashPin(password);
+
+    return { userId, password, passwordHash, role };
   }
 
   async registerOwner(data: {

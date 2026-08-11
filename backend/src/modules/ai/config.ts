@@ -31,8 +31,25 @@ export const aiConfig = {
   /** LLM provider: 'openai' | 'anthropic' | 'ollama' | 'custom' */
   provider: (process.env.AI_PROVIDER || 'openai') as 'openai' | 'anthropic' | 'ollama' | 'custom',
 
-  /** API key for the LLM provider */
+  /** Primary API key for the LLM provider */
   apiKey: process.env.AI_API_KEY || '',
+
+  /**
+   * Ordered chain of API keys tried in sequence by the LLM provider.
+   * The primary key is always first; fallback keys (extra Groq/OpenAI-compatible
+   * accounts) are tried next when the primary fails — including on 429 rate
+   * limits, which also park the exhausted key briefly so the chain cycles
+   * instead of hammering one quota.
+   *
+   * Fallbacks come from either:
+   *   - AI_API_KEY_FALLBACKS (comma-separated list, recommended), OR
+   *   - AI_API_KEY_FALLBACK (legacy single fallback, still honoured)
+   */
+  apiKeys: Array.from(new Set([
+    process.env.AI_API_KEY || '',
+    ...(process.env.AI_API_KEY_FALLBACKS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    process.env.AI_API_KEY_FALLBACK || '',
+  ].filter(Boolean))),
 
   /** Model identifier */
   model: process.env.AI_MODEL || (() => {
@@ -61,5 +78,5 @@ export const aiConfig = {
 
 /** Whether the AI module has a valid API key configured */
 export function isAiEnabled(): boolean {
-  return aiConfig.apiKey.length > 0;
+  return aiConfig.apiKeys.length > 0;
 }

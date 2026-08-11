@@ -217,7 +217,7 @@ export class InventoryReportService {
   /** GET /api/reports/inventory/expiry — items expiring soon or expired. */
   async expiry(scope: ReportScope, days = 30) {
     const products = await Product.find(this.productMatch(scope))
-      .select('name category currentStock expiryDate batchNumber')
+      .select('name category currentStock unit expiryDate batchNumber')
       .lean()
       .exec();
     const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime();
@@ -230,6 +230,7 @@ export class InventoryReportService {
           name: p.name,
           category: p.category,
           currentStock: p.currentStock,
+          unit: p.unit || 'units',
           expiryDate: p.expiryDate,
           batchNumber: p.batchNumber || null,
           daysLeft: Math.floor((t - today) / 86400000),

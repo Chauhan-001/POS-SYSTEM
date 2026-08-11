@@ -162,6 +162,26 @@ export const config = {
   },
 
   // ===========================================================================
+  // SECTION 5d: FRONTEND STATIC BUILD
+  // ===========================================================================
+
+  /**
+   * Absolute directory of the built POS frontend, served at / in production
+   * (same-origin /api so the SPA needs no proxy). Defaults to the monorepo
+   * layout <repo>/restaurant-pos/Frontend/dist and resolves correctly from
+   * both the dev tree (backend/src) and the compiled bundle (backend/dist).
+   * Deployments that host the build elsewhere can override via FRONTEND_DIST.
+   */
+  frontendDist: process.env.FRONTEND_DIST || path.join(__dirname, '../../restaurant-pos/Frontend/dist'),
+
+  /**
+   * Public base URL of the customer QR ordering site. QR Studio bakes this
+   * into every printed QR sticker (dev default: the customer-site Vite dev
+   * server). Override with QR_BASE_URL when the site is hosted elsewhere.
+   */
+   qrBaseUrl: (process.env.QR_BASE_URL || 'http://localhost:5177').replace(/\/$/, ''),
+
+  // ===========================================================================
   // SECTION 6: RATE LIMITING
   // ===========================================================================
 
@@ -195,6 +215,12 @@ export const config = {
       windowMs: parseInt(process.env.RL_ADMIN_WINDOW_MS || (60 * 1000).toString(), 10),
       /** Max requests per IP per window (default: 300) — admin dashboard traffic */
       maxRequests: parseInt(process.env.RL_ADMIN_MAX || '300', 10),
+    },
+    voice: {
+      /** Window in milliseconds (default: 1 minute) */
+      windowMs: parseInt(process.env.RL_VOICE_WINDOW_MS || (60 * 1000).toString(), 10),
+      /** Max requests per restaurant per window (default: 90) — voice parse/transcribe/confirm */
+      maxRequests: parseInt(process.env.RL_VOICE_MAX || '90', 10),
     },
   },
 };

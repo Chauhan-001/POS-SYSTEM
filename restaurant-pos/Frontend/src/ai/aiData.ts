@@ -14,6 +14,19 @@ import type { InventoryItem, WasteEntry } from '../../components/inventory/types
 import { aiPost } from './aiClient';
 
 // ============================================================
+// AI RESULT PROVENANCE
+// ============================================================
+
+/** Whether a value came from the live AI backend or the local fallback. */
+export type AiSource = 'live' | 'local';
+
+/** Wraps AI-backed data with its provenance so UIs can label local fallbacks. */
+export interface AiResult<T> {
+  data: T;
+  source: AiSource;
+}
+
+// ============================================================
 // INVENTORY HEALTH SCORE
 // ============================================================
 
@@ -35,15 +48,30 @@ function isHealthScore(d: any): d is InventoryHealthScore {
     && Array.isArray(d.recommendations);
 }
 
-export async function computeHealthScore(items: InventoryItem[], wasteTotal: number): Promise<InventoryHealthScore> {
+export async function computeHealthScore(items: InventoryItem[], wasteTotal: number): Promise<AiResult<InventoryHealthScore>> {
+  // Empty catalog: the backend schema requires items to have >= 1 entries and
+  // would reject an empty array with a 400 — skip the pointless API call and
+  // use the local fallback (which returns a 100 score with an onboarding hint).
+  if (items.length === 0) return { data: computeHealthScoreLocal(items, wasteTotal), source: 'local' };
   try {
     const result = await aiPost<InventoryHealthScore>('/inventory-health', { items, wasteTotal });
-    // Guard: only trust a payload that has the full expected shape.
-    if (result.success && isHealthScore(result.data)) return result.data;
+    // Guard: only trust a payload that has the full expected shape AND was
+    // produced by the live LLM — a backend `fallback: true` response is an
+    // algorithmic substitute and must be labeled local, never live.
+    if (result.success && !result.fallback && isHealthScore(result.data)) return { data: result.data, source: 'live' };
   } catch { /* fall through to local */ }
 
   // ── Local fallback ──────────────────────────────────────────
-  return computeHealthScoreLocal(items, wasteTotal);
+  return { data: computeHealthScoreLocal(items, wasteTotal), source: 'local' };
+}
+
+/** Days from today until the given YYYY-MM-DD expiry (negative = already expired). */
+function daysUntil(expiryDate: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const t = new Date(`${expiryDate}T00:00:00`);
+  if (isNaN(t.getTime())) return Infinity;
+  return Math.round((t.getTime() - today.getTime()) / 86_400_000);
 }
 
 function computeHealthScoreLocal(items: InventoryItem[], wasteTotal: number): InventoryHealthScore {
@@ -55,16 +83,33 @@ function computeHealthScoreLocal(items: InventoryItem[], wasteTotal: number): In
   const stockHealth = Math.round((healthy / total) * 100);
 
   const wasteRate = Math.max(0, 100 - Math.min(wasteTotal / 50, 1) * 30);
-  const expiring = items.filter(i => i.expiryDate).length;
-  const expiryRisk = Math.max(0, 100 - expiring * 5);
+
+  // Expiry risk from REAL batch dates — items already past expiry or inside
+  // the 7-day window are the risk drivers (presence alone is not a risk).
+  const expiryDays = items
+    .filter(i => i.expiryDate)
+    .map(i => ({ name: i.name, days: daysUntil(i.expiryDate!) }));
+  const expiredCount = expiryDays.filter(e => e.days < 0).length;
+  const expiringSoon = expiryDays.filter(e => e.days >= 0 && e.days <= 7);
+  const expiring30 = expiryDays.filter(e => e.days >= 0 && e.days <= 30);
+  // 100 → −10 per expired batch → −5 per expiring-soon batch → −1 per
+  // 30-day batch, floored at 20 (never a zero floor that looks "fine").
+  const expiryRisk = Math.max(20, 100 - expiredCount * 10 - expiringSoon.length * 5 - Math.max(0, expiring30.length - expiringSoon.length) * 1);
 
   const overall = Math.round((stockHealth * 0.5 + wasteRate * 0.25 + expiryRisk * 0.25));
 
   const recommendations: string[] = [];
   if (critical > 0) recommendations.push(`Reorder ${critical} critically low item${critical > 1 ? 's' : ''} immediately.`);
-  if (expiring > 2) recommendations.push(`${expiring} items approaching expiry — consider promotions or donation.`);
+  if (expiredCount > 0) {
+    const names = expiryDays.filter(e => e.days < 0).map(e => e.name).slice(0, 3).join(', ');
+    recommendations.push(`${expiredCount} batch${expiredCount > 1 ? 'es' : ''} expired (${names}${expiredCount > 3 ? '…' : ''}) — discard and review order quantities.`);
+  }
+  if (expiringSoon.length > 0) {
+    const names = expiringSoon.map(e => e.name).slice(0, 3).join(', ');
+    recommendations.push(`${expiringSoon.length} item${expiringSoon.length > 1 ? 's' : ''} expire within 7 days (${names}${expiringSoon.length > 3 ? '…' : ''}) — use first-in-first-out or run a quick promotion.`);
+  }
   if (wasteTotal > 200) recommendations.push('Waste is above average. Review portion sizes and storage practices.');
-  if (stockHealth > 80) recommendations.push('Stock levels are healthy. Keep up the good inventory discipline.');
+  if (stockHealth > 80 && expiredCount === 0 && expiringSoon.length === 0) recommendations.push('Stock levels are healthy. Keep up the good inventory discipline.');
   if (recommendations.length === 0) recommendations.push('Inventory is in good shape. No urgent actions needed.');
 
   const trend: 'improving' | 'stable' | 'declining' = stockHealth > 70 ? 'improving' : stockHealth > 40 ? 'stable' : 'declining';
@@ -84,12 +129,48 @@ export interface PurchaseRecommendation {
   estimatedCost: number;
 }
 
-export async function generatePurchaseRecs(items: InventoryItem[]): Promise<PurchaseRecommendation[]> {
+/** Urgency rank — lower wins when merging duplicate recommendations. */
+const URGENCY_RANK: Record<PurchaseRecommendation['urgency'], number> = { high: 0, medium: 1, low: 2 };
+
+/**
+ * Merge recommendations that refer to the same item. The LLM backend can
+ * occasionally emit two entries for one item (e.g. once for low stock and once
+ * for an expiring batch), which breaks React list keys. Keeps the
+ * highest-urgency entry and folds the other reason into one readable line.
+ */
+function dedupeRecs(recs: PurchaseRecommendation[]): PurchaseRecommendation[] {
+  const byItem = new Map<string, PurchaseRecommendation>();
+  for (const rec of recs) {
+    const key = (rec.item || '').trim().toLowerCase();
+    if (!key) continue;
+    const existing = byItem.get(key);
+    if (!existing) { byItem.set(key, rec); continue; }
+    const keep = URGENCY_RANK[rec.urgency] <= URGENCY_RANK[existing.urgency] ? rec : existing;
+    const other = keep === rec ? existing : rec;
+    let reason = keep.reason;
+    if (other.reason && other.reason !== keep.reason) {
+      const extra = other.reason.charAt(0).toLowerCase() + other.reason.slice(1);
+      reason = keep.reason ? `${keep.reason} · ${extra}` : other.reason;
+    }
+    byItem.set(key, { ...keep, reason });
+  }
+  // Urgency-ordered (high first) so list slices always surface the most urgent
+  // recommendations — applies to both live and local sources.
+  return Array.from(byItem.values()).sort((a, b) => URGENCY_RANK[a.urgency] - URGENCY_RANK[b.urgency]);
+}
+
+export async function generatePurchaseRecs(items: InventoryItem[]): Promise<AiResult<PurchaseRecommendation[]>> {
+  // Empty catalog: skip the API call (backend rejects items: [] with a 400) and
+  // return the local fallback — no items means nothing to recommend yet.
+  if (items.length === 0) return { data: dedupeRecs(generatePurchaseRecsLocal(items)), source: 'local' };
   try {
     const result = await aiPost<{ recommendations: PurchaseRecommendation[] }>('/purchase-recs', { items });
-    if (result.success && Array.isArray(result.data?.recommendations)) return result.data.recommendations;
+    // Live only when the backend LLM answered (fallback:false) with a valid shape.
+    if (result.success && !result.fallback && Array.isArray(result.data?.recommendations)) {
+      return { data: dedupeRecs(result.data.recommendations), source: 'live' };
+    }
   } catch { /* fall through */ }
-  return generatePurchaseRecsLocal(items);
+  return { data: dedupeRecs(generatePurchaseRecsLocal(items)), source: 'local' };
 }
 
 function generatePurchaseRecsLocal(items: InventoryItem[]): PurchaseRecommendation[] {
@@ -105,22 +186,28 @@ function generatePurchaseRecsLocal(items: InventoryItem[]): PurchaseRecommendati
         estimatedCost: Math.round(restockQty * item.averageCost),
       });
     }
+    // Separate check (not else-if): a low-stock item that is also expiring
+    // generates BOTH entries — dedupeRecs merges them into one recommendation
+    // that carries both reasons with the higher-urgency restock quantity.
+    if (item.expiryDate) {
+      // Expiring soon — restock only the minimal safe quantity so the new
+      // batch arrives after the current one clears (FIFO-friendly).
+      const days = daysUntil(item.expiryDate);
+      if (days >= 0 && days <= 7) {
+        recs.push({
+          item: item.name,
+          reason: `Current batch expires in ${days} day${days === 1 ? '' : 's'} (${item.expiryDate}) — restock conservatively`,
+          suggestedQty: `${item.minStock} ${item.unit}`,
+          urgency: 'low',
+          estimatedCost: Math.round(item.minStock * item.averageCost),
+        });
+      }
+    }
   }
-  recs.push({
-    item: 'Milk',
-    reason: 'AI predicts 30% higher consumption this weekend',
-    suggestedQty: '25 L',
-    urgency: 'medium',
-    estimatedCost: 1400,
-  });
-  recs.push({
-    item: 'Bread',
-    reason: 'Weekend crowd typically orders 40% more sandwiches',
-    suggestedQty: '40 pcs',
-    urgency: 'medium',
-    estimatedCost: 1400,
-  });
-  return recs.sort((a, b) => a.urgency === 'high' ? -1 : b.urgency === 'high' ? 1 : 0);
+  // No fabricated entries — every recommendation is derived from the real
+  // catalog (stock levels, thresholds and expiry dates). dedupeRecs() (applied
+  // by generatePurchaseRecs) merges per-item duplicates and sorts by urgency.
+  return recs;
 }
 
 // ============================================================
@@ -136,12 +223,16 @@ export interface LowStockPrediction {
   suggestedAction: string;
 }
 
-export async function predictLowStock(items: InventoryItem[]): Promise<LowStockPrediction[]> {
+export async function predictLowStock(items: InventoryItem[]): Promise<AiResult<LowStockPrediction[]>> {
+  // Empty catalog: skip the API call (backend rejects items: [] with a 400) and
+  // return the local fallback — an empty inventory has no stockouts to predict.
+  if (items.length === 0) return { data: predictLowStockLocal(items), source: 'local' };
   try {
     const result = await aiPost<{ predictions: LowStockPrediction[] }>('/low-stock', { items });
-    if (result.success && Array.isArray(result.data?.predictions)) return result.data.predictions;
+    // Live only when the backend LLM answered (fallback:false) with a valid shape.
+    if (result.success && !result.fallback && Array.isArray(result.data?.predictions)) return { data: result.data.predictions, source: 'live' };
   } catch { /* fall through */ }
-  return predictLowStockLocal(items);
+  return { data: predictLowStockLocal(items), source: 'local' };
 }
 
 function predictLowStockLocal(items: InventoryItem[]): LowStockPrediction[] {
@@ -276,13 +367,16 @@ function isWasteAnalysis(d: any): d is WasteAnalysis {
     && Array.isArray(d.actionableAdvice);
 }
 
-export async function analyzeWaste(wasteEntries: WasteEntry[]): Promise<WasteAnalysis> {
+export async function analyzeWaste(wasteEntries: WasteEntry[]): Promise<AiResult<WasteAnalysis>> {
+  // Empty log: nothing to analyze — skip the API call and return the local
+  // fallback (keeps provenance honest: no backend call, no 'live' claim).
+  if (wasteEntries.length === 0) return { data: analyzeWasteLocal(wasteEntries), source: 'local' };
   try {
     const result = await aiPost<WasteAnalysis>('/waste-analysis', { wasteEntries });
-    // Guard: only trust a payload that has the full expected shape.
-    if (result.success && isWasteAnalysis(result.data)) return result.data;
+    // Live only when the backend LLM answered (fallback:false) with a valid shape.
+    if (result.success && !result.fallback && isWasteAnalysis(result.data)) return { data: result.data, source: 'live' };
   } catch { /* fall through */ }
-  return analyzeWasteLocal(wasteEntries);
+  return { data: analyzeWasteLocal(wasteEntries), source: 'local' };
 }
 
 function analyzeWasteLocal(wasteEntries: WasteEntry[]): WasteAnalysis {

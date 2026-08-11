@@ -279,7 +279,7 @@ export async function resolveProduct(
     !!(fuzzyMatch || semanticMatchResult || stages.some((s) => s.stage === 'semantic' || s.stage === 'fuzzy'))
   );
 
-  const winningProduct = findWinningProduct(stages);
+  const winningProduct = await findWinningProduct(stages);
 
   // ─── New Product Detection (when unresolved) ───────────────────────
   let newProductSuggestion = undefined;
@@ -503,11 +503,20 @@ async function loadExistingCategories(filter: any): Promise<string[]> {
 // HELPERS
 // ====================================================================
 
-function findWinningProduct(stages: StageResult[]): ResolvableProduct | null {
+async function findWinningProduct(
+  stages: StageResult[]
+): Promise<ResolvableProduct | null> {
   const winner = stages
     .filter((s) => s.productId)
     .sort((a, b) => b.confidence - a.confidence)[0];
-  return winner ? ({ _id: winner.productId as any } as ResolvableProduct) : null;
+  if (!winner?.productId) return null;
+  // Re-fetch the winning product so name/unit/category/code are REAL — stage
+  // entries only carry the productId. One indexed _id lookup; the id already
+  // came from a tenant-scoped stage query, so this never crosses tenants.
+  const doc = await Product.findById(winner.productId)
+    .select(RESOLUTION_PROJECTION)
+    .lean();
+  return doc ? (doc as unknown as ResolvableProduct) : null;
 }
 
 function escapeRegex(s: string): string {

@@ -19,6 +19,13 @@ const parsedItemSchema = z
     quantity: z.number().min(0).max(100000),
     unit: z.string().max(20).optional(),
     canonicalName: z.string().max(200).optional(),
+    /** Purchase rate (₹/unit) — must survive validation so the spoken/edited
+     *  rate reaches InventoryService (average-cost blend + purchase record).
+     *  Zod strips unknown keys by default — without this the confirm flow
+     *  silently dropped the rate and stored price 0. nullable() keeps old
+     *  clients that send null from 400ing. */
+    rate: z.number().min(0).max(1000000).nullable().optional(),
+    purchaseRate: z.number().min(0).max(1000000).nullable().optional(),
   })
   .refine((d) => d.item || d.name, {
     message: 'Either item or name is required',
@@ -58,6 +65,10 @@ export const voiceParseRequestSchema = z.object({
 /**
  * POST /api/voice-inventory/transcribe
  * Transcribe a base64 audio clip to text (Groq Whisper / STT provider).
+ *
+ * Hard caps (also enforced server-side in the controller):
+ *   - audio: base64 string ≤ 50,000,000 chars (~37 MB decoded)
+ *   - audioBytes ≤ 3 MB (max audio payload accepted from the POS)
  */
 export const voiceTranscribeSchema = z.object({
   audio: z.string().min(1).max(50_000_000), // base64 audio (max ~37MB raw)
@@ -68,15 +79,87 @@ export const voiceTranscribeSchema = z.object({
     .default('hi-en'),
 });
 
+/** Max raw decoded audio bytes a single transcribe payload may contain. */
+export const MAX_TRANSCRIBE_AUDIO_BYTES = parseInt(
+  process.env.VOICE_MAX_AUDIO_BYTES || (3 * 1024 * 1024).toString(),
+  10,
+);
+
+/** Max estimated audio duration (seconds) for a transcribe/parse payload. */
+export const MAX_TRANSCRIBE_DURATION_SEC = parseInt(
+  process.env.VOICE_MAX_DURATION_SEC || '30',
+  10,
+);
+
 /**
  * POST /api/voice-inventory/confirm
  * Confirm, edit, or cancel a parsed voice action.
+ * Requires a valid pending-action token (server-side confirmation) OR a
+ * legacy logId for backwards compatibility.
  */
-export const voiceConfirmSchema = z.object({
-  logId: z.string().min(1),
-  action: z.enum(['confirm', 'edit', 'cancel', 'clarify']),
-  editedItems: z.array(parsedItemSchema).max(20).optional(),
-  clarification: z.string().max(500).optional(),
+export const voiceConfirmSchema = z
+  .object({
+    pendingActionId: z.string().min(1).optional(),
+    confirmationToken: z.string().min(1).optional(),
+    logId: z.string().min(1).optional(),
+    action: z.enum(['confirm', 'edit', 'cancel', 'clarify']),
+    editedItems: z.array(parsedItemSchema).max(20).optional(),
+    clarification: z.string().max(500).optional(),
+    /**
+     * Corrected purchase date (YYYY-MM-DD) chosen in the confirm panel — lets
+     * the merchant fix a misheard spoken date (e.g. "kal" parsed as today)
+     * before the add is executed. Overrides the parse-time date when present.
+     * The regex + refine reject impossible (2026-99-99) and future dates —
+     * format-only checks would let junk flow into the purchase record.
+     */
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine(
+        (d) =>
+          !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) &&
+          d <= new Date().toISOString().slice(0, 10),
+        { message: 'Date must be a real, non-future date (YYYY-MM-DD)' }
+      )
+      .optional(),
+    /**
+     * Corrected supplier/vendor name chosen in the confirm panel — lets the
+     * merchant fix a misheard supplier (or add one that wasn't spoken) before
+     * the add is executed. Empty string clears the supplier. Overrides the
+     * parse-time supplier when present.
+     */
+    supplier: z.string().max(200).optional(),
+    /**
+     * Corrected brand/variant chosen in the confirm panel — the same product
+     * can come from different brands. Empty string means no brand was
+     * mentioned. Overrides the parse-time brand when present.
+     */
+    brand: z.string().max(200).optional(),
+    /**
+     * Corrected expiry date (YYYY-MM-DD) chosen in the confirm panel — the
+     * incoming batch's expiry. Empty/absent means no expiry was mentioned.
+     * Overrides the parse-time expiry when present.
+     */
+    expiryDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine(
+        (d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)),
+        { message: 'Expiry date must be a real date (YYYY-MM-DD)' }
+      )
+      .optional(),
+  })
+  .refine(
+    (d) => (d.pendingActionId && d.confirmationToken) || d.logId,
+    { message: 'Pending action (pendingActionId + confirmationToken) or logId is required' }
+  );
+
+/**
+ * POST /api/voice-inventory/undo
+ * Undo a previously confirmed voice action.
+ */
+export const voiceUndoSchema = z.object({
+  logId: z.string().min(1).max(64),
 });
 
 /**

@@ -46,11 +46,19 @@ export interface IVoiceAuditLog extends Document {
   confidence: number;
   source: VoiceSource;
   confirmationStatus: VoiceConfirmation;
+  /** Whether this confirmed action has been undone (voice undo flow). */
+  undoStatus?: 'none' | 'undone';
+  /** Audit log id of the undo action that reversed this one (append-only trail). */
+  undoLogId?: string;
   items?: Array<{
     name: string;
     quantity: number;
     unit?: string;
     canonicalName?: string;
+    /** Stock BEFORE the confirmed action applied (captured at confirm time — the authoritative undo source). */
+    previousStock?: number;
+    /** Stock AFTER the confirmed action applied. */
+    newStock?: number;
   }>;
   /** Enhanced: which pipeline stage produced the final match */
   matchingMethod?: string;
@@ -135,12 +143,24 @@ const VoiceAuditLogSchema = new Schema<IVoiceAuditLog>(
       enum: ['pending', 'confirmed', 'rejected', 'clarified'],
       default: 'pending',
     },
+    undoStatus: {
+      type: String,
+      enum: ['none', 'undone'],
+      default: 'none',
+    },
+    undoLogId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     items: [
       {
         name: { type: String, required: true },
         quantity: { type: Number, required: true, min: 0 },
         unit: { type: String, trim: true },
         canonicalName: { type: String, trim: true },
+        previousStock: { type: Number, min: 0 },
+        newStock: { type: Number, min: 0 },
       },
     ],
     /** Enhanced: pipeline stage that produced the match */

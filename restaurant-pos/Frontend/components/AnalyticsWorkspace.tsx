@@ -82,13 +82,18 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
     }
   };
 
+  // Previous-period dates. Guarded: if a date input is cleared (''), date
+  // arithmetic yields Invalid Date → .toISOString() throws RangeError during
+  // render. Fall back to the current period so the UI never crashes.
   const previousStartDate = useMemo(() => {
+    if (!startDate || !endDate) return startDate || getTodayString();
     const rangeMs = new Date(endDate).getTime() - new Date(startDate).getTime();
     const prevStartTs = new Date(startDate).getTime() - rangeMs;
     return new Date(prevStartTs).toISOString().split('T')[0];
   }, [startDate, endDate]);
 
   const previousEndDate = useMemo(() => {
+    if (!startDate) return getTodayString();
     const prevTs = new Date(startDate).getTime() - 86400000;
     return new Date(prevTs).toISOString().split('T')[0];
   }, [startDate]);
@@ -131,7 +136,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           payments: p.data ?? null,
           orderTypes: ot.data ?? null,
           cashiers: c.data ?? null,
-          peakHours: ph.data ?? null,
+          peakHours: Array.isArray(ph.data) ? ph.data : (ph.data?.hourly ?? null),
           topProducts: tp.data ?? null,
           leastProducts: lp.data ?? null,
           categories: cat.data ?? null,
@@ -344,6 +349,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
 
   // Show date range label
   const getRangeLabel = () => {
+    if (!startDate || !endDate) return 'All Time';
     const days = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1;
     return `${startDate} → ${endDate} (${days} days)`;
   };
@@ -777,7 +783,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           <div className="flex items-center gap-2 mb-4">
             <Activity className="w-4 h-4 text-indigo-500" />
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Period vs Previous Period</h3>
-            <span className="text-[9px] text-gray-400 ml-auto">Current period vs previous {Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1} days</span>
+            <span className="text-[9px] text-gray-400 ml-auto">Current period vs previous {startDate && endDate ? Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1 : 0} days</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[10px]">

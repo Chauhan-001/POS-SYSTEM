@@ -1,12 +1,12 @@
 import { motion } from 'motion/react';
 import { Calendar, Clock, AlertTriangle, AlertCircle, Info, CheckCircle } from 'lucide-react';
-import { EXPIRY_ITEMS } from '../data';
 import { useNotify, useInventory } from '../InventoryManager';
 
-/** Build the expiry list from REAL item data (products with expiryDate) and
- *  fall back to the static demo rows only when no real expiry data exists. */
+/** Build the expiry list from REAL item data (products with expiryDate in
+ *  MongoDB). No demo fallback: a restaurant without expiry dates shows an
+ *  honest empty state instead of fabricated rows. */
 function buildExpiryItems(items: { name: string; batchNumber?: string; currentStock: number; unit: string; expiryDate?: string }[]) {
-  const real = items
+  return items
     .filter(i => i.expiryDate)
     .map(i => {
       const daysRemaining = Math.ceil((new Date(i.expiryDate!).getTime() - Date.now()) / 86400000);
@@ -21,7 +21,6 @@ function buildExpiryItems(items: { name: string; batchNumber?: string; currentSt
         suggestedAction: (daysRemaining < 0 ? 'discard' : daysRemaining <= 1 ? 'use_immediately' : daysRemaining <= 3 ? 'sale' : 'use_immediately') as any,
       };
     });
-  return real.length > 0 ? real : EXPIRY_ITEMS;
 }
 
 const timeGroups = [
@@ -78,6 +77,15 @@ export default function ExpiryManagement() {
           <p className="text-sm font-bold">All Items</p>
         </div>
         <div className="divide-y divide-[#e1e2ed]">
+          {expiryItems.length === 0 && (
+            <div className="p-10 text-center">
+              <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                <CheckCircle className="w-5 h-5 text-emerald-500" />
+              </div>
+              <p className="text-sm font-semibold text-gray-600">No expiry dates tracked</p>
+              <p className="text-xs text-gray-400 mt-1">Set an expiry date on any inventory item to see it here — synced from your database.</p>
+            </div>
+          )}
           {expiryItems.map(item => {
             const group = timeGroups.find(g => g.range(item.daysRemaining)) || timeGroups[timeGroups.length - 1];
             const action = actionLabels[item.suggestedAction] || actionLabels.discard;

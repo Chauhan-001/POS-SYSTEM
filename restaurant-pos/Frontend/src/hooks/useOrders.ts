@@ -8,7 +8,7 @@
 
 import { useCallback } from 'react';
 import type { Order, TableInfo, TakeawayOrder, CartItem, KOTType, KOTStatus, KOTRecord, TimelineEvent, TimelineEventType, Bill, Employee, Customer, SystemSettings } from '../types';
-import { setDBData, computeDailySales, buildActivityFeed } from '../data';
+import { setDBData, getDBData, computeDailySales, buildActivityFeed } from '../data';
 import * as api from '../api/client';
 import { debugWarn } from '../utils/debugLog';
 import { computeKOTDelta, mergeIntoSnapshot } from '../utils/kotDelta';
@@ -62,6 +62,38 @@ function createTimelineEvent(type: TimelineEventType, description: string, actor
     id: `te_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     timestamp: new Date().toISOString(), type, description, actor,
   };
+}
+
+/**
+ * Resolve the takeaway panel row linked to an order. Matches by the live
+ * `orderId` link first, then falls back to the shared `orderNumber` — legacy
+ * rows (created before the row→order link existed) carry the takeaway-orders
+ * doc id or null in `orderId`, and a server merge can transiently clobber it
+ * before the link push lands. The two docs always share the order-number
+ * series (one atomic counter), so the fallback is unambiguous.
+ */
+export function findLinkedTakeaway(
+  rows: TakeawayOrder[],
+  order: { id: string; orderNumber: number },
+): TakeawayOrder | undefined {
+  return rows.find(t => t.orderId === order.id || t.orderNumber === order.orderNumber);
+}
+
+/**
+ * Derive the order's lifecycle status from its KOT records so the order
+ * advances Preparing → Ready → Served in lock-step with the Kitchen Display.
+ * - all KOTs served        → 'Served'
+ * - any KOT Ready          → 'Ready'
+ * - any KOT Preparing      → 'Preparing'
+ * - otherwise (all Accepted) → keep the current status (New → Accepted).
+ */
+export function deriveOrderStatusFromKots(kots: KOTRecord[], fallback: Order['status']): Order['status'] {
+  if (!Array.isArray(kots) || kots.length === 0) return fallback;
+  const pending = kots.filter(k => k.status !== 'Served');
+  if (pending.length === 0) return 'Served';
+  if (kots.some(k => k.status === 'Ready')) return 'Ready';
+  if (kots.some(k => k.status === 'Preparing')) return 'Preparing';
+  return fallback;
 }
 
 interface OrdersConfig {
@@ -127,16 +159,41 @@ export function useOrders(config: OrdersConfig) {
     setActiveWorkspace,
   } = config;
 
-  const getNextOrderNumber = () => orders.length + 1001;
+  // ─── KOT output routing ───────────────────────────────────────
+  // Where a kitchen ticket goes when sent: 'print' → paper ticket only,
+  // 'kds' → kitchen display only, 'both' → both. Auto-print stays gated by
+  // the enableAutoPrintKOT module toggle (manual reprints always print).
+  const kotOutputMode: 'print' | 'kds' | 'both' = settings.kotOutputMode ?? 'both';
+  const kotShouldAutoPrint = (moduleSettings?.enableAutoPrintKOT ?? false) && (kotOutputMode === 'print' || kotOutputMode === 'both');
+  const kotDeliveryLabel = kotOutputMode === 'print' ? 'kitchen printer' : kotOutputMode === 'kds' ? 'kitchen display' : 'kitchen printer & display';
 
-  const handleCreateOrder = useCallback((type: Order['type'], tableId?: string) => {
+  const getNextOrderNumber = useCallback(async (): Promise<number> => {
+    // BACKEND CALLED — atomic Mongo counter guarantees a unique order number
+    // across all terminals (never repeats, never resets). When the backend is
+    // unreachable, fall back to a persisted local counter so offline creation
+    // still gets monotonic, ever-increasing numbers.
+    const serverNum = await api.fetchNextOrderNumber();
+    if (serverNum !== null && typeof serverNum === 'number') {
+      // Keep the local fallback roughly in sync so numbers keep advancing if
+      // the app goes offline mid-shift (same pattern as the invoice counter).
+      setDBData('pos_next_order_number', serverNum + 1);
+      return serverNum;
+    }
+    const maxLocal = [...orders, ...takeawayOrders].reduce((m, o: any) => Math.max(m, o.orderNumber || 0), 1000);
+    const stored = getDBData<number>('pos_next_order_number', maxLocal + 1);
+    const next = Math.max(maxLocal + 1, stored);
+    setDBData('pos_next_order_number', next + 1);
+    return next;
+  }, [orders, takeawayOrders]);
+
+  const handleCreateOrder = useCallback(async (type: Order['type'], tableId?: string): Promise<Order | null> => {
     const orderAlreadyActive = !!activeOrder && activeOrder.status !== 'Paid' && activeOrder.status !== 'Closed' && activeOrder.status !== 'Cancelled';
 
     // Shared creation routine — invoked directly when the cart is free, or
     // from the confirmation dialog when the user opts to discard the current
     // cart (which belongs to a different active order/table) and start fresh.
-    const createOrderNow = (): Order => {
-    const orderNumber = getNextOrderNumber();
+    const createOrderNow = async (): Promise<Order> => {
+    const orderNumber = await getNextOrderNumber();
     const now = new Date().toISOString();
     const orderId = `order_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
@@ -230,7 +287,7 @@ export function useOrders(config: OrdersConfig) {
       setCartItems([]);
     }
     return createOrderNow();
-  }, [orders, tables, currentEmployee, setOrders, setActiveOrder, setTables, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation]);
+  }, [orders, tables, currentEmployee, setOrders, setActiveOrder, setTables, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation, getNextOrderNumber]);
 
   const handleOpenOrder = useCallback((order: Order) => {
     const { cartItems: rebuiltCartItems, activeOrder: normalizedOrder } = buildOrderOpenState(order);
@@ -240,12 +297,100 @@ export function useOrders(config: OrdersConfig) {
     showToast(`Opened Order #${order.orderNumber}`, 'info');
   }, [setActiveOrder, setCartItems, setActiveWorkspace, showToast]);
 
-  const handleCreateTakeawayOrder = useCallback(() => {
+  /**
+   * Close the active order WITHOUT payment — the undo for an accidental table
+   * tap that created an order. Only allowed BEFORE the first KOT reaches the
+   * kitchen; once any KOT is sent the order is locked and cannot be closed
+   * (the kitchen is already cooking it). Frees the table and clears the cart.
+   */
+  const handleCloseOrder = useCallback(() => {
+    if (!activeOrder) { showToast('No active order to close', 'warning'); return; }
+    // Never close an already-terminal order — overwriting Paid/Closed/Cancelled
+    // with Cancelled would corrupt the bill history.
+    if (['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'].includes(activeOrder.status)) {
+      showToast('This order is already closed', 'warning');
+      return;
+    }
+    const kotSent = (activeOrder.kotRecords || []).length > 0;
+    if (kotSent) { showToast('Order already sent to kitchen — cannot close', 'warning'); return; }
+
+    const doClose = () => {
+      const orderId = activeOrder.id;
+      const tableId = activeOrder.tableId;
+      const now = new Date().toISOString();
+
+      // Mark the order cancelled with a timeline event.
+      const closedOrder: Order = {
+        ...activeOrder,
+        status: 'Cancelled',
+        updatedAt: now,
+        timeline: [...(activeOrder.timeline || []), createTimelineEvent('order_cancelled', `Order #${activeOrder.orderNumber} closed`, currentEmployee?.name)],
+      };
+      setOrders(orders.map(o => o.id === orderId ? closedOrder : o));
+      setActiveOrder(null);
+      setCartItems([]);
+      setCustomerPhone('');
+      setSearchedCustomer(null);
+      setAppliedReward(null);
+
+      // Free the table locally + server-side so other terminals see it open.
+      // Clear ALL occupancy metadata (same cleanup the tour performs) so the
+      // table card doesn't show a stale waiter/guest after the close.
+      if (tableId) {
+        setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'Available' as const, orderSince: undefined, orderId: undefined, guestCount: undefined, waiterId: undefined, waiterName: undefined } : t));
+        if (/^[a-fA-F0-9]{24}$/.test(tableId)) {
+          api.updateTable(tableId, { status: 'Available' }).catch(err => debugWarn('useOrders', 'updateTable (available on close) failed:', err));
+        }
+      }
+
+      // Clean up any linked takeaway panel row so a ghost 'Preparing' entry
+      // doesn't linger when a takeaway order is closed before its KOT.
+      // Match by orderId AND orderNumber so legacy rows (whose orderId still
+      // points at the takeaway doc id) are cleaned up too.
+      if (activeOrder.type === 'Takeaway' && takeawayOrders.length > 0) {
+        const linked = takeawayOrders.filter(t => t.orderId === orderId || t.orderNumber === activeOrder.orderNumber);
+        if (linked.length > 0) {
+          setTakeawayOrders(prev => prev.filter(t => !linked.some(l => l.id === t.id)));
+          linked.forEach(t => {
+            if (/^[a-fA-F0-9]{24}$/.test(t.id)) {
+              api.deleteTakeawayOrder(t.id).catch(err => debugWarn('useOrders', 'deleteTakeawayOrder (close) failed:', err));
+            }
+          });
+        }
+      }
+
+      // BACKEND CALLED — sync the cancelled order (status change also triggers
+      // server-side table reconciliation since Cancelled is terminal).
+      if (/^[a-fA-F0-9]{24}$/.test(orderId)) {
+        api.updateOrder(orderId, closedOrder).catch(err => debugWarn('useOrders', 'updateOrder (close) failed:', err));
+      }
+
+      showToast(`Order #${activeOrder.orderNumber} closed`, 'success');
+      // Redirect back to the Orders (floor plan / table view) page — the screen
+      // the user came from when they tapped the table. Same behaviour as after
+      // sending a KOT; otherwise the user is stranded on a Billing screen with
+      // no active order and the layout looks broken.
+      setActiveWorkspace('Orders');
+    };
+
+    if (askConfirmation) {
+      const tableNum = activeOrder.tableNumber ?? (activeOrder.tableId ? tables.find(t => t.id === activeOrder.tableId || t.orderId === activeOrder.id)?.number : undefined);
+      askConfirmation(
+        'Close this order?',
+        `Order #${activeOrder.orderNumber}${tableNum != null ? ` (Table #${tableNum})` : ''} will be closed and the table freed. Any items in the cart will be discarded. This cannot be undone.`,
+        doClose,
+      );
+    } else {
+      doClose();
+    }
+  }, [activeOrder, orders, tables, takeawayOrders, setTakeawayOrders, currentEmployee, setOrders, setActiveOrder, setTables, setCartItems, setCustomerPhone, setSearchedCustomer, setAppliedReward, showToast, askConfirmation, setActiveWorkspace]);
+
+  const handleCreateTakeawayOrder = useCallback(async (): Promise<Order | null> => {
     const orderAlreadyActive = !!activeOrder && activeOrder.status !== 'Paid' && activeOrder.status !== 'Closed' && activeOrder.status !== 'Cancelled';
 
     // Shared creation routine — same pattern as handleCreateOrder.
-    const createTakeawayNow = (): Order => {
-    const orderNumber = getNextOrderNumber();
+    const createTakeawayNow = async (): Promise<Order> => {
+    const orderNumber = await getNextOrderNumber();
     const now = new Date().toISOString();
     const newOrder: Order = {
       id: `order_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -266,21 +411,15 @@ export function useOrders(config: OrdersConfig) {
     setOrderType('Takeaway');
     setPaymentMethod('Cash');
     setSplitDetails({ cashAmount: 0, cardAmount: 0, upiAmount: 0, walletAmount: 0 });
-    // BACKEND CALLED — POST takeaway order to cloud
-    api.createOrder(newOrder)
-      .then((created: any) => {
-        // Swap the temp local id for the server _id so later updates (KOT, Paid)
-        // target the real Mongo id instead of 400ing on an invalid ObjectId.
-        const serverId = created?._id || created?.id;
-        if (serverId && serverId !== newOrder.id) {
-          setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, id: serverId } : o));
-          setActiveOrder(prev => (prev && prev.id === newOrder.id) ? { ...prev, id: serverId } : prev);
-        }
-      })
-      .catch(err => debugWarn('useOrders', 'createOrder failed:', err));
-    // BACKEND CALLED — also track the row in /api/takeaway-orders so the
-    // Takeaway panel shows it immediately. The local temp id is swapped for the
-    // server _id on success so the next merge doesn't duplicate it.
+    // BACKEND CALLED — POST takeaway order to cloud AND track the row in
+    // /api/takeaway-orders so the Takeaway panel shows it immediately. Both
+    // creates resolve independently; once BOTH have, the panel row is linked to
+    // the REAL order id (the Mongo _id of the /orders doc — NOT the takeaway
+    // doc id) so:
+    //   1. clicking the takeaway card opens the right order in billing,
+    //   2. handleCloseOrder can find + remove the linked row,
+    //   3. the backend's OrderService status→takeaway sync (Preparing → Ready
+    //      → Collected → Completed) can follow the order lifecycle.
     const panelOrder: TakeawayOrder = {
       id: `tw_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       orderId: newOrder.id,
@@ -294,21 +433,43 @@ export function useOrders(config: OrdersConfig) {
       elapsedTime: '',
     };
     setTakeawayOrders((prev: TakeawayOrder[]) => [panelOrder, ...prev]);
-    api.createTakeawayOrder({
+    const orderCreate = api.createOrder(newOrder);
+    const takeawayCreate = api.createTakeawayOrder({
       orderNumber,
       customerName: 'Guest',
       amount: 0,
       status: 'Preparing',
       paymentStatus: 'Pending',
       items: [],
-    }).then((created: any) => {
-      const serverId = created?._id || created?.id;
-      if (serverId && serverId !== panelOrder.id) {
-        setTakeawayOrders((prev: TakeawayOrder[]) =>
-          prev.map(t => t.id === panelOrder.id ? { ...t, id: serverId, orderId: serverId } : t)
-        );
+    });
+    Promise.allSettled([orderCreate, takeawayCreate]).then(([oRes, tRes]) => {
+      if (oRes.status === 'rejected') debugWarn('useOrders', 'createOrder failed:', oRes.reason);
+      if (tRes.status === 'rejected') debugWarn('useOrders', 'createTakeawayOrder failed:', tRes.reason);
+      // Swap the temp local ids for the server _ids so later updates (KOT,
+      // Paid) target the real Mongo ids instead of 400ing on invalid ObjectIds.
+      const orderServerId = oRes.status === 'fulfilled' ? (oRes.value?._id || oRes.value?.id) : undefined;
+      const twServerId = tRes.status === 'fulfilled' ? (tRes.value?._id || tRes.value?.id) : undefined;
+      if (orderServerId && orderServerId !== newOrder.id) {
+        setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, id: orderServerId } : o));
+        setActiveOrder(prev => (prev && prev.id === newOrder.id) ? { ...prev, id: orderServerId } : prev);
       }
-    }).catch(err => debugWarn('useOrders', 'createTakeawayOrder failed:', err));
+      // Keep the panel row pointing at the ORDER id (never the takeaway id).
+      setTakeawayOrders((prev: TakeawayOrder[]) =>
+        prev.map(t => t.id === panelOrder.id
+          ? { ...t, id: twServerId || t.id, orderId: orderServerId || t.orderId }
+          : t)
+      );
+      // Server-side link so OrderService.update can sync statuses. Only when
+      // both ids are Mongo ObjectIds (i.e. online); offline-created rows keep
+      // temp ids and the link is established on the queued create replay.
+      if (
+        orderServerId && /^[a-fA-F0-9]{24}$/.test(orderServerId) &&
+        twServerId && /^[a-fA-F0-9]{24}$/.test(twServerId)
+      ) {
+        api.updateTakeawayOrder(twServerId, { orderId: orderServerId } as any)
+          .catch(err => debugWarn('useOrders', 'link takeaway order failed:', err));
+      }
+    });
     setActiveWorkspace('Billing');
     showToast(`Takeaway Order #${orderNumber} created`, 'success');
     return newOrder;
@@ -335,7 +496,7 @@ export function useOrders(config: OrdersConfig) {
       setCartItems([]);
     }
     return createTakeawayNow();
-  }, [orders, currentEmployee, setOrders, setActiveOrder, setTakeawayOrders, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation]);
+  }, [orders, currentEmployee, setOrders, setActiveOrder, setTakeawayOrders, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation, getNextOrderNumber]);
 
   const handleAddTable = useCallback((table: Omit<TableInfo, 'id'>) => {
     const newTable: TableInfo = { ...table, id: `table_${Date.now()}_${Math.random().toString(36).substring(2, 9)}` };
@@ -446,7 +607,7 @@ export function useOrders(config: OrdersConfig) {
       status: type === 'Reprint' && activeOrder.kotRecords.length > 0
         ? activeOrder.kotRecords[activeOrder.kotRecords.length - 1].status
         : 'Accepted',
-      items: itemsForKOT, printedAt: new Date().toLocaleTimeString(),
+      items: itemsForKOT, printedAt: new Date().toISOString(),
       printedBy: currentEmployee?.name || 'System',
     };
     const timelineType: TimelineEventType = type === 'Reprint' ? 'kot_reprint' :
@@ -491,8 +652,8 @@ export function useOrders(config: OrdersConfig) {
     // Paper print is local (window.print) and works offline even when the ticket
     // can't reach a remote kitchen display. Gated by the enableAutoPrintKOT setting.
     setTimeout(() => {
-      if (moduleSettings?.enableAutoPrintKOT) printKOT(updated, newKOT, settings);
-      showToast(`KOT #${kotNumber} sent to kitchen printer`, 'success');
+      if (kotShouldAutoPrint) printKOT(updated, newKOT, settings);
+      showToast(`KOT #${kotNumber} sent to ${kotDeliveryLabel}`, 'success');
     }, 500);
   }, [activeOrder, cartItems, currentEmployee, orders, settings, moduleSettings, setOrders, setActiveOrder, setTables, setCartItems, setKotOrder, setIsKOTOpen, setActiveWorkspace, showToast]);
 
@@ -503,7 +664,7 @@ export function useOrders(config: OrdersConfig) {
     const newKOT: KOTRecord = {
       id: `kot_${Date.now()}`, kotNumber, type,
       status: 'Accepted',
-      items: pendingItems, printedAt: new Date().toLocaleTimeString(),
+      items: pendingItems, printedAt: new Date().toISOString(),
       printedBy: currentEmployee?.name || 'System',
     };
     const timelineType: TimelineEventType = type === 'Reprint' ? 'kot_reprint' :
@@ -546,8 +707,8 @@ export function useOrders(config: OrdersConfig) {
     // Return automatically to the Order Dashboard after sending the KOT.
     setActiveWorkspace('Orders');
     setTimeout(() => {
-      if (moduleSettings?.enableAutoPrintKOT) printKOT(updated, newKOT, settings);
-      showToast(`KOT #${kotNumber} sent to kitchen printer`, 'success');
+      if (kotShouldAutoPrint) printKOT(updated, newKOT, settings);
+      showToast(`KOT #${kotNumber} sent to ${kotDeliveryLabel}`, 'success');
     }, 500);
   }, [activeOrder, cartItems, currentEmployee, orders, settings, moduleSettings, setOrders, setActiveOrder, setTables, setCartItems, setKotOrder, setIsKOTOpen, setIsKOTPreviewOpen, setActiveWorkspace, showToast]);
 
@@ -558,12 +719,13 @@ export function useOrders(config: OrdersConfig) {
       const newKotRecords = order.kotRecords.map(k =>
         k.id === kotId ? { ...k, status: newStatus } : k
       );
-      const allServed = newKotRecords.every(k => k.status === 'Served');
       const updated: Order = {
         ...order,
         kotRecords: newKotRecords,
         updatedAt: new Date().toISOString(),
-        status: allServed ? 'Served' : order.status,
+        // Advance the order lifecycle in lock-step with the KDS (Preparing →
+        // Ready → Served) instead of leaving it stuck on Accepted.
+        status: deriveOrderStatusFromKots(newKotRecords, order.status),
       };
       api.updateOrder(orderId, updated).catch(err => debugWarn('useOrders', 'updateOrder (KOT status) failed:', err));
       return prev.map(o => o.id === orderId ? updated : o);
@@ -573,9 +735,36 @@ export function useOrders(config: OrdersConfig) {
       const newKotRecords = prev.kotRecords.map(k =>
         k.id === kotId ? { ...k, status: newStatus } : k
       );
-      const allServed = newKotRecords.every(k => k.status === 'Served');
-      return { ...prev, kotRecords: newKotRecords, updatedAt: new Date().toISOString(), status: allServed ? 'Served' : prev.status };
+      return { ...prev, kotRecords: newKotRecords, updatedAt: new Date().toISOString(), status: deriveOrderStatusFromKots(newKotRecords, prev.status) };
     });
+    // Keep the linked takeaway panel row in sync with the order lifecycle so
+    // the Takeaway tab reflects KDS progress immediately (the server does the
+    // same via OrderService.update, but the local row only refreshes on the
+    // 30s poll otherwise).
+    const syncedOrder = orders.find(o => o.id === orderId);
+    if (syncedOrder?.type === 'Takeaway') {
+      const derived = deriveOrderStatusFromKots(
+        syncedOrder.kotRecords.map(k => k.id === kotId ? { ...k, status: newStatus } : k),
+        syncedOrder.status,
+      );
+      const takeawayStatusMap: Partial<Record<string, TakeawayOrder['status']>> = {
+        Preparing: 'Preparing',
+        Ready: 'Ready',
+        Served: 'Collected',
+      };
+      const nextTwStatus = takeawayStatusMap[derived];
+      if (nextTwStatus) {
+        setTakeawayOrders((prev: TakeawayOrder[]) => {
+          // No-op when the linked row is absent (avoid creating a stale row).
+          if (!findLinkedTakeaway(prev, { id: orderId, orderNumber: syncedOrder.orderNumber })) return prev;
+          return prev.map(t =>
+            (t.orderId === orderId || t.orderNumber === syncedOrder.orderNumber)
+              ? { ...t, status: nextTwStatus }
+              : t
+          );
+        });
+      }
+    }
     // Update table status based on KOT advancement + sync to server.
     // Match by the order's tableId OR the table.orderId (which mirrors the real
     // order id) so the table card reliably reflects Ready/Served.
@@ -592,7 +781,7 @@ export function useOrders(config: OrdersConfig) {
         api.updateTable(tableServerId, { status: tableStatus }).catch(err => debugWarn('useOrders', 'updateTable (KOT status) failed:', err));
       }
     }
-  }, [orders, setOrders, setActiveOrder, setTables]);
+  }, [orders, setOrders, setActiveOrder, setTables, setTakeawayOrders]);
 
   const handlePrintPaperKOT = useCallback((kotId: string) => {
     // Manual reprint of an existing KOT — local paper print, works offline.
@@ -612,6 +801,7 @@ export function useOrders(config: OrdersConfig) {
     activeOrder, setActiveOrder,
     handleCreateOrder,
     handleOpenOrder,
+    handleCloseOrder,
     handleCreateTakeawayOrder,
     handlePrintKOT,
     handlePrintPaperKOT,

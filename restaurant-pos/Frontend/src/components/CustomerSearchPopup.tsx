@@ -49,7 +49,7 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
               placeholder="Search by name or phone..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
               autoFocus
             />
           </div>
@@ -72,7 +72,7 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
               >
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-[#f3f3fe] flex items-center justify-center shrink-0">
-                    <User className="w-4 h-4 text-[#004ac6]" />
+                    <User className="w-4 h-4 text-[var(--brand-color)]" />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-gray-900">{cust.name}</p>
@@ -84,7 +84,7 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
                 </div>
                 <div className="text-right flex items-center gap-2">
                   <div>
-                    <p className="text-[10px] font-bold text-[#004ac6]">{cust.points} pts</p>
+                    <p className="text-[10px] font-bold text-[var(--brand-color)]">{cust.points} pts</p>
                     <p className="text-[9px] text-gray-400">{cust.visits} visits</p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-gray-300" />

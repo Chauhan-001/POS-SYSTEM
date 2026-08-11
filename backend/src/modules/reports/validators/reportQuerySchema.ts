@@ -20,6 +20,11 @@ export const paginatedReportSchema = dateRangeSchema.extend({
 
 export const reportQuerySchema = dateRangeSchema;
 
+/** Expiry report accepts a `days` lookahead window (default 30). */
+export const inventoryExpiryQuerySchema = dateRangeSchema.extend({
+  days: z.coerce.number().int().min(1).max(365).optional(),
+});
+
 export const productReportQuerySchema = dateRangeSchema.extend({
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });

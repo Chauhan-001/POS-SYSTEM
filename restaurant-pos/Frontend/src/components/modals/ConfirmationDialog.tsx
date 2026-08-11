@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,7 +25,7 @@ export default function ConfirmationDialog({ confirmState, onClose }: Confirmati
         <p className="text-sm text-gray-600 mb-6">{confirmState.message}</p>
         <div className="flex gap-3 justify-end">
           <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 cursor-pointer">Cancel</button>
-          <button onClick={confirmState.onConfirm} className="px-4 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm">Confirm</button>
+          <button onClick={confirmState.onConfirm} className="px-4 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm">Confirm</button>
         </div>
       </div>
     </div>

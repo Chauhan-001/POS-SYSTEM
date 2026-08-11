@@ -21,7 +21,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   RefreshCw, DollarSign, Zap, BarChart3, Mic,
-  Activity, Clock, Server, CheckCircle, XCircle, HelpCircle,
+  Activity, Clock, Server, CheckCircle, XCircle, HelpCircle, KeyRound, ShieldAlert,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -37,6 +37,7 @@ import {
   getCostTimeSeries,
   getErrorSummary,
   getLatencySummary,
+  getAiQuota,
 } from '../api/aiUsageAnalytics'
 import { formatNumber, formatCurrency } from '../utils/format'
 
@@ -79,6 +80,99 @@ function TableShell({ title, children }: { title: string; children: React.ReactN
   )
 }
 
+function QuotaBar({ label, used, limit, unit }: { label: string; used: number | null; limit: number; unit: string }) {
+  // Only render a meaningful bar when the provider reported a remaining value;
+  // otherwise (e.g. Groq omits the per-day header when it isn't the binding
+  // constraint) show the window as unconstrained instead of a fake 100%.
+  if (used === null || limit <= 0) {
+    return (
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-semibold text-surface-600 dark:text-surface-300">{label}</span>
+        <span className="font-mono text-surface-400">not reported / unconstrained</span>
+      </div>
+    )
+  }
+  const pct = Math.min(100, Math.round((used / limit) * 100))
+  const tone = pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-amber-500' : 'bg-success'
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-semibold text-surface-600 dark:text-surface-300">{label}</span>
+        <span className="font-mono text-surface-500 dark:text-surface-400">
+          {formatNumber(used)} / {formatNumber(limit)} {unit} · {pct}%
+        </span>
+      </div>
+      <div className="h-1.5 w-full bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${Math.max(pct, 2)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function QuotaSection({ quota }: { quota: any }) {
+  const keys: any[] = quota?.keys || []
+  const hasData = keys.length > 0
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <span className="inline-flex items-center gap-2"><KeyRound size={18} /> API Key Quota</span>
+        </CardTitle>
+      </CardHeader>
+      <div className="px-4 pb-4">
+        {!quota?.enabled ? (
+          <p className="py-6 text-center text-sm text-surface-400">AI is not configured — no API keys to monitor.</p>
+        ) : !hasData ? (
+          <div className="flex items-start gap-3 py-4 text-sm text-surface-500 dark:text-surface-400">
+            <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+            <p>
+              No quota snapshots yet. The dashboard captures the provider's rate-limit headers on the first
+              live AI call — make an AI request (e.g. open the POS inventory dashboard) and refresh.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {keys.map((k: any) => {
+              const dayWindow = (k.windows || []).find((w: any) => w.window === 'per-day')
+              const minWindow = (k.windows || []).find((w: any) => w.window === 'per-minute')
+              return (
+                <div key={k.label} className="rounded-xl border border-surface-200 dark:border-surface-700 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-surface-900 dark:text-surface-100">{k.label}</span>
+                      {k.isPrimary
+                        ? <Badge variant="info" className="text-[9px]">Primary</Badge>
+                        : <Badge variant="neutral" className="text-[9px]">Fallback</Badge>}
+                      {k.parked && <Badge variant="danger" className="text-[9px]">429 cooldown</Badge>}
+                      {!k.parked && (k.rateLimitHits ?? 0) > 0 && <Badge variant="warning" className="text-[9px]">{k.rateLimitHits}× 429</Badge>}
+                    </div>
+                    <span className="text-[10px] text-surface-400">{k.model}</span>
+                  </div>
+                  {dayWindow ? (
+                    <QuotaBar label="Daily tokens" used={dayWindow.remaining != null ? dayWindow.limit - dayWindow.remaining : null} limit={dayWindow.limit} unit="tokens" />
+                  ) : (
+                    <p className="text-[11px] text-surface-400">Runtime tokens: {formatNumber(k.tokensUsedRuntime ?? 0)}</p>
+                  )}
+                  {minWindow && minWindow.limit > 0 && (
+                    <QuotaBar label="Per-minute tokens" used={minWindow.remaining != null ? minWindow.limit - minWindow.remaining : null} limit={minWindow.limit} unit="tokens" />
+                  )}
+                  <div className="flex items-center justify-between text-[10px] text-surface-400 pt-1">
+                    <span>{k.rateLimitHits ?? 0} rate-limit hits{k.lastRateLimitAt ? ` · last ${new Date(k.lastRateLimitAt).toLocaleTimeString()}` : ''}</span>
+                    <span>{k.lastUsedAt ? `used ${new Date(k.lastUsedAt).toLocaleTimeString()}` : 'not used yet'}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <p className="mt-3 text-[10px] text-surface-400">
+          Live snapshots from the provider's rate-limit headers; keys are masked server-side. Refreshes every 30s.
+        </p>
+      </div>
+    </Card>
+  )
+}
+
 function useAnalytics<T>(key: string, fn: () => Promise<T>, filter: any) {
   return useQuery({
     queryKey: [key, filter],
@@ -113,6 +207,7 @@ export default function AIUsage() {
   const costs = useAnalytics('ai-costs', () => getCostTimeSeries({ ...f, groupBy: 'day' }), f)
   const errors = useAnalytics('ai-errors', () => getErrorSummary(f), f)
   const latency = useAnalytics('ai-latency', () => getLatencySummary(f), f)
+  const quota = useAnalytics('ai-quota', () => getAiQuota(), {})
 
   const error = dash.error || features.error || models.error
   const loading = dash.isLoading || features.isLoading || models.isLoading
@@ -162,7 +257,7 @@ export default function AIUsage() {
             placeholder="Model"
             className="h-10 w-32 px-3 text-sm rounded-lg border border-surface-300 bg-white dark:border-surface-600 dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
-          <Button variant="outline" size="sm" onClick={() => { dash.refetch(); features.refetch(); models.refetch(); tokens.refetch(); costs.refetch(); }}>
+          <Button variant="outline" size="sm" onClick={() => { dash.refetch(); features.refetch(); models.refetch(); tokens.refetch(); costs.refetch(); quota.refetch(); }}>
             <RefreshCw size={15} /> Refresh
           </Button>
         </div>
@@ -174,6 +269,8 @@ export default function AIUsage() {
         <StatCard label="Total Cost" value={loading ? '…' : formatCurrency(d?.totalCost ?? 0)} sub={`${(d?.cachedRate ?? 0).toFixed(1)}% cached`} icon={DollarSign} tone="text-amber-600 bg-amber-50 dark:bg-amber-900/20" />
         <StatCard label="Avg Latency" value={loading ? '…' : `${Math.round(d?.averageLatency ?? 0)}ms`} sub={`${d?.activeModels ?? 0} models`} icon={Zap} tone="text-violet-600 bg-violet-50 dark:bg-violet-900/20" />
       </div>
+
+      <QuotaSection quota={envelope(quota.data)} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <TableShell title="Feature usage">

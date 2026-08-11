@@ -76,7 +76,7 @@ function ProductCard({
   product, categoryColor, showImages,
   showItemCode, currencySymbol, onAddProduct,
 }: ProductCardProps) {
-  const catTextCls = CATEGORY_TEXT_COLORS[product.category] || 'text-gray-600 bg-gray-50 border-gray-200';
+  const catTextCls = CATEGORY_TEXT_COLORS[product.category] || 'text-gray-700 bg-gray-100 border-gray-300';
 
   if (!showImages) {
     // ===== NO-IMAGE MODE: tall vertical card =====
@@ -85,34 +85,34 @@ function ProductCard({
       <div
         key={product.id}
         data-tour="product-card"
-        className="bg-white rounded-xl border border-[#e1e2ed] hover:border-[#004ac6]/40 hover:shadow-md transition-all cursor-pointer group relative flex flex-col overflow-hidden min-h-[120px]"
+        className="bg-white rounded-xl border border-gray-200 hover:border-[var(--brand-color)] hover:shadow-lg transition-all cursor-pointer group relative flex flex-col overflow-hidden min-h-[128px] p-3.5 select-none"
         onClick={() => onAddProduct(product, undefined)}
       >
-        <div className="absolute left-0 top-0 bottom-0 w-[5px]" style={{ backgroundColor: darkBarColor }} />
-        <div className="pl-[14px] p-3 flex-1 flex flex-col justify-between gap-2">
+        <div className="absolute left-0 top-0 bottom-0 w-[6px]" style={{ backgroundColor: darkBarColor }} />
+        <div className="pl-2 flex-1 flex flex-col justify-between gap-2">
           <div className="flex items-start justify-between gap-1.5">
             <div className="flex-1 min-w-0">
-              <h4 className="text-[13px] font-bold text-[#191b23] leading-tight truncate">{product.name}</h4>
+              <h4 className="text-sm font-extrabold text-gray-900 leading-snug truncate">{product.name}</h4>
               {showItemCode && (
-                <p className="text-[8px] text-gray-400 font-mono mt-0.5">#{product.code}</p>
+                <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{product.code}</p>
               )}
-              <span className={`inline-block mt-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${catTextCls}`}>
+              <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${catTextCls}`}>
                 {product.category}
               </span>
             </div>
             {product.favorite && (
-              <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0 mt-0.5" />
+              <Star className="w-4 h-4 text-amber-500 fill-amber-400 shrink-0 mt-0.5" />
             )}
           </div>
-          <div className="flex items-center justify-between gap-1.5">
-            <p className="text-[13px] font-mono font-bold text-[#004ac6]">
+          <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-gray-100">
+            <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
               {currencySymbol}{product.price.toFixed(2)}
               {product.variants && product.variants.length > 0 && (
-                <span className="text-[9px] text-gray-400 font-normal ml-1">+variants</span>
+                <span className="text-[10px] text-gray-500 font-normal ml-1">+variants</span>
               )}
             </p>
-            <div className="w-7 h-7 rounded-full bg-[#004ac6] text-white flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity shadow-sm shrink-0">
-              <Plus className="w-3.5 h-3.5" />
+            <div className="w-9 h-9 rounded-full bg-[var(--brand-color)] text-white flex items-center justify-center shadow-md group-hover:scale-110 active:scale-95 transition-all shrink-0">
+              <Plus className="w-5 h-5 stroke-[2.5]" />
             </div>
           </div>
         </div>
@@ -125,34 +125,36 @@ function ProductCard({
     <div
       key={product.id}
       data-tour="product-card"
-      className="bg-white rounded-lg border border-[#e1e2ed] hover:border-[#004ac6]/40 hover:shadow-sm transition-all cursor-pointer group relative flex flex-col overflow-hidden"
+      className="bg-white rounded-xl border border-gray-200 hover:border-[var(--brand-color)] hover:shadow-lg transition-all cursor-pointer group relative flex flex-col overflow-hidden select-none"
       onClick={() => onAddProduct(product, undefined)}
     >
-      <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: categoryColor }} />
-      <div className="w-full h-[72px] rounded-t-lg overflow-hidden bg-gray-50 shrink-0">
-        <img src={product.image} alt={product.name} className="w-full h-full object-cover" loading="lazy"
+      <div className="absolute left-0 top-0 bottom-0 w-1.5 z-10" style={{ backgroundColor: categoryColor }} />
+      <div className="w-full h-24 rounded-t-xl overflow-hidden bg-gray-100 shrink-0 relative">
+        <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy"
           onError={(e) => { (e.currentTarget).style.display = 'none'; }}
         />
+        {product.favorite && (
+          <div className="absolute top-2 right-2 bg-white/90 backdrop-blur-sm p-1 rounded-full shadow-sm">
+            <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+          </div>
+        )}
       </div>
-      <div className="p-2.5 flex-1 flex flex-col justify-between gap-1">
-        <div className="flex items-start justify-between gap-1.5">
-          <div className="flex-1 min-w-0">
-            <h4 className="text-[11px] font-bold text-[#191b23] truncate leading-tight">{product.name}</h4>
-            {showItemCode && (
-              <p className="text-[7px] text-gray-400 font-mono mt-[1px]">#{product.code}</p>
-            )}
-            <span className={`inline-block mt-0.5 text-[8px] font-medium px-1 py-0.5 rounded-full border ${catTextCls}`}>
+      <div className="p-3 flex-1 flex flex-col justify-between gap-2">
+        <div>
+          <h4 className="text-sm font-extrabold text-gray-900 truncate leading-snug">{product.name}</h4>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${catTextCls}`}>
               {product.category}
             </span>
+            {showItemCode && (
+              <span className="text-[10px] text-gray-400 font-mono">#{product.code}</span>
+            )}
           </div>
-          {product.favorite && (
-            <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400 shrink-0 absolute top-1.5 right-1.5" />
-          )}
         </div>
-        <div className="flex items-center justify-between gap-1">
-          <p className="text-[11px] font-mono font-bold text-[#004ac6]">{currencySymbol}{product.price.toFixed(2)}</p>
-          <div className="w-6 h-6 rounded-full bg-[#004ac6] text-white flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity shadow-sm shrink-0">
-            <Plus className="w-3.5 h-3.5" />
+        <div className="flex items-center justify-between gap-1 mt-1 pt-2 border-t border-gray-100">
+          <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">{currencySymbol}{product.price.toFixed(2)}</p>
+          <div className="w-9 h-9 rounded-full bg-[var(--brand-color)] text-white flex items-center justify-center shadow-md group-hover:scale-110 active:scale-95 transition-all shrink-0">
+            <Plus className="w-5 h-5 stroke-[2.5]" />
           </div>
         </div>
       </div>

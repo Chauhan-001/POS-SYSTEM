@@ -16,6 +16,10 @@ export const createTakeawayOrderSchema = z.object({
   amount: z.number().min(0),
   paymentStatus: paymentStatus.optional(),
   branchId: objectId.optional(),
+  /** Link to the POS Order this takeaway row tracks. Lets the server sync the
+   * takeaway status (Preparing → Ready → Collected → Completed) from the order
+   * lifecycle in OrderService.update. */
+  orderId: objectId.optional(),
   items: z.array(takeawayItemSchema).max(500).optional(),
 }).strict();
 
@@ -30,6 +34,6 @@ export const takeawayOrderParamsSchema = z.object({
   id: objectId,
 }).strict();
 
-export const nextNumberQuerySchema = z.object({
+export const takeawayNextNumberQuerySchema = z.object({
   branchId: objectId,
 }).strict();

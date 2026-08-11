@@ -126,14 +126,14 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
                     onClick={() => selectPosition(role)}
                     className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-2 py-3 transition-all cursor-pointer ${
                       selected
-                        ? 'border-[#004ac6] bg-blue-50 shadow-md'
+                        ? 'border-[var(--brand-color)] bg-blue-50 shadow-md'
                         : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
                     }`}
                   >
                     <span className={`p-2 rounded-lg border ${color}`}>
                       <Icon className="w-5 h-5" />
                     </span>
-                    <span className={`text-[11px] font-bold ${selected ? 'text-[#004ac6]' : 'text-gray-700'}`}>{label}</span>
+                    <span className={`text-[11px] font-bold ${selected ? 'text-[var(--brand-color)]' : 'text-gray-700'}`}>{label}</span>
                     <span className="text-[9px] text-gray-400">{count} active</span>
                   </button>
                 );
@@ -168,10 +168,10 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
                 <div
                   key={i}
                   className={`w-11 h-12 rounded-xl border-2 flex items-center justify-center transition-all ${
-                    pin.length > i ? 'border-[#004ac6] bg-blue-50' : 'border-gray-200 bg-white'
+                    pin.length > i ? 'border-[var(--brand-color)] bg-blue-50' : 'border-gray-200 bg-white'
                   }`}
                 >
-                  <span className="w-3 h-3 rounded-full bg-[#004ac6]" />
+                  <span className="w-3 h-3 rounded-full bg-[var(--brand-color)]" />
                 </div>
               ))}
             </div>
@@ -215,7 +215,7 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
             <button
               onClick={() => verify(pin)}
               disabled={!position || pin.length !== 4}
-              className="flex-1 py-2.5 rounded-lg bg-[#004ac6] hover:bg-[#003ea8] disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer"
+              className="flex-1 py-2.5 rounded-lg bg-[var(--brand-color)] hover:bg-[#003ea8] disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer"
             >
               Sign In
             </button>

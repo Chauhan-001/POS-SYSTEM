@@ -22,6 +22,7 @@ import { authService } from '../services';
 import { resetAccountBackoff } from '../middleware/rateLimiter';
 import { DeviceBlockedError, DeviceLimitReachedError } from '../services/devicePolicyService';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware';
+import { auditLogRepo } from '../repositories';
 
 function clientIp(req: Request): string | undefined {
   const fwd = req.headers['x-forwarded-for'];
@@ -180,6 +181,38 @@ export async function registerOwner(req: Request, res: Response): Promise<void> 
       return;
     }
     console.error('[AuthController] registerOwner error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * POST /api/auth/generate-credentials — mint a unique User ID + hashed password
+ * for a staff member (Owner role only). Returns the plaintext userId/password
+ * exactly once so it can be handed to the staff member; only the hash persists.
+ */
+export async function generateCredentials(req: Request, res: Response): Promise<void> {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const { name, role, avoid } = req.body || {};
+
+    const generated = await authService.generateStaffCredentials(
+      String(name || 'staff').slice(0, 40),
+      ['Owner', 'Manager', 'Cashier'].includes(role) ? role : 'Cashier',
+      Array.isArray(avoid) ? avoid.map(String) : undefined,
+    );
+
+    await auditLogRepo.create({
+      action: 'CREDENTIALS_GENERATED',
+      entityType: 'employee',
+      performedBy: authReq.user?.name || 'unknown',
+      performedById: authReq.user?.userId,
+      restaurantId: authReq.user?.restaurantId,
+      details: { role: generated.role, userId: generated.userId, name: String(name || 'staff').slice(0, 40) },
+    } as any);
+
+    res.json({ userId: generated.userId, password: generated.password, passwordHash: generated.passwordHash, role: generated.role });
+  } catch (error) {
+    console.error('[AuthController] generateCredentials error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

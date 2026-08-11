@@ -6,14 +6,16 @@
  *
  * Route prefix: /api/qr-ordering
  *
- * All endpoints require authentication and the 'qr_ordering' feature flag
- * Rate limiting applies to prevent abuse
+ * All endpoints require authentication. Note: the 'qr_ordering' plan feature
+ * gate was removed — customer self-ordering now flows through the public-store
+ * module (no subscription gate, same as online ordering) and the POS-side
+ * session/request management must work for every restaurant with the module
+ * enabled. Rate limiting applies to prevent abuse.
  */
 
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../../middleware/authMiddleware';
-import { requireFeature } from '../../../middleware/subscriptionMiddleware';
 import { validate } from '../../../middleware/validate';
 import {
   createSession,
@@ -96,7 +98,6 @@ const router = Router();
 router.post(
   '/sessions',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ body: sessionCreateSchema }),
   createSession
 );
@@ -110,7 +111,6 @@ router.post(
 router.get(
   '/sessions/expired',
   requireAuth,
-  requireFeature('qr_ordering'),
   getExpiredSessions
 );
 
@@ -121,7 +121,6 @@ router.get(
 router.get(
   '/sessions/:sessionId',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: sessionIdSchema }),
   getSession
 );
@@ -133,7 +132,6 @@ router.get(
 router.put(
   '/sessions/:sessionId',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: sessionIdSchema, body: sessionUpdateSchema }),
   updateSession
 );
@@ -145,7 +143,6 @@ router.put(
 router.delete(
   '/sessions/:sessionId',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: sessionIdSchema }),
   deleteSession
 );
@@ -157,7 +154,6 @@ router.delete(
 router.post(
   '/sessions/:sessionId/heartbeat',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: sessionHeartbeatSchema }),
   heartbeatSession
 );
@@ -173,7 +169,6 @@ router.post(
 router.post(
   '/requests',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ body: customerRequestCreateSchema }),
   createCustomerRequest
 );
@@ -185,7 +180,6 @@ router.post(
 router.get(
   '/requests',
   requireAuth,
-  requireFeature('qr_ordering'),
   listCustomerRequests
 );
 
@@ -196,7 +190,6 @@ router.get(
 router.get(
   '/requests/:id',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: requestIdSchema }),
   getCustomerRequest
 );
@@ -208,7 +201,6 @@ router.get(
 router.put(
   '/requests/:id',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: requestIdSchema, body: requestUpdateSchema }),
   updateCustomerRequest
 );
@@ -220,7 +212,6 @@ router.put(
 router.delete(
   '/requests/:id',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: requestIdSchema }),
   deleteCustomerRequest
 );
@@ -232,7 +223,6 @@ router.delete(
 router.post(
   '/requests/:id/assign',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: requestIdSchema, body: requestAssignSchema }),
   assignRequest
 );
@@ -244,7 +234,6 @@ router.post(
 router.post(
   '/requests/:id/complete',
   requireAuth,
-  requireFeature('qr_ordering'),
   validate({ params: requestIdSchema, body: requestCompleteSchema }),
   completeRequest
 );

@@ -37,36 +37,13 @@ import { getRestaurants, createRestaurant, updateRestaurant, deleteRestaurant, s
 import { getPlans } from '../api/subscriptionPlans'
 import type { Restaurant, SubscriptionPlan } from '../types'
 import { formatDate, formatNumber, formatCurrency } from '../utils/format'
+import { ALL_FEATURE_KEYS, FEATURE_BY_KEY } from '../constants/planFeatures'
 
-const AVAILABLE_FEATURES = [
-  'core_pos',
-  'basic_reports',
-  'ai',
-  'inventory',
-  'loyalty',
-  'reservations',
-  'multi_branch',
-  'analytics',
-  'custom_branding',
-  'advanced_reports',
-  'api_access',
-  'priority_support',
-]
+const AVAILABLE_FEATURES = ALL_FEATURE_KEYS
 
-const FEATURE_DESCRIPTIONS: Record<string, string> = {
-  core_pos: 'Billing, orders, table management, and payment processing',
-  basic_reports: 'Daily sales summaries, order history, and performance metrics',
-  ai: 'AI-powered menu recommendations and demand forecasting',
-  inventory: 'Stock tracking, purchase orders, and low-stock alerts',
-  loyalty: 'Customer rewards program, points tracking, and promotions',
-  reservations: 'Online and walk-in table booking with availability management',
-  multi_branch: 'Centralized management across multiple restaurant locations',
-  analytics: 'Advanced data visualizations and business intelligence dashboards',
-  custom_branding: 'White-label experience with custom logo and branding',
-  advanced_reports: 'Profit & loss, tax reports, and custom exportable data',
-  api_access: 'REST API access for third-party integrations and custom tools',
-  priority_support: 'Dedicated support with priority ticketing and SLAs',
-}
+const FEATURE_DESCRIPTIONS: Record<string, string> = Object.fromEntries(
+  ALL_FEATURE_KEYS.map((k) => [k, FEATURE_BY_KEY[k]?.description || '']),
+)
 
 export default function Restaurants() {
   const navigate = useNavigate()

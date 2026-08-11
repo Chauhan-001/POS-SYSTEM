@@ -42,10 +42,52 @@ const voidReasons = [
  * only after a paid plan is selected.
  */
 const ALL_FEATURES = [
-  'core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty',
-  'reservations', 'multi_branch', 'analytics', 'custom_branding',
-  'advanced_reports', 'expense_tracking', 'api_access', 'priority_support',
+  'core_pos', 'table_service', 'takeaway', 'delivery', 'online_ordering',
+  'qr_ordering', 'waiter_management', 'kitchen_display', 'products', 'staff',
+  'discounts', 'guest_checkout', 'order_notes', 'offers', 'loyalty', 'crm',
+  'reservations', 'inventory', 'expense_tracking', 'finance', 'analytics',
+  'basic_reports', 'advanced_reports', 'multi_branch', 'multi_device',
+  'ai', 'voice_ordering', 'offline_mode', 'customer_display', 'marketing',
+  'integrations', 'api_access', 'custom_branding', 'priority_support',
 ];
+
+/**
+ * Maps each module toggle (Settings → Modules) to the subscription-plan
+ * feature keys that enable it (OR semantics — any one unlocks the module).
+ * Single source of truth shared by the POS runtime clamp (usePOSState) and
+ * the Settings Modules tab (which disables toggles the plan excludes).
+ */
+export const MODULE_FEATURE_MAP: Record<string, string[]> = {
+  enableOnlineOrders: ['online_ordering'],
+  enableQROrdering: ['qr_ordering'],
+  enableMenuAvailability: ['online_ordering', 'qr_ordering'],
+  autoMarkSoldOutFromOrder: ['online_ordering', 'qr_ordering'],
+  enableTakeawayModule: ['takeaway'],
+  enableDeliveryModule: ['delivery'],
+  enableTableService: ['table_service'],
+  enableDineInModule: ['table_service'],
+  enableWaiterManagement: ['waiter_management'],
+  enableDiscountOnBilling: ['discounts'],
+  enableGuestCheckout: ['guest_checkout'],
+  enableOrderNotes: ['order_notes'],
+  enableKitchenDisplay: ['kitchen_display'],
+  enableLoyalty: ['loyalty'],
+  enableReservations: ['reservations'],
+  enableMultiBranch: ['multi_branch'],
+  enableExpenseManagement: ['expense_tracking'],
+  enableOffers: ['offers', 'marketing'],
+  enableOffersPopup: ['offers', 'marketing'],
+  enableProducts: ['products'],
+  enableStaff: ['staff'],
+  enableAISummary: ['ai'],
+  enableAIInventoryHealth: ['ai'],
+  enableAIPurchaseRecs: ['ai'],
+  enableAILowStock: ['ai'],
+  enableAIWasteAnalysis: ['ai'],
+  enableAIVoiceEntry: ['ai', 'voice_ordering'],
+  enableAIWeather: ['ai'],
+  enableAIClosingAssistant: ['ai'],
+};
 
 /** Fetch data from API and update state + timestamped cache. Returns true if API was reachable. */
 async function fetchAndCache<T>(
@@ -102,6 +144,22 @@ const CK = {
  * guest), so we never replace wholesale: for rows the server returns, local
  * occupancy/layout fields are preserved. Backend rows drive identity/layout.
  *
+ * STATUS RECONCILIATION (permanent fix for "all tables show Occupied"):
+ * The backend is the authoritative source for lifecycle status (it runs
+ * tableStateService.reconcileTable on every order/reservation change). The
+ * old rule preserved ANY local non-Available status forever, so a table whose
+ * order was paid/voided/cleared server-side — or whose local cache went stale
+ * (e.g. offline-queue replay ghosts) — stayed Occupied indefinitely, across
+ * every refresh, on every terminal.
+ *
+ * New rule, mirroring the backend's reconcileTable:
+ *   - Manual states (Cleaning/Disabled/Merged) are always preserved.
+ *   - A table bound to a LIVE local order keeps its local lifecycle status
+ *     (protects the just-seated case and local-only tables the backend can't
+ *     reconcile because they have no Mongo id).
+ *   - Otherwise the backend status wins, so stale Occupied/Reserved/…
+ *     self-heals to Available as soon as the real order is gone.
+ *
  * When the server returns a NON-EMPTY list it is treated as authoritative —
  * local-only rows (deleted tables, duplicates from other restaurants, or
  * orphaned seed rows cached from an unscoped fetch) are dropped so the floor
@@ -109,17 +167,27 @@ const CK = {
  * local floor plan is kept (offline-first seeding; an occupied table is never
  * auto-freed by an empty backend status).
  */
-function mergeTablesById(local: TableInfo[], incoming: any[]): TableInfo[] {
+const MANUAL_TABLE_STATUSES = ['Cleaning', 'Disabled', 'Merged'];
+const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
+
+export function mergeTablesById(local: TableInfo[], incoming: any[], liveOrderTableIds?: Set<string>): TableInfo[] {
   const localById = new Map(local.map((t: TableInfo) => [t.id, t]));
   const merged = incoming.map((bt: any): TableInfo => {
     const localT = localById.get(bt.id);
     if (!localT) return bt as TableInfo;
+    const localStatus = String(localT.status || '');
+    let status = bt.status || 'Available';
+    if (MANUAL_TABLE_STATUSES.includes(localStatus)) {
+      status = localStatus;
+    } else if (liveOrderTableIds?.has(localT.id) && localStatus && localStatus !== 'Available') {
+      status = localStatus;
+    }
     return {
       ...localT,
       number: bt.number ?? localT.number,
       capacity: bt.capacity ?? localT.capacity,
       section: bt.section ?? localT.section,
-      status: localT.status && localT.status !== 'Available' ? localT.status : (bt.status || 'Available'),
+      status,
       branchId: bt.branchId ?? localT.branchId,
     };
   });
@@ -155,11 +223,116 @@ function mergeTakeawayById(local: TakeawayOrder[], incoming: TakeawayOrder[]): T
 }
 
 /**
+ * Seed the per-branch price cache (branchId → productId → price) from the
+ * server-authoritative `branchPrice` map on each product row. This is a
+ * RECONCILIATION, not a merge: entries the backend no longer lists (an
+ * override cleared via ProductManager on another terminal) are removed so a
+ * cleared price propagates everywhere — a stale local override must never
+ * keep a dine-in order priced at the old value. Products whose backend row
+ * has NO `branchPrice` field at all are left untouched (their local overrides
+ * may still be mid-save / offline-pending).
+ */
+function seedBranchProductPrices(prev: Record<string, Record<string, number>>, incoming: any[]): Record<string, Record<string, number>> {
+  let next = prev;
+  for (const bp of incoming) {
+    const pid = bp._id || bp.id;
+    const map = bp.branchPrice;
+    if (!pid || map == null || typeof map !== 'object') continue;
+    // 1) Drop stale local overrides for this product that the backend no
+    //    longer has (handles both partial and full clears).
+    for (const [branchId, localPrices] of Object.entries(next)) {
+      if (localPrices[pid] === undefined) continue;
+      if (map[branchId] === undefined) {
+        const rest = { ...localPrices };
+        delete rest[pid];
+        next = { ...next, [branchId]: rest };
+      }
+    }
+    // 2) Add/update the overrides the backend currently has.
+    for (const [branchId, price] of Object.entries(map)) {
+      const p = Number(price);
+      if (!Number.isFinite(p) || p <= 0) continue;
+      if (!next[branchId] || next[branchId][pid] !== p) {
+        next = { ...next, [branchId]: { ...(next[branchId] || {}), [pid]: p } };
+      }
+    }
+  }
+  return next;
+}
+
+/**
+ * Seed the per-branch VARIANT price cache (branchId → productId → variantName
+ * → price) from the server-authoritative `variants[].branchPrice` maps on each
+ * product row. Same reconciliation contract as seedBranchProductPrices: entries
+ * the backend no longer lists (a cleared override) are removed so a cleared
+ * variant price propagates everywhere; products whose backend row has NO
+ * `variants` array are left untouched (their local overrides may still be
+ * mid-save / offline-pending).
+ */
+function seedBranchVariantPrices(prev: Record<string, Record<string, Record<string, number>>>, incoming: any[]): Record<string, Record<string, Record<string, number>>> {
+  let next = prev;
+  for (const bp of incoming) {
+    const pid = bp._id || bp.id;
+    if (!pid) continue;
+    const variants = bp.variants;
+    if (!Array.isArray(variants)) continue; // unknown state — leave local
+    // Authoritative per-branch variant maps for this product.
+    const authoritative: Record<string, Record<string, number>> = {};
+    for (const v of variants) {
+      const map = v && typeof v === 'object' ? v.branchPrice : null;
+      if (!map || typeof map !== 'object') continue;
+      for (const [branchId, price] of Object.entries(map)) {
+        const p = Number(price);
+        if (!Number.isFinite(p) || p <= 0) continue;
+        if (!authoritative[branchId]) authoritative[branchId] = {};
+        authoritative[branchId][v.name] = p;
+      }
+    }
+    // Reconcile every branch that has (or should have) an entry for this
+    // product: set it exactly to the authoritative map, or drop it when empty.
+    const branches = new Set([
+      ...Object.keys(authoritative),
+      ...Object.keys(next).filter((b) => next[b] && next[b][pid] !== undefined),
+    ]);
+    for (const branchId of branches) {
+      const target = authoritative[branchId] || {};
+      const localBranch = next[branchId];
+      const localMap = localBranch && localBranch[pid];
+      const same =
+        !!localMap &&
+        Object.keys(target).length === Object.keys(localMap).length &&
+        Object.keys(target).every((k) => localMap[k] === target[k]);
+      if (same) continue;
+      if (Object.keys(target).length === 0) {
+        // Cleared — drop this product's entry for this branch.
+        if (!localBranch || localBranch[pid] === undefined) continue;
+        const rest = { ...localBranch };
+        delete rest[pid];
+        next = { ...next, [branchId]: rest };
+      } else {
+        next = { ...next, [branchId]: { ...(localBranch || {}), [pid]: target } };
+      }
+    }
+  }
+  return next;
+}
+
+/**
  * Merge backend menu products into the local catalog. The backend list is
  * authoritative on a successful fetch: local-only rows (ghosts from a prior
  * sync, products deleted server-side) are dropped, and local-only fields on
  * matching rows are preserved. Rows are keyed by id, then (name+category).
  */
+/** Drop legacy hardcoded demo rows that a previous GuidedTour fallback may
+ *  have written into the product cache. The catalog must only ever contain
+ *  DB-backed menu items (Menu Availability renders these rows — a hardcoded
+ *  product here would leak a fake item + fake category into the "More" page).
+ */
+function sanitizeProductCache(list: Product[] | null | undefined): Product[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((p: any) => !String(p?.id || '').startsWith('demo_prod_'));
+}
+
 function mergeProductsById(local: Product[], incoming: any[]): Product[] {
   const nameKey = (name?: string, category?: string) =>
     `${(name || '').toLowerCase()}|${(category || '').toLowerCase()}`;
@@ -184,8 +357,12 @@ function mergeProductsById(local: Product[], incoming: any[]): Product[] {
       gstPercent: bp.gstPercent ?? localP?.gstPercent ?? 0,
       availability: bp.availability ?? localP?.availability ?? true,
       favorite: bp.favorite ?? localP?.favorite,
-      variants: bp.variants ?? localP?.variants,
+      // Backend variants are authoritative, but an EMPTY array from a product
+      // with no server variants must not clobber local-only variant definitions
+      // (e.g. a product still mid-sync) — keep the local list in that case.
+      variants: bp.variants && bp.variants.length ? bp.variants : (localP?.variants || []),
       branchId: bp.branchId ?? localP?.branchId,
+      branchPrice: bp.branchPrice ?? localP?.branchPrice,
     });
     if (id) seenIds.add(id);
     seenNames.add(key);
@@ -445,7 +622,7 @@ export function usePOSState() {
   // ============ CORE DATA ============
   // Init from localStorage for instant render; API fetch runs below in useEffect
   const [currentEmployee, setCurrentEmployee] = useState<Employee | null>(() => getDBData('pos_current_employee', null));
-  const [products, setProducts] = useState<Product[]>(() => getDBData<Product[]>('pos_products', []));
+  const [products, setProducts] = useState<Product[]>(() => sanitizeProductCache(getDBData<Product[]>('pos_products', [])));
   const [customers, setCustomers] = useState<Customer[]>(() => getDBData<Customer[]>('pos_customers', []));
   const [rewards, setRewards] = useState<LoyaltyReward[]>(() => getDBData<LoyaltyReward[]>('pos_rewards', []));
   const [employees, setEmployees] = useState<Employee[]>(() => getDBData<Employee[]>('pos_employees', []));
@@ -510,6 +687,10 @@ export function usePOSState() {
   const [paymentMethod, setPaymentMethod] = useState<any>('Cash');
   const [splitDetails, setSplitDetails] = useState({ cashAmount: 0, cardAmount: 0, upiAmount: 0, walletAmount: 0 });
   const [appliedReward, setAppliedReward] = useState<any>(null);
+  // Server-validated offer/coupon applied to the current bill.
+  // Shape: { offer: {id,title,type,value,couponCode,...}, discount: number, code?: string }
+  // The discount amount is ALWAYS computed by the backend (/offers/validate).
+  const [appliedOffer, setAppliedOffer] = useState<any>(null);
 
   // ============ UI STATE ============
   // Restore the last workspace on cold boot (session restore). Only accept
@@ -524,6 +705,27 @@ export function usePOSState() {
   const [billingCategory, setBillingCategory] = useState('All');
   const [billingSearch, setBillingSearch] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  // Last active tab inside the Orders workspace ('tables' | 'takeaway' | 'online' | 'all').
+  // Lifted out of OrderManager (which unmounts when navigating to Billing) so that
+  // closing an order — which redirects back to Orders — restores the EXACT tab the
+  // user was on instead of resetting to the default 'tables' view.
+  const [ordersActiveTab, setOrdersActiveTab] = useState<'tables' | 'takeaway' | 'online' | 'all'>(() => {
+    try {
+      const saved = localStorage.getItem('pos_orders_active_tab');
+      if (saved && ['tables', 'takeaway', 'online', 'all'].includes(saved)) return saved as 'tables' | 'takeaway' | 'online' | 'all';
+    } catch { /* ignore */ }
+    return 'tables';
+  });
+  // Last view mode inside the Orders Tables tab ('grid' | 'floorplan'). Lifted
+  // out of OrderManager (which unmounts when navigating to Billing) so closing
+  // an order restores the exact table view the operator was using.
+  const [ordersViewMode, setOrdersViewMode] = useState<'grid' | 'floorplan'>(() => {
+    try {
+      const saved = localStorage.getItem('pos_orders_view_mode');
+      if (saved === 'floorplan' || saved === 'grid') return saved;
+    } catch { /* ignore */ }
+    return 'grid';
+  });
   const [cartWidth, setCartWidth] = useState<number>(() => { try { const s = localStorage.getItem('pos_cart_width'); return s ? parseInt(s, 10) : 380; } catch { return 380; } });
   const [isHeldDrawerOpen, setIsHeldDrawerOpen] = useState(false);
   const [isShortcutOpen, setIsShortcutOpen] = useState(false);
@@ -555,6 +757,13 @@ export function usePOSState() {
   const loyaltyPhoneRef = useRef<any>(null);
   const quickFireRef = useRef<any>(null);
   const tourArtifactRef = useRef<any>({});
+  // Live snapshots of orders/tables for stable callbacks (refreshTables must
+  // NOT list them in deps — the 30s poll effect re-creates its interval on
+  // every dep identity change, which would double the poll cadence).
+  const ordersRef = useRef(orders);
+  ordersRef.current = orders;
+  const tablesRef = useRef(tables);
+  tablesRef.current = tables;
 
   // ============ TABLE / TAKEAWAY REFRESH (merge, never replace) ============
   // These two collections hold frontend-only fields (table occupancy + layout,
@@ -564,34 +773,78 @@ export function usePOSState() {
   const refreshTables = useCallback(() => {
     return api.fetchTables().then((incoming: any) => {
       if (!incoming || !Array.isArray(incoming)) return;
+      // Table ids bound to a live (non-terminal) local order. Tables with a
+      // live order keep their local lifecycle status; every other table is
+      // reconciled against the authoritative backend status so stale
+      // Occupied/Reserved states self-heal on refresh. Read via refs so this
+      // callback stays stable (see ordersRef comment above).
+      const ordersNow = ordersRef.current;
+      const liveOrderTableIds = new Set<string>();
+      for (const o of ordersNow) {
+        if (TERMINAL_ORDER_STATUSES.includes(o.status)) continue;
+        if (o.tableId) liveOrderTableIds.add(String(o.tableId));
+      }
+      // Bind via table.orderId as well (mirrors the real order id after the
+      // local temp id is swapped for the server _id on create success).
+      for (const t of tablesRef.current) {
+        if (t.orderId && ordersNow.some(o => o.id === t.orderId && !TERMINAL_ORDER_STATUSES.includes(o.status))) {
+          liveOrderTableIds.add(t.id);
+        }
+      }
       setTables((prev: any[]) => {
-        const merged = mergeTablesById(prev, incoming);
+        const merged = mergeTablesById(prev, incoming, liveOrderTableIds);
         setCachedData(CK.TABLES, merged);
         return merged;
       });
       // Multi-branch mode renders the grid from the per-branch cache
       // (branchTables[bid]) which is only written by local mutations and can
       // go stale — e.g. ghost/duplicate tables cached before a data cleanup.
-      // Heal it from the authoritative backend list on every successful fetch
-      // (scoped to this branch) so stale layouts don't linger forever.
-      if (currentBranchId) {
-        setBranchTables((prevBt: Record<string, TableInfo[]>) => {
-          const existing = prevBt[currentBranchId];
-          if (!existing) return prevBt; // nothing cached to heal
-          const branchRows = incoming.filter(
-            (t: any) => !t.branchId || t.branchId === currentBranchId,
-          );
-          const healed = mergeTablesById(existing, branchRows);
-          // Id-based (not length-only) no-op guard: a stale cache whose ghost
-          // count coincidentally equals the healed count must still be healed,
-          // and equal-id caches must not churn a state update every poll.
-          const unchanged =
+      // Seed/HEAL every branch's cache from the authoritative backend list on
+      // each successful fetch. Previously this only healed an EXISTING entry
+      // and skipped the seed when nothing was cached, so a fresh device (or a
+      // branch selected for the first time) showed 0 tables in multi-branch
+      // mode. Seeding all branches makes switching branches instantly show
+      // that branch's floor plan. No-op guard compares the MERGED result (not
+      // the raw rows) so it only skips the write when the cache is truly
+      // identical: equal ids AND equal reconciled status/capacity/section.
+      // Comparing ids alone would miss server-side status changes — e.g.
+      // another terminal seating a guest flips a table to Occupied — leaving
+      // the per-branch grid stale until a local mutation. Protected statuses
+      // (manual Cleaning/Disabled/Merged, tables with a live local order)
+      // that mergeTablesById deliberately preserved come back identical and
+      // still skip the write, so there's no churn every poll. A stale cache
+      // whose ghost count coincidentally equals the healed count must still
+      // be healed (ids differ → write).
+      setBranchTables((prevBt: Record<string, TableInfo[]>) => {
+        const byBranch = new Map<string, any[]>();
+        for (const t of incoming) {
+          const bid = t.branchId;
+          if (!bid) continue;
+          const arr = byBranch.get(bid) || [];
+          arr.push(t);
+          byBranch.set(bid, arr);
+        }
+        if (byBranch.size === 0) return prevBt;
+        let next = prevBt;
+        let changed = false;
+        for (const [bid, rows] of byBranch) {
+          const existing = next[bid];
+          const healed = mergeTablesById(existing || [], rows, liveOrderTableIds);
+          if (
+            existing &&
             healed.length === existing.length &&
-            healed.every((t, i) => t.id === existing[i].id);
-          if (unchanged) return prevBt;
-          return { ...prevBt, [currentBranchId]: healed };
-        });
-      }
+            healed.every((t, i) =>
+              t.id === existing[i].id &&
+              t.status === existing[i].status &&
+              t.capacity === existing[i].capacity &&
+              t.section === existing[i].section
+            )
+          ) continue;
+          next = { ...next, [bid]: healed };
+          changed = true;
+        }
+        return changed ? next : prevBt;
+      });
     }).catch(() => undefined);
   }, [setTables, setBranchTables, currentBranchId]);
 
@@ -611,13 +864,21 @@ export function usePOSState() {
   const refreshProducts = useCallback(() => {
     return api.fetchProducts().then((incoming: any) => {
       if (!incoming || !Array.isArray(incoming)) return;
+      // Read path for branch pricing: mirror the server-authoritative
+      // `branchPrice` map (branchId → price) into the local per-branch price
+      // cache so dine-in POS orders price items exactly like the customer
+      // site. Reconciliation (not merge) so cleared overrides propagate too.
+      setBranchProductPrices((prev) => seedBranchProductPrices(prev, incoming));
+      // Same read path for variant branch prices (variants[].branchPrice),
+      // which live in a separate backend collection embedded by /products.
+      setBranchVariantPrices((prev) => seedBranchVariantPrices(prev, incoming));
       setProducts((prev: Product[]) => {
         const merged = mergeProductsById(prev, incoming);
         setCachedData(CK.PRODUCTS, merged);
         return merged;
       });
     }).catch(() => undefined);
-  }, [setProducts]);
+  }, [setProducts, setBranchProductPrices, setBranchVariantPrices]);
 
   const refreshCustomers = useCallback(() => {
     // Reconcile against the authoritative backend list (requesting the max the
@@ -762,6 +1023,9 @@ export function usePOSState() {
             setCachedData(CK.PRODUCTS, m);
             return m;
           });
+          // Keep the per-branch price caches in sync on full sync too.
+          setBranchProductPrices((prev) => seedBranchProductPrices(prev, data.products));
+          setBranchVariantPrices((prev) => seedBranchVariantPrices(prev, data.products));
         }
         if (Array.isArray(data.customers)) {
           setCustomers(prev => {
@@ -801,7 +1065,7 @@ export function usePOSState() {
         return true;
       })
       .catch(() => false);
-  }, [setProducts, setCustomers, setEmployees, setBranches, setExpenses, setOrders, setBills]);
+  }, [setProducts, setCustomers, setEmployees, setBranches, setExpenses, setOrders, setBills, setBranchProductPrices, setBranchVariantPrices]);
 
   // ============ TTL-AWARE API DATA HYDRATION ============
   // Only re-fetch data whose cache TTL has expired. Cache timestamps survive
@@ -841,6 +1105,16 @@ export function usePOSState() {
     if (force) refreshHeldOrders();
     else if (!isCacheFresh('pos_held_orders', CACHE_TTL.SLOW)) refreshHeldOrders();
   }, [refreshProducts, refreshCustomers, refreshEmployees, refreshBranches, refreshTables, refreshTakeaway, refreshExpenses, refreshReservations, refreshRewards, refreshHeldOrders]);
+
+  // ============ FORCE FULL REFRESH (Dashboard Refresh / auto-refresh) ============
+  // The Dashboard's Refresh button and auto-refresh timer call this to re-pull
+  // every collection from the backend unconditionally (bypassing TTL caches) so
+  // the KPI cards and charts never show stale figures. Every fetcher is
+  // offline-safe (catch → keep the local copy), so a failed refresh is a
+  // silent no-op that leaves the current data on screen.
+  const refreshAllFromApi = useCallback(() => {
+    hydrateFromApi(true);
+  }, [hydrateFromApi]);
 
   // Hydrate on mount (covers warm reloads — token restored from localStorage
   // before these effects run, so the fetches succeed).
@@ -977,15 +1251,30 @@ export function usePOSState() {
   // These start with the user's configured moduleSettings, then override
   // any feature that the subscription plan doesn't include → force it OFF.
   // This ensures unchecked plan features are truly disabled in the POS.
+  //
+  // STRICT gating: the subscription plan is the hard gate for EVERY role —
+  // the Owner included. A module stays ON only while at least one of its
+  // enabling plan features is present AND the saved toggle is ON. Before the
+  // plan has loaded (fresh device / offline) nothing is clamped so the UI
+  // never flashes empty; once features arrive the toggles settle to the plan.
   const moduleSettings = useMemo(() => {
+    const saved = settings.moduleSettings || {};
+
+    // Built-in defaults: most modules ON by default. Add-on modules
+    // (reservations / multi-branch / expenses / loyalty) default ON so a fresh
+    // restaurant never loses an included feature — but an explicit saved value
+    // overrides the default either way (ON or OFF).
     const userSettings: Record<string, boolean> = {
-      enableTableService: true, enableWaiterManagement: true, enableReservations: false,
+      enableTableService: true, enableWaiterManagement: true, enableReservations: true,
       enableQROrdering: false, enableDeliveryModule: true, enableOnlineOrders: true,
       enableKitchenDisplay: true, enableLoyalty: true, showImagesInBilling: true,
       enableOffersPopup: true, enableAutoPrintKOT: false, enableQuickSoundAlerts: false,
       showItemCodeOnCard: false, enableGuestCheckout: true, enableOrderNotes: true,
       enableTakeawayModule: true, enableDineInModule: true, enableExpenseManagement: true,
-      enableDiscountOnBilling: false,
+      enableDiscountOnBilling: false, enableMultiBranch: true,
+      enableProducts: true, enableStaff: true, enableOffers: true,
+      // ─── Online Ordering ─────────────────────────────────
+      autoMarkSoldOutFromOrder: false, enableMenuAvailability: true,
       // ─── AI Feature Toggles ──────────────────────────────
       enableAISummary: true,
       enableAIInventoryHealth: true,
@@ -995,39 +1284,31 @@ export function usePOSState() {
       enableAIVoiceEntry: true,
       enableAIWeather: true,
       enableAIClosingAssistant: true,
-      ...(settings.moduleSettings || {}),
+      ...saved,
     };
 
-    // Override with plan constraints — if the plan doesn't include a feature, force it OFF
-    const planHas = (f: string) => subscriptionFeatures.includes(f);
-
-    if (!planHas('ai')) {
-      userSettings.enableAISummary = false;
-      userSettings.enableAIInventoryHealth = false;
-      userSettings.enableAIPurchaseRecs = false;
-      userSettings.enableAILowStock = false;
-      userSettings.enableAIWasteAnalysis = false;
-      userSettings.enableAIVoiceEntry = false;
-      userSettings.enableAIWeather = false;
-      userSettings.enableAIClosingAssistant = false;
-    }
-    if (!planHas('loyalty')) userSettings.enableLoyalty = false;
-    if (!planHas('reservations')) userSettings.enableReservations = false;
-    if (!planHas('multi_branch')) userSettings.enableMultiBranch = false;
-    if (!planHas('expense_tracking')) userSettings.enableExpenseManagement = false;
-
-    // During the free trial every module is unlocked — force the add-on module
-    // toggles ON so ALL options are visible in the POS (full product showcase).
-    // Outside trial these follow the user's own Settings toggles.
-    if (subscriptionStatus === 'trial') {
-      userSettings.enableReservations = true;
-      userSettings.enableMultiBranch = true;
+    // ─── STRICT PLAN ENFORCEMENT (all roles, Owner included) ──
+    // The subscription plan is the hard gate: any feature NOT included in the
+    // plan forces its module toggles OFF for every role. A module stays ON only
+    // when at least one of its enabling features is present (OR semantics), so
+    // e.g. Menu Availability stays available when EITHER online_ordering OR
+    // qr_ordering is in the plan. When no plan info has loaded yet (fresh
+    // device, offline), nothing is clamped so the UI never flashes empty.
+    if (subscriptionFeatures.length > 0) {
+      const planHas = (f: string) => subscriptionFeatures.includes(f);
+      Object.entries(MODULE_FEATURE_MAP).forEach(([moduleKey, enablingFeatures]) => {
+        if (!enablingFeatures.some((f) => planHas(f))) {
+          (userSettings as Record<string, boolean>)[moduleKey] = false;
+        }
+      });
     }
 
     return userSettings;
-  }, [settings.moduleSettings, subscriptionFeatures, subscriptionStatus]);
+  }, [settings.moduleSettings, subscriptionFeatures, currentEmployee]);
 
   // ============ DERIVED PLAN-AWARE FLAGS ============
+  // Strict plan gating for every role — a feature not in the plan is disabled
+  // for the Owner too (the plan the Owner selected is the hard gate).
   const hasInventory = useMemo(() => hasPlanFeature('inventory'), [hasPlanFeature]);
   const hasAnalytics = useMemo(() => hasPlanFeature('analytics'), [hasPlanFeature]);
   const hasAdvancedReports = useMemo(() => hasPlanFeature('advanced_reports'), [hasPlanFeature]);
@@ -1043,6 +1324,21 @@ export function usePOSState() {
     if (!shouldFilterByBranch) return items;
     return items.filter(item => !item.branchId || item.branchId === currentBranchId);
   };
+
+  // Auto-select a valid branch when the stored currentBranchId is stale — e.g.
+  // the legacy single-branch default 'branch_main' (which matches no real
+  // branch ObjectId) or a branch deleted server-side. Without this,
+  // multi-branch filtering zeroes every collection (tables, products, orders,
+  // bills) because no row carries 'branch_main', so the Orders grid and other
+  // sections appear empty until the user manually picks a branch. Prefer the
+  // head branch (matches BranchManager's delete fallback); otherwise the first
+  // branch. Never overrides an explicit, still-valid selection.
+  useEffect(() => {
+    if (branches.length === 0) return;
+    if (branches.some((b) => b.id === currentBranchId)) return;
+    const head = branches.find((b) => b.isHeadBranch) || branches[0];
+    if (head) setCurrentBranchId(head.id);
+  }, [branches, currentBranchId, setCurrentBranchId]);
 
   // ============ PER-BRANCH SETTINGS MERGE ============
   const effectiveSettings = useMemo<SystemSettings>(() => {
@@ -1109,6 +1405,8 @@ export function usePOSState() {
           if (staleKeys.includes(CK.TABLES)) refreshTables();
           if (staleKeys.includes(CK.TAKEAWAY)) refreshTakeaway();
           if (staleKeys.includes(CK.RESERVATIONS)) refreshReservations();
+          if (staleKeys.includes(CK.REWARDS)) refreshRewards();
+          if (staleKeys.includes('pos_held_orders')) refreshHeldOrders();
         }
         // Auto-replay offline queue when coming back online
         if (syncEngine.consumePendingReplay()) {
@@ -1174,9 +1472,23 @@ export function usePOSState() {
   useEffect(() => { setDBData(CK.REWARDS, rewards); }, [rewards]);
   useEffect(() => { setCachedData(CK.EMPLOYEES, employees); }, [employees]);
   useEffect(() => { setDBData(CK.SETTINGS, settings); }, [settings]);
-  // Bills: only keep last 50 in localStorage to cap storage usage
-  useEffect(() => { setCachedData(CK.BILLS, bills.slice(0, 50)); }, [bills]);
+  // Bills: cache up to 500 for offline history/dashboard — the previous cap
+  // of 50 meant a reload while the cache was fresh showed an incomplete ledger.
+  useEffect(() => { setCachedData(CK.BILLS, bills.slice(0, 500)); }, [bills]);
   useEffect(() => { setCachedData(CK.EXPENSES, expenses); }, [expenses]);
+  // Orders/takeaway: persist so an offline reload never loses recently
+  // created/updated orders, but with a TRAILING DEBOUNCE — order state mutates
+  // on nearly every interaction (add item, KOT, status), and a synchronous
+  // JSON.stringify of hundreds of orders on every change would jank the main
+  // thread. The write fires ~2s after the last change; the 30s poll keeps the
+  // authoritative server list in sync regardless.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCachedData(CK.ORDERS, orders.slice(0, 300));
+      setCachedData(CK.TAKEAWAY, takeawayOrders.slice(0, 300));
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [orders, takeawayOrders]);
   useEffect(() => { setDBData(CK.RESERVATIONS, reservations); }, [reservations]);
   useEffect(() => { setDBData(CK.WAITING, waitingList); }, [waitingList]);
   useEffect(() => { setDBData(CK.FLOORS, floors); }, [floors]);
@@ -1189,6 +1501,15 @@ export function usePOSState() {
   useEffect(() => {
     try { localStorage.setItem('pos_active_workspace', String(activeWorkspace)); } catch { /* ignore */ }
   }, [activeWorkspace]);
+  // Persist the last Orders tab so returning to Orders (e.g. after closing an
+  // order) restores the same sub-view the operator was working in.
+  useEffect(() => {
+    try { localStorage.setItem('pos_orders_active_tab', ordersActiveTab); } catch { /* ignore */ }
+  }, [ordersActiveTab]);
+  // Persist the last Orders view mode (grid vs floor plan) the same way.
+  useEffect(() => {
+    try { localStorage.setItem('pos_orders_view_mode', ordersViewMode); } catch { /* ignore */ }
+  }, [ordersViewMode]);
 
   // ============ DERIVED STATE ============
   const dailySales = useMemo(() => computeDailySales(bills, settings.currencySymbol), [bills, settings.currencySymbol]);
@@ -1379,12 +1700,15 @@ export function usePOSState() {
     paymentMethod, setPaymentMethod,
     splitDetails, setSplitDetails,
     appliedReward, setAppliedReward,
+    appliedOffer, setAppliedOffer,
 
     // UI state
     activeWorkspace, setActiveWorkspace,
     billingCategory, setBillingCategory,
     billingSearch, setBillingSearch,
     showFavoritesOnly, setShowFavoritesOnly,
+    ordersActiveTab, setOrdersActiveTab,
+    ordersViewMode, setOrdersViewMode,
     cartWidth, setCartWidth,
     isHeldDrawerOpen, setIsHeldDrawerOpen,
     isShortcutOpen, setIsShortcutOpen,
@@ -1430,6 +1754,7 @@ export function usePOSState() {
     activityFeed,
     zReportData,
     refreshDailyStats,
+    refreshAllFromApi,
 
     startResizeCart,
 
@@ -1474,12 +1799,15 @@ export function usePOSState() {
     paymentMethod, setPaymentMethod,
     splitDetails, setSplitDetails,
     appliedReward, setAppliedReward,
+    appliedOffer, setAppliedOffer,
 
     // UI state
     activeWorkspace, setActiveWorkspace,
     billingCategory, setBillingCategory,
     billingSearch, setBillingSearch,
     showFavoritesOnly, setShowFavoritesOnly,
+    ordersActiveTab, setOrdersActiveTab,
+    ordersViewMode, setOrdersViewMode,
     cartWidth, setCartWidth,
     isHeldDrawerOpen, setIsHeldDrawerOpen,
     isShortcutOpen, setIsShortcutOpen,
@@ -1511,7 +1839,7 @@ export function usePOSState() {
 
     billingSearchRef, loyaltyPhoneRef, quickFireRef, tourArtifactRef,
 
-    dailySales, activityFeed, zReportData, refreshDailyStats, startResizeCart,
+    dailySales, activityFeed, zReportData, refreshDailyStats, refreshAllFromApi, startResizeCart,
 
     // Sync
     runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors,

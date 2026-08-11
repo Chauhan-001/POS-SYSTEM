@@ -10,9 +10,43 @@
  * so the merchant NEVER manually creates voice aliases for new products.
  */
 
+import mongoose from 'mongoose';
 import { productRepo, productVariantRepo } from '../repositories';
 import { generateAndApplyAliases } from '../modules/voice-inventory/services/AliasGeneratorService';
 import { AppError } from '../utils/AppError';
+
+/**
+ * Resolve the product scope for a restaurant's menu surfaces (POS products,
+ * availability page, customer website).
+ *
+ * Tenant isolation: a restaurant sees ONLY its OWN products. The shared/global
+ * catalog (restaurantId: null) is included ONLY as a bootstrap fallback when
+ * the restaurant owns zero products of its own — so a fresh/empty account
+ * still has something to sell, but an established restaurant never sees
+ * hardcoded items it never created (no duplicate menu rows, no "all DB data").
+ *
+ * Options:
+ *  - includeGlobalFallback: false → the restaurant's OWN products only, never
+ *    the shared/global catalog. Used by the POS "Menu Availability" control so
+ *    it can only ever display products saved under this restaurant's id in the
+ *    database — shared-catalog items (restaurantId: null) that belong to no
+ *    restaurant must never appear there.
+ */
+export async function resolveMenuProductScope(
+  restaurantId: string,
+  options: { includeGlobalFallback?: boolean } = {},
+): Promise<any[]> {
+  const oid = new mongoose.Types.ObjectId(restaurantId);
+  const owned = await productRepo.findAll(
+    { restaurantId: oid, isDeleted: { $ne: true } } as any,
+    { page: 1, limit: 1 },
+  );
+  if (owned.total > 0) return [{ restaurantId: oid }];
+  // Fresh account with no products yet — fall back to the shared/global menu
+  // unless the caller explicitly opted out (see options above).
+  if (options.includeGlobalFallback === false) return [{ restaurantId: oid }];
+  return [{ restaurantId: oid }, { restaurantId: null }];
+}
 
 /**
  * Enforce barcode uniqueness within a restaurant (or global catalog).
@@ -61,11 +95,38 @@ export class ProductService {
    * List all products (non-deleted).
    * Optionally filter by category or availability.
    */
-  async list(filter: { category?: string; availability?: boolean } = {}) {
+  async list(filter: { category?: string; availability?: boolean; $or?: any[] } = {}) {
     const query: any = {};
     if (filter.category) query.category = filter.category;
     if (filter.availability !== undefined) query.availability = filter.availability;
-    return productRepo.findAll(query, { sort: { name: 1 } });
+    // Tenant scoping is built by the callers (products/availability controllers)
+    // as an $or of owned + shared/global rows. Forward it so it actually reaches
+    // Mongo — previously it was silently dropped, leaking every restaurant's
+    // products into every tenant's menu/availability list.
+    if (filter.$or && filter.$or.length > 0) query.$or = filter.$or;
+    const result = await productRepo.findAll(query, { sort: { name: 1 } });
+
+    // Embed variants (separate ProductVariant collection) in a single batched
+    // query so the POS can mirror per-variant branchPrice overrides into its
+    // local price cache — the same sync the product-level branchPrice has.
+    // Without this the list endpoint never exposed variants at all, so variant
+    // branch pricing could only live in one terminal's localStorage.
+    const ids = result.data.map((p: any) => String(p._id));
+    if (ids.length > 0) {
+      const variants = await productVariantRepo.findAll({ productId: { $in: ids } } as any);
+      const byProduct = new Map<string, any[]>();
+      for (const v of variants.data) {
+        const pid = String((v as any).productId);
+        if (!byProduct.has(pid)) byProduct.set(pid, []);
+        byProduct.get(pid)!.push(v);
+      }
+      result.data = result.data.map((p: any) => ({
+        ...(p.toObject ? p.toObject() : p),
+        variants: byProduct.get(String(p._id)) || [],
+      }));
+    }
+
+    return result;
   }
 
   /**
@@ -116,7 +177,7 @@ export class ProductService {
    * Update a product and optionally replace its variants.
    */
   async update(id: string, data: any) {
-    const { variants, ...productData } = data;
+    const { variants, variantBranchPrices, ...productData } = data;
     const existing = await productRepo.findById(id);
     if (!existing) return null;
     if (productData.barcode !== undefined) {
@@ -137,6 +198,25 @@ export class ProductService {
           productId: id,
         }));
         await productVariantRepo.bulkCreate(variantDocs as any);
+      }
+    }
+
+    // In-place per-variant branch-price updates (variantName → branchId → price).
+    // Only the branchPrice maps on existing variant docs are touched — variant
+    // _ids and metadata are never recreated, so a branch-price save can't
+    // clobber the variant set.
+    if (variantBranchPrices && typeof variantBranchPrices === 'object') {
+      for (const [variantName, branchMap] of Object.entries(variantBranchPrices)) {
+        if (!branchMap || typeof branchMap !== 'object') continue;
+        const cleanMap: Record<string, number> = {};
+        for (const [bid, price] of Object.entries(branchMap as Record<string, number>)) {
+          const p = Number(price);
+          if (Number.isFinite(p) && p >= 0) cleanMap[bid] = p;
+        }
+        await productVariantRepo.updateMany(
+          { productId: id, name: variantName } as any,
+          { $set: { branchPrice: cleanMap } } as any,
+        );
       }
     }
 

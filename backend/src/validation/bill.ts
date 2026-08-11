@@ -31,6 +31,7 @@ export const createBillSchema = z.object({
   splitDetails: splitDetailsSchema,
   orderType: orderType,
   branchId: objectId.optional(),
+  orderId: objectId.optional().nullable(),
   customerId: objectId.optional().nullable(),
   customerPhone: z.string().regex(/^\d{10}$/).optional().nullable(),
   customerName: optString,

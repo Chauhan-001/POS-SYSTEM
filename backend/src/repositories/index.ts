@@ -23,6 +23,7 @@ import {
   LoyaltyTier, LoyaltySettings, LoyaltyTransaction, OtpRequest,
   CouponRedemption, CustomerActivity, Referral, Campaign,
   ExpenseCategory, Vendor, RecurringExpense, CashLedger, FinanceSettings,
+  MenuAvailability, OrderAdjustment, RefundRecord,
 } from '../models';
 
 // ─── Repository instances ──────────────────────────────────────────
@@ -58,6 +59,9 @@ export const yearlySummaryRepo = new TenantRepository(YearlySummary);
 export const purchaseRepo = new BaseRepository(Purchase);
 export const inventoryEventRepo = new BaseRepository(InventoryEvent);
 export const supplierRepo = new BaseRepository(Supplier);
+export const menuAvailabilityRepo = new BaseRepository(MenuAvailability);
+export const orderAdjustmentRepo = new BaseRepository(OrderAdjustment);
+export const refundRecordRepo = new BaseRepository(RefundRecord);
 export const auditLogRepo = new LegacyAuditAdapter(AuditLog);
 export const restaurantRepo = new BaseRepository(Restaurant);export const userRepo = new BaseRepository(User);
 export const deviceRepo = new BaseRepository(Device);

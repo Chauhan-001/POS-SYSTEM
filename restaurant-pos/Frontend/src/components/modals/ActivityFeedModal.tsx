@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -28,7 +28,7 @@ export default function ActivityFeedModal({ isOpen, activityFeed, onClose }: Act
           ) : (
             activityFeed.map((entry) => (
               <div key={entry.id} className="flex items-start gap-3 p-2 hover:bg-gray-50 rounded-lg border-b border-gray-100 last:border-0">
-                <div className="w-2 h-2 rounded-full mt-1.5 bg-[#004ac6] shrink-0" />
+                <div className="w-2 h-2 rounded-full mt-1.5 bg-[var(--brand-color)] shrink-0" />
                 <div className="flex-1">
                   <p className="text-xs font-semibold">{entry.title}</p>
                   <p className="text-[10px] text-gray-500">{entry.description}</p>

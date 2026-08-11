@@ -83,6 +83,10 @@ export const restaurantService = new RestaurantService();
 export const ownerService = new OwnerService();
 export const planService = new PlanService();
 export const deviceService = new DeviceService();
+export { availabilityService } from './availabilityService';
+export type { AvailabilityState, AvailabilityUpsertItem } from './availabilityService';
+export { orderAdjustmentService } from './orderAdjustmentService';
+export { refundService } from './refundService';
 
 export type {
   AuthService,

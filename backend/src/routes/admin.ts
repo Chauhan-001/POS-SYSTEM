@@ -85,6 +85,7 @@ import {
   exportDashboardCSV, exportDashboardExcel, exportDashboardPDF,
 } from '../controllers/adminAnalyticsExportController';
 import {
+  getAiQuota,
   getDashboardSummary,
   getTokenSummary, getTokenTimeSeries, getTokensByModel, getTokensByRestaurant, getTokensByOwner, getTokensByFeature,
   getRequestSummary, getRequestTimeSeries,
@@ -313,6 +314,9 @@ router.get('/admin/analytics/export/excel', requireAuth, requireCollectionAccess
 router.get('/admin/analytics/export/pdf', requireAuth, requireCollectionAccess('Restaurant', 'read'), exportDashboardPDF);
 
 // ─── Phase 2.7 — AI Usage Dashboard ────────────────────────────
+// Live per-key quota — short cache so the quota section stays fresh but the
+// dashboard still doesn't hammer the provider.
+router.get('/admin/analytics/ai/quota', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 30_000, tags: ['analytics'] }), getAiQuota);
 router.get('/admin/analytics/ai/dashboard', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getDashboardSummary);
 router.get('/admin/analytics/ai/filters', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 300_000, tags: ['analytics'] }), getAvailableFilters);
 router.get('/admin/analytics/ai/search', requireAuth, requireCollectionAccess('Restaurant', 'read'), searchAiAnalytics);

@@ -27,6 +27,8 @@ export interface SettingsRollbackInput {
 
 export interface EffectiveSettingsResult {
   settings: Record<string, any>;
+  /** Public store token embedded in the loyalty QR (minted lazily; read-only). */
+  publicToken?: string;
   meta: {
     version: number;
     scope: SettingsScope;

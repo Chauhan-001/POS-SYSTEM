@@ -11,13 +11,14 @@ import {
   CreditCard, Wallet, CheckCircle, XCircle, Edit3, Eye, Receipt,
   Timer, LayoutGrid, List, Layers, Coffee, Trash, Map
 } from 'lucide-react';
-import { Order, OrderStatus, TableInfo, TakeawayOrder, TableStatus, CartItem, Employee, Floor } from '../src/types';
+import { Order, OrderStatus, TableInfo, TakeawayOrder, TableStatus, CartItem, Employee, Floor, Product } from '../src/types';
 import { useCurrentTime } from '../src/hooks/useCurrentTime';
 import { computeRunningBillTotals } from '../src/utils/runningBill';
 import RestaurantFloorPlan from './RestaurantFloorPlan';
 import TableCard from './TableCard';
 import TakeawayCard from './TakeawayCard';
 import OnlineOrderCard from './OnlineOrderCard';
+import OrderAdjustmentModal from './modals/OrderAdjustmentModal';
 
 interface OrderManagerProps {
   orders: Order[];
@@ -32,12 +33,31 @@ interface OrderManagerProps {
   onOpenReceiptPreview: (order: Order) => void;
   employees: Employee[];
   settings: any;
+  /** Plan-clamped module toggles (effective settings after subscription plan
+   *  enforcement). Falls back to the raw saved settings when omitted. */
+  moduleSettings?: Record<string, boolean>;
   currentEmployee: Employee | null;
   showToast: (message: string, type: 'success' | 'info' | 'warning') => void;
   onAddTable: (table: Omit<TableInfo, 'id'>) => void;
   onUpdateTable: (id: string, updates: Partial<TableInfo>) => void;
   onDeleteTable: (id: string) => void;
   floors?: Floor[];
+  /** Products + role power the unavailable-item adjustment modal on online orders. */
+  products?: Product[];
+  role?: string;
+  /** Controlled active tab (lifted to usePOSState so it survives Billing navigation
+   * — closing an order redirects back to the same tab the user was on). When
+   * omitted, falls back to internal state for standalone usage. */
+  activeTab?: 'tables' | 'takeaway' | 'online' | 'all';
+  onActiveTabChange?: (tab: 'tables' | 'takeaway' | 'online' | 'all') => void;
+  /** Controlled table view mode (grid vs floor plan), lifted to usePOSState so
+   * closing an order restores the exact view. Falls back to internal state. */
+  viewMode?: 'grid' | 'floorplan';
+  onViewModeChange?: (mode: 'grid' | 'floorplan') => void;
+  /** Called with the server-refreshed order after an adjustment — lets App
+   * swap the order in pos.orders immediately so the KDS/KOT cancellations
+   * show right away instead of waiting for the next poll. */
+  onOrderUpdated?: (order: any) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -73,9 +93,15 @@ export default function OrderManager({
   orders, tables, takeawayOrders,
   onOpenOrder, onCreateOrder, onCreateTakeawayOrder,
   onUpdateTakeawayOrder, onClearCompletedTakeaways,
-  onOpenBilling, onOpenReceiptPreview, employees, settings, currentEmployee, showToast,
-  onAddTable, onUpdateTable, onDeleteTable, floors = []
+  onOpenBilling, onOpenReceiptPreview, employees, settings,
+  moduleSettings = settings?.moduleSettings || {}, currentEmployee, showToast,
+  onAddTable, onUpdateTable, onDeleteTable, floors = [],
+  activeTab: activeTabProp, onActiveTabChange,
+  viewMode: viewModeProp, onViewModeChange,
+  products = [], role, onOrderUpdated,
 }: OrderManagerProps) {
+  // Online-order unavailable-item adjustment modal.
+  const [adjustTarget, setAdjustTarget] = useState<Order | null>(null);
   // Section filter for grid view
   const [activeSection, setActiveSection] = useState<string>('All');
   // Floor filter (multi-floor layout) — 'All' when floors exist, else null
@@ -92,11 +118,29 @@ export default function OrderManager({
     return tables.filter(t => !t.floorId || t.floorId === activeFloorId);
   }, [tables, activeFloorId, floors.length]);
 
-  const [activeTab, setActiveTab] = useState<'tables' | 'takeaway' | 'online' | 'all'>('tables');
+  // Controlled tab from usePOSState (survives Billing navigation) with a local
+  // fallback for standalone usage — closing an order redirects back to Orders
+  // and restores the exact sub-view the operator was working in.
+  const [internalTab, setInternalTab] = useState<'tables' | 'takeaway' | 'online' | 'all'>('tables');
+  const activeTab = activeTabProp ?? internalTab;
+  const setActiveTab = useCallback((tab: 'tables' | 'takeaway' | 'online' | 'all') => {
+    setInternalTab(tab);
+    onActiveTabChange?.(tab);
+  }, [onActiveTabChange]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'floorplan'>('grid');
-  const moduleSettings = settings?.moduleSettings || {};
+  // Controlled view mode from usePOSState (survives Billing navigation) with a
+  // local fallback for standalone usage — closing an order restores the exact
+  // table view (grid vs floor plan) the operator was working in.
+  const [internalViewMode, setInternalViewMode] = useState<'grid' | 'floorplan'>('grid');
+  const viewMode = viewModeProp ?? internalViewMode;
+  const setViewMode = useCallback((mode: 'grid' | 'floorplan') => {
+    setInternalViewMode(mode);
+    onViewModeChange?.(mode);
+  }, [onViewModeChange]);
   const isTableServiceEnabled = moduleSettings.enableTableService !== false;
+  const isTakeawayEnabled = moduleSettings.enableTakeawayModule !== false;
+  const isOnlineOrdersEnabled = moduleSettings.enableOnlineOrders !== false;
+  const isWaiterManagementEnabled = moduleSettings.enableWaiterManagement !== false;
 
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -127,6 +171,18 @@ export default function OrderManager({
       (o.tableId === tableId || (table?.orderId && o.id === table.orderId)) &&
       !['Closed', 'Cancelled', 'Paid'].includes(o.status)
     );
+  };
+
+  // Permissive lookup for the table card: returns the order linked to a table
+  // even after it's been Paid/Closed. A table that is still non-Available (timer
+  // running via table.orderSince/occupiedSince) must keep its Bill View and Order
+  // actions available so the operator can reopen the bill and clear the table.
+  const getLinkedOrderForTable = (tableId: string): Order | undefined => {
+    const table = tables.find(t => t.id === tableId);
+    if (table?.orderId && orders.some(o => o.id === table.orderId)) {
+      return orders.find(o => o.id === table.orderId);
+    }
+    return orders.find(o => o.tableId === tableId);
   };
 
   // Auto-remove completed/collected takeaway orders older than 5 minutes
@@ -231,7 +287,7 @@ export default function OrderManager({
 
   // High-level order counts
   const activeOrdersCount = orders.filter(o => 
-    !['Closed', 'Cancelled', 'Paid'].includes(o.status)).length;
+    !['Closed', 'Cancelled', 'Paid', 'Refunded'].includes(o.status)).length;
   const preparingCount = orders.filter(o => o.status === 'Preparing').length;
   const waitingPaymentCount = orders.filter(o => o.status === 'Waiting Payment').length;
   const occupiedTablesCount = tables.filter(t => t.status !== 'Available').length;
@@ -262,7 +318,9 @@ export default function OrderManager({
     
     orders.filter(o => 
       ['Swiggy', 'Zomato', 'Uber Eats', 'Website', 'Phone Orders'].includes(o.type) &&
-      !['Closed', 'Cancelled'].includes(o.status)
+      // Only ACTIVE online orders belong on this tab — Paid/Refunded/Closed/
+      // Cancelled leave the active view (they stay searchable under All Orders).
+      !['Closed', 'Cancelled', 'Paid', 'Refunded'].includes(o.status)
     ).forEach(o => {
       if (!grouped[o.type]) grouped[o.type] = [];
       grouped[o.type].push(o);
@@ -331,10 +389,12 @@ export default function OrderManager({
               <span className="text-[10px] font-bold text-blue-800">{occupiedTablesCount}/{tables.length} Tables</span>
             </div>
           )}
-          <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
-            <ShoppingBag className="w-3.5 h-3.5 text-green-600" />
-            <span className="text-[10px] font-bold text-green-800">{takeawayOrders.length} Takeaway</span>
-          </div>
+          {isTakeawayEnabled && (
+            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
+              <ShoppingBag className="w-3.5 h-3.5 text-green-600" />
+              <span className="text-[10px] font-bold text-green-800">{takeawayOrders.length} Takeaway</span>
+            </div>
+          )}
         </div>
 
         {/* Tab Navigation */}
@@ -355,36 +415,40 @@ export default function OrderManager({
               )}
             </button>
           )}
-          <button
-            onClick={() => setActiveTab('takeaway')}
-            className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'takeaway'
-                ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <Package className="w-3.5 h-3.5" />
-            Takeaway
-            {takeawayOrders.length > 0 && (
-              <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">{takeawayOrders.length}</span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab('online')}
-            className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'online'
-                ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            Online Orders
-            {Object.values(onlineOrdersByPlatform).flat().length > 0 && (
-              <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">
-                {Object.values(onlineOrdersByPlatform).flat().length}
-              </span>
-            )}
-          </button>
+          {isTakeawayEnabled && (
+            <button
+              onClick={() => setActiveTab('takeaway')}
+              className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'takeaway'
+                  ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Package className="w-3.5 h-3.5" />
+              Takeaway
+              {takeawayOrders.length > 0 && (
+                <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">{takeawayOrders.length}</span>
+              )}
+            </button>
+          )}
+          {isOnlineOrdersEnabled && (
+            <button
+              onClick={() => setActiveTab('online')}
+              className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'online'
+                  ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              Online Orders
+              {Object.values(onlineOrdersByPlatform).flat().length > 0 && (
+                <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">
+                  {Object.values(onlineOrdersByPlatform).flat().length}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={() => setActiveTab('all')}
             className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -414,7 +478,7 @@ export default function OrderManager({
                   onClick={() => setActiveFloorId('All')}
                   className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                     activeFloorId === 'All'
-                      ? 'bg-[#004ac6] text-white shadow-sm'
+                      ? 'bg-[var(--brand-color)] text-white shadow-sm'
                       : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
                   }`}
                 >
@@ -426,7 +490,7 @@ export default function OrderManager({
                     onClick={() => setActiveFloorId(floor.id)}
                     className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                       activeFloorId === floor.id
-                        ? 'bg-[#004ac6] text-white shadow-sm'
+                        ? 'bg-[var(--brand-color)] text-white shadow-sm'
                         : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
                     }`}
                   >
@@ -498,7 +562,7 @@ export default function OrderManager({
                     <TableCard
                       key={table.id}
                       table={table}
-                      order={getOrderForTable(table.id)}
+                      order={getLinkedOrderForTable(table.id)}
                       bill={getRunningBill(table.id)}
                       currencySymbol={currencySymbol}
                       sectionColors={sectionColors}
@@ -516,7 +580,7 @@ export default function OrderManager({
         )}
 
         {/* TAKEAWAY VIEW */}
-        {activeTab === 'takeaway' && (
+        {activeTab === 'takeaway' && isTakeawayEnabled && (
           <div>
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-bold text-sm text-gray-800">
@@ -573,7 +637,7 @@ export default function OrderManager({
         )}
 
         {/* ONLINE ORDERS VIEW */}
-        {activeTab === 'online' && (
+        {activeTab === 'online' && isOnlineOrdersEnabled && (
           <div className="space-y-6">
             {(['Swiggy', 'Zomato', 'Uber Eats', 'Website', 'Phone Orders'] as const).map(platform => {
               const platformOrders = onlineOrdersByPlatform[platform] || [];
@@ -603,6 +667,8 @@ export default function OrderManager({
                         STATUS_COLORS={STATUS_COLORS}
                         onOpenBilling={onOpenBilling}
                         getElapsedTime={getElapsedTime}
+                        onAdjustOrder={setAdjustTarget}
+                        hasAdjustments={['ADJUSTED', 'CANCELLED'].includes((order as any).adjustmentStatus)}
                       />
                     ))}
                   </div>
@@ -671,7 +737,7 @@ export default function OrderManager({
                           {order.customerName && <span>{order.customerName}</span>}
                           <span>{order.items.length} items</span>
                           <span>{getElapsedTime(order.createdAt, now)}</span>
-                          {order.waiterName && <span>👤 {order.waiterName}</span>}
+                          {isWaiterManagementEnabled && order.waiterName && <span>👤 {order.waiterName}</span>}
                         </div>
                       </div>
                     </div>
@@ -775,7 +841,7 @@ export default function OrderManager({
                           </div>
                           <div className="flex items-center gap-3 text-[10px] text-gray-500">
                             <span>Capacity: {table.capacity}</span>
-                            {table.waiterName && <span>• Waiter: {table.waiterName}</span>}
+                            {isWaiterManagementEnabled && table.waiterName && <span>• Waiter: {table.waiterName}</span>}
                             {table.reservationName && <span>• Reservation: {table.reservationName}</span>}
                           </div>
                         </div>
@@ -900,6 +966,31 @@ export default function OrderManager({
             </div>
           )}
         </div>
+      )}
+
+      {/* Unavailable-item adjustment workflow for online orders */}
+      {adjustTarget && (
+        <OrderAdjustmentModal
+          order={adjustTarget}
+          products={products}
+          currencySymbol={currencySymbol}
+          role={role || currentEmployee?.role}
+          onClose={() => setAdjustTarget(null)}
+          onAdjusted={(res: any) => {
+            const adj = res?.adjustment;
+            if (adj) {
+              const parts: string[] = [];
+              if (adj.refundRequired > 0) parts.push(`${currencySymbol}${(adj.refundRequired ?? 0).toFixed(2)} refund`);
+              if (adj.additionalDue > 0) parts.push(`${currencySymbol}${(adj.additionalDue ?? 0).toFixed(2)} additional due`);
+              showToast(`Order adjusted — new total ${currencySymbol}${(adj.newTotal ?? 0).toFixed(2)}${parts.length ? ' (' + parts.join(', ') + ')' : ''}`, 'success');
+            }
+            // Swap the refreshed order (with cancelled KOT lines + new totals)
+            // into the shared order list so the KDS reflects it immediately.
+            if (res?.order && typeof onOrderUpdated === 'function') {
+              onOrderUpdated(res.order);
+            }
+          }}
+        />
       )}
     </div>
   );

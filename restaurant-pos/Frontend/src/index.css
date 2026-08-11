@@ -34,6 +34,12 @@ html, body {
 
 /* ── Design tokens (CSS custom properties) ── */
 :root {
+  /* Theme-driven brand/accent tokens. Set at runtime from Settings → Theme
+     (SettingsManager applies them on :root); these are the default fallbacks.
+     --brand-color tints every primary/interactive element app-wide. */
+  --brand-color: #004ac6;
+  --accent-color: #10b981;
+
   --color-primary: #004ac6;
   --color-primary-hover: #003ea8;
   --color-primary-light: #f3f3fe;

@@ -120,15 +120,19 @@ export async function validateInventoryAction(
     name: string;
     currentStock: number;
     unit: string;
+    averageCost: number;
   }> = [];
 
   try {
+    // ALWAYS scoped to the authenticated restaurant — a voice command must
+    // never see or be validated against another tenant's catalog.
     const products = await Product.find({
-      branchId: context.branchId
-        ? new mongoose.Types.ObjectId(context.branchId)
-        : undefined,
+      restaurantId: new mongoose.Types.ObjectId(context.restaurantId),
+      ...(context.branchId
+        ? { branchId: new mongoose.Types.ObjectId(context.branchId) }
+        : {}),
     })
-      .select('name currentStock unit')
+      .select('name currentStock unit averageCost')
       .lean()
       .limit(500);
     inventoryItems = products as any[];
@@ -188,8 +192,19 @@ export async function validateInventoryAction(
         unit: normalizedUnit,
         currentStock: 0,
         newStock: item.quantity,
+        purchaseRate: item.rate,
       });
       continue;
+    }
+
+    // Unit sanity check — surface a mismatch so the merchant can fix it at
+    // confirmation time instead of silently booking stock in the wrong unit.
+    const configuredUnit = (inventoryMatch.unit || 'pcs').trim().toLowerCase();
+    const spokenUnit = normalizedUnit.toLowerCase();
+    if (spokenUnit !== configuredUnit) {
+      warnings.push(
+        `Item "${item.item}": spoken unit "${normalizedUnit}" differs from configured unit "${inventoryMatch.unit}" — using "${inventoryMatch.unit}"`
+      );
     }
 
     // Check stock sufficiency (for remove/waste actions)
@@ -200,9 +215,13 @@ export async function validateInventoryAction(
     resolvedItems.push({
       itemName: inventoryMatch.name,
       quantity: item.quantity,
-      unit: normalizedUnit,
+      // The product's configured unit is canonical — never book stock in a
+      // unit the catalog doesn't recognize for this item.
+      unit: inventoryMatch.unit || normalizedUnit,
       currentStock,
       newStock,
+      purchaseRate: item.rate,
+      configuredUnit,
     });
   }
 

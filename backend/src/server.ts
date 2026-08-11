@@ -48,6 +48,7 @@
 // =============================================================================
 
 import express from 'express';
+import http from 'http';
 import cors from 'cors';
 import compression from 'compression';
 import path from 'path';
@@ -72,6 +73,7 @@ import adminRouter from './routes/admin';
 import adminReportsRouter from './routes/adminReports';
 import productsRouter from './routes/products';
 import ordersRouter from './routes/orders';
+import availabilityRouter from './routes/availability';
 import billsRouter from './routes/bills';
 import customersRouter from './routes/customers';
 import employeesRouter from './routes/employees';
@@ -89,11 +91,13 @@ import aiRouter from './modules/ai/routes/ai';
 import voiceInventoryRouter from './modules/voice-inventory/routes/voiceInventory';
 import subscriptionRouter from './modules/subscription/subscriptionRoutes';
 import qrOrderingRouter from './modules/qr-ordering/routes/qrOrdering';
+import qrTokensRouter from './modules/qr-ordering/routes/qrTokens';
 import offersRouter from './routes/offers';
 import loyaltyRouter from './routes/loyalty';
 import otpRouter from './routes/otp';
 import referralsRouter from './routes/referrals';
 import campaignsRouter from './routes/campaigns';
+import automationsRouter from './routes/automations';
 import customerReportsRouter from './routes/customerReports';
 import purchasesRouter from './routes/purchases';
 import inventoryEventsRouter from './routes/inventoryEvents';
@@ -105,9 +109,15 @@ import cashLedgerRouter from './routes/cashLedger';
 import financeRouter from './routes/finance';
 import reportsRouter from './modules/reports/routes/reports';
 import settingsRouter from './modules/settings/routes/settings';
+import publicStoreRouter from './modules/public-store/routes/publicStore';
+import { renderPublicStorePage } from './modules/public-store/publicStorePage';
+import { initSocket } from './socket';
 import { startSubscriptionScheduler } from './modules/subscription/subscriptionScheduler';
 import { getSTTConfig } from './modules/voice-inventory/services/SpeechService';
 import { aiConfig } from './modules/ai/config';
+import { hydrateQuotaFromDb } from './modules/ai/services/aiQuotaTracker';
+import { startCampaignWorker } from './services/campaignQueue';
+import { startMarketingScheduler } from './services/marketingScheduler';
 
 // =============================================================================
 // APP SETUP — Middleware stack
@@ -140,6 +150,22 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
+
+// Razorpay payment webhook signature verification needs the EXACT raw request
+// body that was signed. express.json() above re-serializes and would break the
+// HMAC, so capture the raw bytes for the webhook route before JSON parsing.
+app.use((req, res, next) => {
+  if (req.originalUrl.split('?')[0] === '/api/payment/webhook') {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => {
+      (req as any).razorpayRawBody = Buffer.concat(chunks).toString('utf8');
+      next();
+    });
+    return;
+  }
+  next();
+});
 
 // ─── Response Compression (gzip / deflate) ──────────────────────
 // Compresses JSON, text, and other responses above threshold.
@@ -221,12 +247,26 @@ app.use('/api/ai', aiRouter);
 // Voice inventory routes
 app.use('/api/voice-inventory', voiceInventoryRouter);
 
+// Subscription & payment routes — mounted BEFORE the global apiLimiter (Group B)
+// so the shared per-IP business-request budget (consumed heavily by the running
+// POS polling) can never throttle the public /plans catalog or the subscription /
+// payment calls, which would otherwise silently blank the Subscription page.
+// Routes requiring payment still use the dedicated PaymentGateway circuit breaker.
+app.use('/api', subscriptionRouter);
+
+// Public storefront (customer QR page) — mounted BEFORE the global apiLimiter so
+// a customer's phone scanning the loyalty QR (unauthenticated, public) never
+// consumes the shared business-API budget shared by all POS terminals behind the
+// same LAN/NAT IP. publicLimiter is moderate and per-IP.
+app.use('/api/public-store', publicLimiter, publicStoreRouter);
+
 // ─── Group B: Apply global rate limiter ─────────────────────────
 app.use('/api', apiLimiter);
 
 // ─── Group C: Business routes (behind rate limiter) ─────────────
 app.use('/api/products', productsRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/availability', availabilityRouter);
 app.use('/api/bills', billsRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/employees', employeesRouter);
@@ -241,6 +281,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/qr-ordering', qrOrderingRouter);
+app.use('/api/qr-tokens', qrTokensRouter);
 app.use('/api/rewards', rewardsRouter);
 app.use('/api/tables', tablesRouter);
 app.use('/api/floors', floorsRouter);
@@ -251,12 +292,12 @@ app.use('/api/devices', devicesRouter);
 app.use('/api/purchases', purchasesRouter);
 app.use('/api/inventory-events', inventoryEventsRouter);
 app.use('/api/suppliers', suppliersRouter);
-app.use('/api', subscriptionRouter);
 app.use('/api', offersRouter);
 app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/otp', otpRouter);
 app.use('/api/referrals', referralsRouter);
 app.use('/api/campaigns', campaignsRouter);
+app.use('/api/automations', automationsRouter);
 app.use('/api/customer-reports', customerReportsRouter);
 
 // =============================================================================
@@ -285,7 +326,12 @@ process.on('unhandledRejection', (reason) => {
 // Registered BEFORE the SPA catch-all so image URLs resolve to real files.
 app.use('/uploads', express.static(config.uploads.dir));
 
-const distPath = path.join(__dirname, '../../Frontend/dist');
+// Public store page (the URL baked into the loyalty QR codes). Served by this
+// server so the QR works on LAN/HTTP deployments without a CDN. Must be
+// registered BEFORE the SPA catch-all below.
+app.get('/public/:token', renderPublicStorePage);
+
+const distPath = config.frontendDist;
 app.use(express.static(distPath));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
@@ -327,6 +373,14 @@ async function start() {
   // ─── 3. Start subscription state transition scheduler ─────────
   startSubscriptionScheduler();
 
+  // ─── 3.1. Start the marketing delivery worker + scheduler ─────
+  // Campaign delivery is queued in-process and drained by a background worker
+  // (never inside an HTTP request). The marketing scheduler auto-activates/
+  // expires offers, dispatches due scheduled campaigns, recovers stuck sends
+  // and runs enabled automations — all idempotent across restarts.
+  startCampaignWorker();
+  startMarketingScheduler();
+
   // ─── 3.5. Log resolved AI/STT configuration for quick misconfiguration detection ─
   // Values here are the ones ACTUALLY used at runtime (auto-detection included),
   // so a wrong model/provider is visible in the boot logs immediately.
@@ -334,10 +388,20 @@ async function start() {
   console.log(`[Config] LLM provider=${aiConfig.provider}, model=${aiConfig.model}`);
   console.log(`[Config] STT provider=${stt.provider}, model=${stt.model || 'default'}`);
 
-  // ─── 4. Start HTTP server ─────────────────────────────────────
-  app.listen(config.port, '0.0.0.0', () => {
+  // ─── 3.6. Hydrate AI quota snapshots from MongoDB so the admin dashboard's
+  // per-key quota cards keep their rate-limit history across restarts. Best-
+  // effort: a failure here only means quota history starts empty this boot.
+  await hydrateQuotaFromDb().catch((err) =>
+    console.warn('[AiQuotaTracker] startup hydration failed:', err?.message || err),
+  );
+
+  // ─── 4. Start HTTP server (with Socket.IO live layer) ─────────
+  const server = http.createServer(app);
+  initSocket(server);
+  server.listen(config.port, '0.0.0.0', () => {
     console.log(`POS Backend running on http://localhost:${config.port}`);
     console.log(`API available at http://localhost:${config.port}/api`);
+    console.log(`Live events (Socket.IO) attached on ws://localhost:${config.port}`);
     console.log(`Environment: ${config.nodeEnv}`);
   });
 

@@ -17,6 +17,12 @@ export interface STTResult {
   isFinal: boolean;
   durationMs: number;
   language: string;
+  /** Provider that actually produced the transcript (when chained) */
+  provider?: string;
+  /** Estimated cost in USD for this call (when cost tracking is on) */
+  costUsd?: number;
+  /** Provider chain attempt trace (chained/managed calls) */
+  attemptHistory?: Array<{ key: string; status: 'ok' | 'skipped' | 'failed'; error?: string; latencyMs?: number }>;
   /** Diagnostic details captured on failure (never shown in normal flow) */
   error?: {
     message: string;
@@ -58,10 +64,36 @@ export interface ParsedItem {
   item: string | null;
   quantity: number;
   unit?: string;
+  /**
+   * Purchase rate (₹ per unit) for this item:
+   *   - the rate spoken in the command ("5 kg aloo 40 rupaye ke rate par" → 40), or
+   *   - the catalog product's averageCost when no rate was spoken (rateSource 'average'),
+   *   - undefined when neither exists.
+   */
+  rate?: number;
+  /** Where the rate came from — 'spoken' (command) vs 'average' (catalog averageCost). */
+  rateSource?: 'spoken' | 'average';
   /** Resolved canonical inventory item name (after alias resolution) */
   canonicalName?: string;
   /** Resolved product ID after running the Product Resolution Engine */
   productId?: string;
+  /**
+   * Confidence that the spoken item resolved to a REAL inventory product
+   * (0..1). Low values mean the item may be a new product or ambiguous.
+   */
+  resolutionConfidence?: number;
+  /**
+   * True when the spoken item could NOT be confidently matched to a known
+   * inventory item. The frontend MUST surface this and let the merchant pick
+   * rather than silently resolving it.
+   */
+  ambiguous?: boolean;
+  /** Candidate inventory items the merchant could mean (disambiguation picker). */
+  candidates?: Array<{
+    name: string;
+    unit?: string;
+    currentStock?: number;
+  }>;
 }
 
 export interface VoiceParseOutput {
@@ -71,6 +103,28 @@ export interface VoiceParseOutput {
   originalText: string;
   language?: string;
   error?: string;
+  /**
+   * Supplier/vendor name spoken in the command ("... from Verka Dairy").
+   * Optional — only present when the merchant actually named a supplier.
+   */
+  supplier?: string;
+  /**
+   * Purchase date as YYYY-MM-DD. Relative words ("kal" / "aaj" / "parso")
+   * are resolved to actual dates at parse time. When absent, execution
+   * defaults the date to today.
+   */
+  date?: string;
+  /**
+   * Brand/variant spoken in the command ("Amul brand butter"). The same
+   * product can come from different brands — only present when the merchant
+   * actually named one.
+   */
+  brand?: string;
+  /**
+   * Expiry date of the incoming batch (YYYY-MM-DD). Only present when the
+   * merchant explicitly mentioned an expiry ("expiry 31 Dec 2026").
+   */
+  expiryDate?: string;
 }
 
 // ====================================================================
@@ -99,6 +153,10 @@ export interface InventoryValidationResult {
     currentStock: number;
     newStock: number;
     productId?: string;
+    /** Spoken purchase rate (₹/unit) — applied to averageCost on confirm. */
+    purchaseRate?: number;
+    /** The product's canonical unit, when resolved. */
+    configuredUnit?: string;
   }>;
 }
 
@@ -135,6 +193,11 @@ export interface VoiceInventoryRequest {
 export interface VoiceInventoryResponse {
   success: boolean;
   auditLogId?: string;
+  /** Server-side pending action issued for mandatory confirmation */
+  pendingActionId?: string;
+  /** One-time confirmation token (frontend holds; only hash is stored) */
+  confirmationToken?: string;
+  confirmationExpiresAt?: string;
   transcript?: string;
   parsed?: VoiceParseOutput;
   missingFields?: string[];
@@ -413,6 +476,14 @@ export interface ConversationState {
   pendingUnit?: string;
   /** Purchase price tracking (for "bought X for Y rupees"). */
   pendingPurchasePrice?: number;
+  /** Supplier/vendor named during the conversation (for inventory_add). */
+  pendingSupplier?: string;
+  /** Purchase date captured during the conversation (YYYY-MM-DD). */
+  pendingDate?: string;
+  /** Brand named during the conversation (for inventory_add, e.g. "Amul"). */
+  pendingBrand?: string;
+  /** Expiry date captured during the conversation (YYYY-MM-DD). */
+  pendingExpiryDate?: string;
   /** Turn history (last 20 turns max). */
   turnHistory: ConversationTurn[];
   /** When the conversation started. */

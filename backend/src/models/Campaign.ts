@@ -2,17 +2,22 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Campaign Model — CRM campaign builder (Phase 1.6).
+ * Campaign Model — CRM campaign builder (Phase 1.6, extended).
  * A campaign targets an audience (segments / manual phones / filters), uses a
- * message template (SMS/WhatsApp/Email/Notification), has a schedule and
+ * message template (SMS/WhatsApp/Email/Notification/Webhook), has a schedule and
  * tracks delivery + redemption analytics. Delivery records are appended to
  * CampaignHistory; this document holds the campaign definition & aggregates.
+ *
+ * Phase 17/18 additions:
+ *   - 'webhook' channel (the first functional delivery adapter)
+ *   - schedule.dispatchedAt (idempotency marker set by the scheduler/worker)
+ *   - delivery-friendly indexes
  */
 
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type CampaignChannel = 'sms' | 'whatsapp' | 'email' | 'app_notification';
-export type CampaignStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed';
+export type CampaignChannel = 'sms' | 'whatsapp' | 'email' | 'app_notification' | 'webhook';
+export type CampaignStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed' | 'partial';
 
 export interface ICampaign extends Document {
   restaurantId: mongoose.Types.ObjectId;
@@ -31,7 +36,9 @@ export interface ICampaign extends Document {
   };
   schedule: {
     mode: 'immediate' | 'scheduled';
-    scheduledAt?: Date;
+    scheduledAt?: Date | null;
+    /** When the scheduler/worker claimed this campaign for dispatch (idempotency). */
+    dispatchedAt?: Date | null;
   };
   status: CampaignStatus;
   stats: {
@@ -51,7 +58,7 @@ const CampaignSchema = new Schema<ICampaign>(
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true, index: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
-    offerId: { type: Schema.Types.ObjectId, ref: 'Offer' },
+    offerId: { type: Schema.Types.ObjectId, ref: 'Offer', index: true },
     audience: {
       type: new Schema({
         segmentIds: [{ type: String, trim: true }],
@@ -62,7 +69,7 @@ const CampaignSchema = new Schema<ICampaign>(
     },
     template: {
       type: new Schema({
-        channel: { type: String, enum: ['sms', 'whatsapp', 'email', 'app_notification'], required: true },
+        channel: { type: String, enum: ['sms', 'whatsapp', 'email', 'app_notification', 'webhook'], required: true },
         subject: { type: String, trim: true },
         message: { type: String, required: true, trim: true },
       }, { _id: false }),
@@ -72,10 +79,11 @@ const CampaignSchema = new Schema<ICampaign>(
       type: new Schema({
         mode: { type: String, enum: ['immediate', 'scheduled'], default: 'immediate' },
         scheduledAt: { type: Date },
+        dispatchedAt: { type: Date, default: null },
       }, { _id: false }),
-      default: () => ({ mode: 'immediate', scheduledAt: undefined }),
+      default: () => ({ mode: 'immediate', scheduledAt: undefined, dispatchedAt: null }),
     },
-    status: { type: String, enum: ['draft', 'scheduled', 'sending', 'sent', 'cancelled', 'failed'], default: 'draft' },
+    status: { type: String, enum: ['draft', 'scheduled', 'sending', 'sent', 'cancelled', 'failed', 'partial'], default: 'draft' },
     stats: {
       type: new Schema({
         audienceCount: { type: Number, default: 0, min: 0 },
@@ -93,5 +101,7 @@ const CampaignSchema = new Schema<ICampaign>(
 
 CampaignSchema.index({ restaurantId: 1, status: 1, createdAt: -1 });
 CampaignSchema.index({ restaurantId: 1, createdAt: -1 });
+CampaignSchema.index({ restaurantId: 1, 'schedule.scheduledAt': 1, status: 1 });
+CampaignSchema.index({ restaurantId: 1, offerId: 1 });
 
 export default mongoose.model<ICampaign>('Campaign', CampaignSchema);

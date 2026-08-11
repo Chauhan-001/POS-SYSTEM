@@ -152,6 +152,29 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
     refreshRecurring();
   }, [refreshCategories, refreshVendors, refreshFinance, refreshLedger, refreshRecurring]);
 
+  // Live freshness: any write (here, on another screen, or a replayed offline
+  // op) invalidates our cached collections and fires the cache-invalidated
+  // event — re-fetch the affected collection promptly. A 5-minute interval
+  // keeps the cash ledger + recurring list current while the Finance
+  // workspace stays open. Every fetch here is TTL-gated (categories/vendors/
+  // recurring 1h, ledger 5min), so the interval only hits the network when a
+  // cache actually expired — it can never spam the shared API limiter.
+  useEffect(() => {
+    const onInvalidated = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail;
+      if (key === 'pos_expense_categories') refreshCategories();
+      else if (key === 'pos_vendors') refreshVendors();
+      else if (key === 'pos_cash_ledger') refreshLedger();
+      else if (key === 'pos_recurring_expenses') refreshRecurring();
+    };
+    window.addEventListener(api.CACHE_INVALIDATED_EVENT, onInvalidated);
+    const interval = setInterval(() => { refreshLedger(); refreshRecurring(); }, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener(api.CACHE_INVALIDATED_EVENT, onInvalidated);
+      clearInterval(interval);
+    };
+  }, [refreshCategories, refreshVendors, refreshLedger, refreshRecurring]);
+
   // ── Derived expense views ─────────────────────────────────────
   const visibleExpenses = useMemo(() => {
     let result = showDeleted ? expenses : expenses.filter(e => !e.isDeleted);
@@ -422,12 +445,12 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
         </div>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => { refreshCategories(); refreshVendors(); refreshFinance(); refreshLedger(); refreshRecurring(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[#004ac6] hover:text-[#004ac6] transition-all cursor-pointer">
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
             <RefreshCw className="w-3.5 h-3.5" /> Sync
           </button>
           {tab === 'expenses' && (
             <button onClick={handleExport}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[#004ac6] hover:text-[#004ac6] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <Download className="w-3.5 h-3.5" /> Export CSV
             </button>
           )}
@@ -777,7 +800,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-[11px] text-gray-500">Templates generate child expenses automatically on their schedule. Pause to freeze, resume to continue.</p>
-              <button onClick={runRecurringNow} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[#004ac6] hover:text-[#004ac6] transition-all cursor-pointer">
+              <button onClick={runRecurringNow} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
                 <Repeat className="w-3.5 h-3.5" /> Generate Due Now
               </button>
             </div>

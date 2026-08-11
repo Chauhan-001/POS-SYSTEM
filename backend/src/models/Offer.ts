@@ -212,10 +212,15 @@ const OfferSchema = new Schema<IOffer>(
   { timestamps: true }
 );
 
+// Phase 26 — delivery/query indexes. Every index is restaurant-prefixed so the
+// scheduler's tenant-wide scans (scheduled → active, active → expired) and the
+// per-restaurant list/segment queries stay index-backed.
 OfferSchema.index({ restaurantId: 1, status: 1 });
 OfferSchema.index({ restaurantId: 1, startDate: 1, endDate: 1 });
+OfferSchema.index({ restaurantId: 1, scheduledDate: 1, status: 1 });
 OfferSchema.index({ restaurantId: 1, type: 1 });
 OfferSchema.index({ restaurantId: 1, couponCode: 1 }, { unique: true, sparse: true });
+OfferSchema.index({ restaurantId: 1, targetSegmentIds: 1 });
 OfferSchema.index({ title: 'text', description: 'text' });
 
 export default mongoose.model<IOffer>('Offer', OfferSchema);

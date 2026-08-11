@@ -34,7 +34,7 @@ export default function SplitPaymentModal({
       <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 border border-[#e1e2ed]" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center">
           <h3 className="font-bold text-sm flex items-center gap-1.5">
-            <ArrowLeftRight className="w-4 h-4 text-[#004ac6]" />
+            <ArrowLeftRight className="w-4 h-4 text-[var(--brand-color)]" />
             Split Payment
           </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100">
@@ -160,7 +160,7 @@ export default function SplitPaymentModal({
             disabled={!isBalanced}
             className={`px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer ${
               isBalanced
-                ? 'bg-[#004ac6] text-white hover:bg-[#003ea8] hover:shadow-md'
+                ? 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8] hover:shadow-md'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
           >

@@ -1,6 +1,6 @@
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
-import { PaymentGateway, CreateOrderOptions, VerifySignatureOptions } from './PaymentGateway';
+import { PaymentGateway, CreateOrderOptions, VerifySignatureOptions, RefundOptions, RefundResult } from './PaymentGateway';
 import { config } from '../../config';
 import { CircuitBreaker } from '../../utils/CircuitBreaker';
 
@@ -99,6 +99,34 @@ export class RazorpayGateway extends PaymentGateway {
       console.error('[RazorpayGateway] Webhook signature verification error:', error);
       return false;
     }
+  }
+
+  /**
+   * Initiate a provider refund. The returned refund id is the ONLY confirmation
+   * that the gateway accepted the refund — callers must persist it and never
+   * fabricate success.
+   */
+  async refund(options: RefundOptions): Promise<RefundResult> {
+    const result = await razorpayCircuitBreaker.execute(
+      async () => {
+        const refund = await this.razorpay.refunds.create({
+          payment_id: options.paymentId,
+          amount: options.amount, // paise; omitted → full refund
+          notes: options.notes || {},
+        });
+        console.log('[RazorpayGateway] Refund created:', refund.id);
+        return {
+          id: refund.id,
+          status: refund.status,
+          amount: refund.amount,
+          currency: refund.currency || 'INR',
+        };
+      },
+      () => {
+        throw new Error('Payment gateway is temporarily unavailable. Refund not initiated — nothing was refunded.');
+      },
+    );
+    return result.data;
   }
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Save, Bell, Mic, Package, Sliders } from 'lucide-react';
 import { motion } from 'motion/react';
 import { DEFAULT_INVENTORY_SETTINGS } from '../data';
@@ -32,21 +32,17 @@ export default function SettingsPage() {
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Low Stock Alert at</label>
                 <div className="flex items-center gap-2">
                   <input type="number" value={settings.lowStockThreshold} onChange={e => setSettings(s => ({ ...s, lowStockThreshold: Number(e.target.value) }))}
-                    className="w-24 px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                    className="w-24 px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                   />
                   <span className="text-sm text-gray-500">% of min stock</span>
                 </div>
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Default Supplier</label>
-                <select value={settings.defaultSupplier} onChange={e => setSettings(s => ({ ...s, defaultSupplier: e.target.value }))}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6] bg-white"
-                >
-                  <option>Local Vendor</option>
-                  <option>Amul Dairy</option>
-                  <option>Tata Consumer</option>
-                  <option>Modern Bakery</option>
-                </select>
+                <input type="text" value={settings.defaultSupplier} onChange={e => setSettings(s => ({ ...s, defaultSupplier: e.target.value }))}
+                  placeholder="Supplier name"
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Units</label>
@@ -78,7 +74,7 @@ export default function SettingsPage() {
                       <span className="text-sm font-semibold">{item.label}</span>
                     </div>
                     <button onClick={() => toggle(item.key)}
-                      className={`relative w-12 h-6 rounded-full transition-all cursor-pointer ${isOn ? 'bg-[#004ac6]' : 'bg-gray-200'}`}
+                      className={`relative w-12 h-6 rounded-full transition-all cursor-pointer ${isOn ? 'bg-[var(--brand-color)]' : 'bg-gray-200'}`}
                     >
                       <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-all ${isOn ? 'left-6' : 'left-0.5'}`} />
                     </button>
@@ -89,7 +85,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <button onClick={() => notify('Settings saved', 'success')} className="w-full py-3.5 bg-[#004ac6] hover:bg-[#003ea8] text-white rounded-2xl text-sm font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm">
+        <button onClick={() => notify('Settings saved', 'success')} className="w-full py-3.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-2xl text-sm font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm">
           <Save className="w-4 h-4" /> Save Settings
         </button>
       </motion.div>

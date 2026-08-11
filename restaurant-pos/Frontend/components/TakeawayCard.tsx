@@ -40,8 +40,16 @@ function TakeawayCard({
   return (
     <div
       onClick={() => {
-        const fullOrder = orders.find(o => o.id === order.orderId);
+        // Resolve the linked Order by id first (the live link set on create).
+        // Fall back to matching by orderNumber: legacy rows whose orderId still
+        // points at the takeaway-orders doc id (pre-fix rows) or was clobbered
+        // to null by a server merge before the link push landed share the same
+        // order number series as their Order, so the match is unambiguous.
+        const fullOrder =
+          orders.find(o => o.id === order.orderId) ||
+          orders.find(o => o.orderNumber === order.orderNumber);
         if (fullOrder) onOpenBilling(fullOrder);
+        else showToast(`Order #${order.orderNumber} not found — pull to sync`, 'warning');
       }}
       className={`rounded-xl border-2 transition-all duration-200 cursor-pointer p-4 ${
         isOverdue

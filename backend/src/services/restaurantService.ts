@@ -63,6 +63,7 @@ import RestaurantSettings from '../modules/settings/models/RestaurantSettings';
 import Printer from '../modules/settings/models/Printer';
 import { hashPin } from '../utils/bcrypt';
 import { AppError } from '../utils/AppError';
+import { generatePublicToken } from '../utils/publicToken';
 import { entitlementService } from './entitlementService';
 import { config } from '../config';
 import {
@@ -139,6 +140,7 @@ function toRestaurantRow(r: any, sub: any, branchCount: number, deviceCount: num
     offlineMode: r.offlineMode,
     aiEnabled: r.aiEnabled || (sub?.features || []).includes('ai'),
     loyaltyEnabled: r.loyaltyEnabled,
+    publicToken: r.publicToken || null,
     weatherEnabled: r.weatherEnabled,
     plan: sub?.plan || 'N/A',
     subscriptionStatus: sub?.status || 'active',
@@ -404,6 +406,7 @@ export class RestaurantService {
       tempPasswordShown: false,
       secretKey: crypto.randomBytes(16).toString('hex'),
       apiKey: `pk_live_${crypto.randomBytes(24).toString('hex')}`,
+      publicToken: generatePublicToken(),
       auditTrail: [{
         id: crypto.randomUUID(),
         action: 'Restaurant Created',

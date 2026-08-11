@@ -18,6 +18,10 @@ export interface InventoryItem {
 export interface Purchase {
   id: string;
   supplier: string;
+  /** Brand/variant of the item (e.g. "Amul") — only present when one was named. */
+  brand?: string;
+  /** Expiry date of this batch (YYYY-MM-DD) — only when one was mentioned. */
+  expiryDate?: string;
   item: string;
   quantity: number;
   unit: string;
@@ -73,7 +77,7 @@ export interface ExpiryItem {
 
 export interface TimelineEntry {
   id: string;
-  type: 'purchased' | 'sold' | 'adjusted' | 'waste' | 'closing';
+  type: 'purchased' | 'sold' | 'adjusted' | 'waste' | 'closing' | 'purchase' | 'return';
   item: string;
   quantity: number;
   unit: string;

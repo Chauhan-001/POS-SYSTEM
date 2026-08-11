@@ -10,6 +10,7 @@
 import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { productService, stockMovementService } from '../services';
+import { resolveMenuProductScope } from '../services/productService';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 /**
@@ -73,9 +74,12 @@ export async function adjustProductStock(req: Request, res: Response): Promise<v
 
 /**
  * GET /api/products — List all products (with optional category filter).
- * When the caller belongs to a restaurant, returns that restaurant's own
- * products PLUS the shared/global menu (products with no restaurantId) so
- * existing installs keep the full menu while restaurants can own products.
+ * Strict tenant scoping for restaurant callers: a restaurant sees ONLY
+ * products saved under its own restaurantId in the database. The shared/global
+ * catalog (restaurantId: null) is never merged in, so the POS billing menu
+ * cannot surface hardcoded items the restaurant never created. Admin/platform
+ * callers (no restaurantId in the token) skip the scope filter entirely and
+ * see all products.
  */
 export async function listProducts(req: Request, res: Response): Promise<void> {
   try {
@@ -85,15 +89,15 @@ export async function listProducts(req: Request, res: Response): Promise<void> {
     if (availability !== undefined) filter.availability = availability === 'true';
     const restId = (req as AuthenticatedRequest).user?.restaurantId;
     if (restId && Types.ObjectId.isValid(restId)) {
-      filter.$or = [
-        { restaurantId: new Types.ObjectId(restId) },
-        { restaurantId: null }, // matches null OR missing field
-      ];
+      // Strict tenant scoping: ONLY this restaurant's own products.
+      filter.$or = await resolveMenuProductScope(restId, { includeGlobalFallback: false });
     } else if (restId) {
-      // Malformed restaurantId in token — fail narrow instead of leaking other
-      // restaurants' products: only show the shared/global menu.
+      // Malformed restaurantId in token — fail CLOSED so the shared/global
+      // catalog (hardcoded items that belong to no restaurant) can never leak
+      // into a tenant's menu.
       console.warn('[ProductsController] invalid restaurantId in token:', restId);
-      filter.$or = [{ restaurantId: null }];
+      res.status(403).json({ error: 'Invalid restaurant token' });
+      return;
     }
     const result = await productService.list(filter);
     res.json({ data: result.data, total: result.total });

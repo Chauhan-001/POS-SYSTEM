@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Plus, Minus, CheckCircle, AlertTriangle, X, History } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNotify, useInventory } from '../InventoryManager';
@@ -54,7 +54,7 @@ export default function StockAdjustment() {
           <p className="text-xs text-gray-400 mt-0.5">Add or remove stock manually</p>
         </div>
         <button onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#004ac6] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
         >
           <Plus className="w-4 h-4" /> New Adjustment
         </button>
@@ -93,7 +93,7 @@ export default function StockAdjustment() {
               <div className="flex-1">
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Item</label>
                 <select value={formItem} onChange={e => setFormItem(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                  className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 >
                   <option value="">Select item...</option>
                   {items.map(i => <option key={i.id} value={i.id}>{i.name} ({i.currentStock} {i.unit})</option>)}
@@ -102,7 +102,7 @@ export default function StockAdjustment() {
               <div className="w-full sm:w-28">
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
                 <input type="number" value={formQty} onChange={e => setFormQty(e.target.value)} placeholder="0"
-                  className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]" />
+                  className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]" />
               </div>
               <div className="flex-1">
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Type</label>
@@ -118,7 +118,7 @@ export default function StockAdjustment() {
             </div>
             <div className="flex justify-end mt-4">
               <button onClick={handleSubmit}
-                className="px-6 py-2.5 bg-[#004ac6] text-white rounded-xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
+                className="px-6 py-2.5 bg-[var(--brand-color)] text-white rounded-xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
               >
                 <CheckCircle className="w-4 h-4 inline mr-1.5" />Save Adjustment
               </button>

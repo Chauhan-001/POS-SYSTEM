@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -30,7 +30,7 @@ export default function ShortcutsGuide({ onClose }: ShortcutsGuideProps) {
         {/* Header */}
         <div className="bg-[#f3f3fe] px-6 py-4 border-b border-[#e1e2ed] flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <Keyboard className="w-5 h-5 text-[#004ac6]" />
+            <Keyboard className="w-5 h-5 text-[var(--brand-color)]" />
             <h3 className="font-bold text-[#191b23]">Cashier Keyboard Shortcuts</h3>
           </div>
           <button 
@@ -54,7 +54,7 @@ export default function ShortcutsGuide({ onClose }: ShortcutsGuideProps) {
             {keyboardShortcuts.map((shortcut) => (
               <div key={shortcut.key} className="flex justify-between items-center py-2.5">
                 <span className="text-[#505f76] text-xs font-medium">{shortcut.desc}</span>
-                <kbd className="px-2.5 py-1 text-xs font-mono font-bold bg-[#faf8ff] text-[#004ac6] border border-[#c3c6d7] rounded shadow-sm">
+                <kbd className="px-2.5 py-1 text-xs font-mono font-bold bg-[#faf8ff] text-[var(--brand-color)] border border-[#c3c6d7] rounded shadow-sm">
                   {shortcut.key}
                 </kbd>
               </div>
@@ -63,7 +63,7 @@ export default function ShortcutsGuide({ onClose }: ShortcutsGuideProps) {
 
           <button
             onClick={onClose}
-            className="w-full mt-2 bg-[#004ac6] hover:bg-[#003ea8] text-white py-2 rounded-lg font-semibold text-xs transition-colors cursor-pointer"
+            className="w-full mt-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white py-2 rounded-lg font-semibold text-xs transition-colors cursor-pointer"
           >
             Got It, Resume Billing
           </button>

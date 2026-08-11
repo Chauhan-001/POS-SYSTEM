@@ -103,11 +103,11 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
     <div className="flex flex-col h-full min-h-0 bg-[#fbfaff]">
       {/* Header */}
       <div className="flex items-center gap-2 px-5 py-3 bg-white border-b border-[#e1e2ed] shrink-0">
-        <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back">
+        <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-[#004ac6]" />
+          <FileText className="w-4 h-4 text-[var(--brand-color)]" />
           <span className="text-sm font-bold text-[#191b23]">Receipt History</span>
           <span className="text-[10px] text-gray-400 ml-1">{filtered.length} receipt{filtered.length !== 1 ? 's' : ''}</span>
         </div>
@@ -122,7 +122,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
               <button key={p} onClick={() => setPreset(p)}
                 className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                   (p === 'today' && startDate === todayStr && endDate === todayStr) ||
-                  (p === 'all' && !startDate && !endDate) ? 'bg-[#004ac6] text-white' : 'text-gray-500 hover:text-gray-700'
+                  (p === 'all' && !startDate && !endDate) ? 'bg-[var(--brand-color)] text-white' : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
                 {p === 'all' ? 'All' : p}
@@ -146,7 +146,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Invoice #, Ticket #, Phone, Customer, Cashier, Date..."
-                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6] bg-white"
+                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] bg-white"
                   autoFocus
                 />
               </div>
@@ -157,19 +157,19 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">From</label>
               <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer" />
+                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer" />
             </div>
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">To</label>
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer" />
+                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer" />
             </div>
 
             {/* Payment Filter */}
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">Payment</label>
               <select value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer">
+                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer">
                 <option value="All">All Methods</option>
                 <option value="Cash">Cash</option>
                 <option value="UPI">UPI</option>
@@ -183,7 +183,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">Channel</label>
               <select value={channelFilter} onChange={e => setChannelFilter(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer">
+                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer">
                 <option value="All">All Channels</option>
                 <option value="Dine In">Dine In</option>
                 <option value="Takeaway">Takeaway</option>
@@ -199,7 +199,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">Sort</label>
               <select value={sortBy} onChange={e => setSortBy(e.target.value as any)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer">
+                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer">
                 <option value="date_desc">Newest First</option>
                 <option value="date_asc">Oldest First</option>
                 <option value="amount_desc">Highest Amount</option>
@@ -213,7 +213,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
         {filtered.length > 0 && (
           <div className="flex items-center gap-3 mb-3 text-[10px]">
             <span className="font-bold text-gray-700">
-              Showing <span className="text-[#004ac6]">{filtered.length}</span> of {bills.length} receipts
+              Showing <span className="text-[var(--brand-color)]">{filtered.length}</span> of {bills.length} receipts
             </span>
             <span className="text-gray-300">|</span>
             <span className="font-bold text-green-700">Total: {currencySymbol}{totalRevenue.toFixed(2)}</span>
@@ -260,7 +260,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
                     return (
                       <tr key={bill.id} className="hover:bg-gray-50/70 transition-colors">
                         <td className="p-3 pl-5">
-                          <span className="font-mono font-bold text-[#004ac6] text-[10px]">{bill.invoiceNumber}</span>
+                          <span className="font-mono font-bold text-[var(--brand-color)] text-[10px]">{bill.invoiceNumber}</span>
                         </td>
                         <td className="p-3">
                           <span className="font-mono font-bold text-gray-700 text-[10px]">{bill.ticketNumber}</span>
@@ -295,7 +295,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
                           {currencySymbol}{bill.grandTotal.toFixed(2)}
                         </td>
                         <td className="p-3">
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-[#004ac6] border border-blue-100">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-[var(--brand-color)] border border-blue-100">
                             <PayIcon className="w-2.5 h-2.5" />
                             {bill.paymentMethod}
                           </span>

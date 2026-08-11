@@ -532,7 +532,7 @@ export default function BranchExport({
               </div>
               <div>
                 <p className="text-[9px] text-gray-400">Total Revenue</p>
-                <p className="text-sm font-black text-[#004ac6]">{currencySymbol}{statRevenue.toFixed(0)}</p>
+                <p className="text-sm font-black text-[var(--brand-color)]">{currencySymbol}{statRevenue.toFixed(0)}</p>
               </div>
               <div>
                 <p className="text-[9px] text-gray-400">Total Expenses</p>

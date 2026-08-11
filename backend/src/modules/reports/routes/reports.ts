@@ -22,7 +22,7 @@ import { cached } from '../../../utils/ResponseCache';
 import * as c from '../controllers/reportsController';
 import {
   reportQuerySchema, productReportQuerySchema, closingQuerySchema,
-  rebuildQuerySchema, exportQuerySchema,
+  rebuildQuerySchema, exportQuerySchema, inventoryExpiryQuerySchema,
 } from '../validators/reportQuerySchema';
 
 const router = Router();
@@ -58,7 +58,7 @@ router.get('/inventory/aging', requireAuth, requireFeature('inventory'), validat
 router.get('/inventory/reorder', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryReorder);
 router.get('/inventory/fast-slow', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryFastSlow);
 router.get('/inventory/waste', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryWaste);
-router.get('/inventory/expiry', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryExpiry);
+router.get('/inventory/expiry', requireAuth, requireFeature('inventory'), validate({ query: inventoryExpiryQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryExpiry);
 router.get('/inventory/suppliers', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventorySuppliers);
 
 // ─── Employee reports ────────────────────────────────────────────

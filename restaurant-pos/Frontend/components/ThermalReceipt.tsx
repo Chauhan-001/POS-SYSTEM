@@ -287,7 +287,7 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
           )}
           {bill.milestoneRewardAwarded && (
             <div className="mt-1.5 border-t border-dashed border-gray-300 pt-1 text-center">
-              <p className="text-[7.5px] font-extrabold text-[#004ac6] uppercase leading-tight">
+              <p className="text-[7.5px] font-extrabold text-[var(--brand-color)] uppercase leading-tight">
                 🎁 MILESTONE REWARD EARNED:
               </p>
               <p className="text-[8px] font-black text-gray-950 uppercase mt-0.5 leading-tight">

@@ -165,7 +165,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
           payments: p.data ?? null,
           orderTypes: ot.data ?? null,
           cashiers: c.data ?? null,
-          peakHours: ph.data ?? null,
+          peakHours: Array.isArray(ph.data) ? ph.data : (ph.data?.hourly ?? null),
           topProducts: tp.data ?? null,
           leastProducts: lp.data ?? null,
           categories: cat.data ?? null,
@@ -273,13 +273,15 @@ export default function ReportsManager({ bills, customers, products, currencySym
       .slice(0, 5);
   })();
 
-  // Previous period comparison — local fallback
-  const rangeMs = Math.max(new Date(endDate).getTime() - new Date(startDate).getTime(), 0);
-  const prevEndDate = new Date(new Date(startDate).getTime() - 86400000);
-  const prevEndStr = prevEndDate.toISOString().slice(0, 10);
-  const prevStartDate = new Date(prevEndDate.getTime() - rangeMs);
-  const prevStartStr = prevStartDate.toISOString().slice(0, 10);
-  const localPrevBills = bills.filter(bill => bill.date >= prevStartStr && bill.date <= prevEndStr);
+  // Previous period comparison — local fallback.
+  // Guarded: "All Time" clears startDate/endDate to '', and date arithmetic on
+  // empty strings yields Invalid Date → .toISOString() throws RangeError during
+  // render. Skip the comparison entirely when no explicit range is set.
+  const hasRange = Boolean(startDate && endDate);
+  const rangeMs = hasRange ? Math.max(new Date(endDate).getTime() - new Date(startDate).getTime(), 0) : 0;
+  const prevEndStr = hasRange ? new Date(new Date(startDate).getTime() - 86400000).toISOString().slice(0, 10) : '';
+  const prevStartStr = hasRange ? new Date(new Date(prevEndStr).getTime() - rangeMs).toISOString().slice(0, 10) : '';
+  const localPrevBills = hasRange ? bills.filter(bill => bill.date >= prevStartStr && bill.date <= prevEndStr) : [];
   const localPrevRevenue = localPrevBills.reduce((sum, b) => sum + b.grandTotal, 0);
   const localPrevOrders = localPrevBills.length;
 
@@ -569,7 +571,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                   onClick={() => handlePreset(preset.id as any)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
                     isSelected 
-                      ? 'bg-[#004ac6] text-white shadow-sm' 
+                      ? 'bg-[var(--brand-color)] text-white shadow-sm' 
                       : 'text-gray-600 hover:bg-[#e7e7f3]'
                   }`}
                 >
@@ -584,7 +586,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
         <div className="pt-3 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-500 flex items-center gap-1.5 uppercase tracking-wider shrink-0">
-              <Calendar className="w-4 h-4 text-[#004ac6]" />
+              <Calendar className="w-4 h-4 text-[var(--brand-color)]" />
               Filter Reports & Receipts By Date:
             </span>
           </div>
@@ -596,7 +598,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="px-3 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer"
+                className="px-3 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer"
               />
             </div>
 
@@ -606,7 +608,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="px-3 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6] bg-white cursor-pointer"
+                className="px-3 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer"
               />
             </div>
 
@@ -628,7 +630,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
       {startDate === todayStr && endDate === todayStr && totalOrders === 0 && (
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div className="flex items-start gap-2.5">
-            <CalendarDays className="w-5 h-5 text-[#004ac6] shrink-0 mt-0.5" />
+            <CalendarDays className="w-5 h-5 text-[var(--brand-color)] shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-bold text-[#191b23]">No receipts recorded for today ({todayStr}) yet.</p>
               <p className="text-[10px] text-gray-500 mt-0.5">By default, the report shows today's receipts. You can check pre-seeded transaction histories or switch ranges below.</p>
@@ -637,7 +639,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
           <button
             type="button"
             onClick={() => handlePreset('ThisWeek')}
-            className="px-3 py-1.5 text-[10px] font-bold bg-[#004ac6] text-white hover:bg-[#003ea8] rounded-lg shadow-sm cursor-pointer transition-all shrink-0"
+            className="px-3 py-1.5 text-[10px] font-bold bg-[var(--brand-color)] text-white hover:bg-[#003ea8] rounded-lg shadow-sm cursor-pointer transition-all shrink-0"
           >
             Show Last 7 Days Logs
           </button>
@@ -649,7 +651,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
         
         {/* Metric 1: Revenue */}
         <div className="bg-white p-4 rounded-xl border border-[#e1e2ed] shadow-sm flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#004ac6] flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 text-[var(--brand-color)] flex items-center justify-center shrink-0">
             <DollarSign className="w-5 h-5" />
           </div>
           <div>
@@ -679,7 +681,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
           <div>
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Average Ticket</span>
             <span className="text-lg font-bold text-[#191b23] font-mono">{currencySymbol}{avgOrderValue.toFixed(2)}</span>
-            <span className="text-[9px] text-[#004ac6] font-semibold block mt-0.5">Avg spending value</span>
+            <span className="text-[9px] text-[var(--brand-color)] font-semibold block mt-0.5">Avg spending value</span>
           </div>
         </div>
 
@@ -704,7 +706,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
         <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm flex flex-col justify-between">
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider flex items-center gap-1">
-              <TrendingUp className="w-4 h-4 text-[#004ac6]" />
+              <TrendingUp className="w-4 h-4 text-[var(--brand-color)]" />
               Gross Billing Revenue Trend ({startDate && startDate === endDate ? "Hourly Breakdown" : "Daily Breakdown"})
             </h3>
             <span className="text-[10px] text-gray-400 font-semibold font-mono">VALUES IN {currencySymbol}</span>
@@ -741,7 +743,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
         <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm flex flex-col justify-between">
           <div>
             <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider mb-4 flex items-center gap-1">
-              <CreditCard className="w-4 h-4 text-[#004ac6]" />
+              <CreditCard className="w-4 h-4 text-[var(--brand-color)]" />
               Payment Method Breakdown
             </h3>
           </div>
@@ -797,7 +799,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
         {/* Top items leaderboard */}
         <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
           <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider mb-4 flex items-center gap-1.5">
-            <ArrowUpRight className="w-4.5 h-4.5 text-[#004ac6]" />
+            <ArrowUpRight className="w-4.5 h-4.5 text-[var(--brand-color)]" />
             Fast-Selling Dishes (Leaderboard)
           </h3>
 
@@ -810,7 +812,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
               topSellingProducts.map((p, idx) => (
                 <div key={idx} className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                   <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded bg-[#f3f3fe] text-[#004ac6] border border-[#c3c6d7] flex items-center justify-center font-bold font-mono text-xs shadow-sm">
+                    <span className="w-6 h-6 rounded bg-[#f3f3fe] text-[var(--brand-color)] border border-[#c3c6d7] flex items-center justify-center font-bold font-mono text-xs shadow-sm">
                       #{idx + 1}
                     </span>
                     <div>
@@ -818,7 +820,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                       <span className="text-[9px] text-gray-400 uppercase tracking-wider block mt-0.5">{p.category}</span>
                     </div>
                   </div>
-                  <strong className="text-xs font-mono text-[#004ac6] bg-blue-50 px-2.5 py-0.5 rounded-md">
+                  <strong className="text-xs font-mono text-[var(--brand-color)] bg-blue-50 px-2.5 py-0.5 rounded-md">
                     {p.qty} portions sold
                   </strong>
                 </div>
@@ -831,7 +833,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
         <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm flex flex-col justify-between">
           <div>
             <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider mb-4 flex items-center gap-1.5">
-              <Award className="w-4.5 h-4.5 text-[#004ac6]" />
+              <Award className="w-4.5 h-4.5 text-[var(--brand-color)]" />
               Loyalty Points Ledger Audit
             </h3>
 
@@ -1100,7 +1102,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
           <div className="flex items-center justify-between xl:justify-start gap-4 w-full xl:w-auto">
             <div>
               <h3 className="font-bold text-[#191b23] text-sm uppercase tracking-wider flex items-center gap-1.5">
-                <FileText className="w-4.5 h-4.5 text-[#004ac6]" />
+                <FileText className="w-4.5 h-4.5 text-[var(--brand-color)]" />
                 Receipts & Bills Ledger
               </h3>
               <p className="text-[10px] text-gray-500 mt-0.5">
@@ -1110,7 +1112,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
             <button
               onClick={exportToCSV}
               disabled={exporting}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#c3c6d7] hover:border-[#004ac6] text-gray-700 hover:text-[#004ac6] text-xs font-bold rounded-lg transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#c3c6d7] hover:border-[var(--brand-color)] text-gray-700 hover:text-[var(--brand-color)] text-xs font-bold rounded-lg transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-50"
             >
               <Download className="w-3.5 h-3.5" />
               {exporting ? 'Exporting…' : 'Export CSV'}
@@ -1126,7 +1128,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 placeholder="Search invoice, cashier, guest..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#004ac6]"
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
               />
             </div>
 
@@ -1136,7 +1138,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
               <select
                 value={paymentFilter}
                 onChange={(e) => setPaymentFilter(e.target.value)}
-                className="px-2 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-bold text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-[#004ac6] cursor-pointer"
+                className="px-2 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-bold text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] cursor-pointer"
               >
                 <option value="All">All Modes</option>
                 <option value="Cash">Cash</option>
@@ -1153,7 +1155,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
               <select
                 value={channelFilter}
                 onChange={(e) => setChannelFilter(e.target.value)}
-                className="px-2 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-bold text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-[#004ac6] cursor-pointer"
+                className="px-2 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-bold text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] cursor-pointer"
               >
                 <option value="All">All Channels</option>
                 <option value="Dine In">Dine In</option>
@@ -1203,7 +1205,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                           setPaymentFilter('All');
                           setChannelFilter('All');
                         }}
-                        className="mt-3 px-3 py-1.5 bg-[#f3f3fe] text-[#004ac6] border border-[#c3c6d7] hover:bg-[#e7e7f3] text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1 transition-all"
+                        className="mt-3 px-3 py-1.5 bg-[#f3f3fe] text-[var(--brand-color)] border border-[#c3c6d7] hover:bg-[#e7e7f3] text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1 transition-all"
                       >
                         Reset to Today's Default
                       </button>
@@ -1213,7 +1215,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
               ) : (
                 paginatedBills.map((bill) => (
                   <tr key={bill.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="p-3 pl-4 font-mono font-bold text-[#004ac6]">
+                    <td className="p-3 pl-4 font-mono font-bold text-[var(--brand-color)]">
                       {bill.invoiceNumber}
                     </td>
                     <td className="p-3 font-mono font-bold text-gray-700">
@@ -1255,7 +1257,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                       {currencySymbol}{bill.grandTotal.toFixed(2)}
                     </td>
                     <td className="p-3">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-[#004ac6] border border-blue-100 uppercase">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-[var(--brand-color)] border border-blue-100 uppercase">
                         {bill.paymentMethod}
                       </span>
                     </td>
@@ -1311,7 +1313,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                   onClick={() => setCurrentPage(pageNum)}
                   className={`w-7 h-7 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                     safePage === pageNum
-                      ? 'bg-[#004ac6] text-white shadow-sm'
+                      ? 'bg-[var(--brand-color)] text-white shadow-sm'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >

@@ -12,8 +12,9 @@ import { ChevronDown, ChevronUp, Thermometer, CloudRain, Snowflake, Sun, Loader2
 import { getWeatherRec } from './aiData';
 import type { WeatherRec } from './aiData';
 
-const WeatherWidget: React.FC<{ compact?: boolean }> = React.memo(({ compact = false }) => {
-  const [expanded, setExpanded] = useState(false);
+const WeatherWidget: React.FC<{ compact?: boolean; menuItems?: string[] }> = React.memo(({ compact = false, menuItems = [] }) => {
+  // Default expanded so the recommendation block is visible without clicking.
+  const [expanded, setExpanded] = useState(true);
   const [weather, setWeather] = useState<WeatherRec | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -31,6 +32,20 @@ const WeatherWidget: React.FC<{ compact?: boolean }> = React.memo(({ compact = f
     cold: <Snowflake className="w-5 h-5 text-cyan-500" />,
     pleasant: <Sun className="w-5 h-5 text-emerald-500" />,
   };
+
+  // Menu-aware suggestions — only keep recommendations that actually exist on
+  // the active menu so the weather block never recommends an item you don't sell.
+  // When no menu is provided, fall back to the full suggestion list.
+  const menuName = (n: string) => n.trim().toLowerCase();
+  const suggestedItems = menuItems.length > 0 && weather
+    ? weather.suggestedItems.filter(s =>
+        menuItems.some(m => {
+          const mName = menuName(m);
+          const sName = menuName(s.name);
+          return mName === sName || mName.includes(sName) || sName.includes(mName);
+        })
+      )
+    : weather?.suggestedItems ?? [];
 
   return (
     <div className="bg-white rounded-2xl border border-[#e1e2ed] shadow-sm overflow-hidden">
@@ -65,11 +80,11 @@ const WeatherWidget: React.FC<{ compact?: boolean }> = React.memo(({ compact = f
             <div className="px-4 py-3 space-y-3">
               <p className="text-xs text-gray-600 leading-relaxed">{weather.recommendation}</p>
 
-              {weather.suggestedItems.length > 0 && (
+              {suggestedItems.length > 0 && (
                 <div>
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Prepare extra</p>
                   <div className="flex flex-wrap gap-2">
-                    {weather.suggestedItems.map(item => (
+                    {suggestedItems.map(item => (
                       <div key={item.name} className="px-2.5 py-1.5 bg-blue-50 rounded-xl border border-blue-100">
                         <p className="text-xs font-semibold text-blue-700">{item.name}</p>
                         <p className="text-[9px] text-blue-500 mt-0.5">{item.reason}</p>

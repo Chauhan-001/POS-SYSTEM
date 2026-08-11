@@ -83,7 +83,7 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
     return (
       <div className="h-screen flex items-center justify-center bg-[#faf8ff]">
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-[#004ac6] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <div className="w-8 h-8 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-sm text-gray-500">Loading plans...</p>
         </div>
       </div>
@@ -96,7 +96,7 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
       <div className="bg-white border-b border-[#e1e2ed] px-6 py-5">
         <div className="max-w-5xl mx-auto">
           <div className="flex items-center gap-3 mb-1">
-            <Crown size={24} className="text-[#004ac6]" />
+            <Crown size={24} className="text-[var(--brand-color)]" />
             <h1 className="text-xl font-bold">Choose Your Plan</h1>
           </div>
           {mode === 'trial_expired' ? (
@@ -130,8 +130,8 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
                     key={plan.id}
                     className={`bg-white rounded-xl border-2 transition-all ${
                       currentPlan
-                        ? 'border-[#004ac6] ring-2 ring-[#004ac6]/20'
-                        : 'border-[#e1e2ed] hover:border-[#004ac6]/50 hover:shadow-md'
+                        ? 'border-[var(--brand-color)] ring-2 ring-[var(--brand-color)]/20'
+                        : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/50 hover:shadow-md'
                     }`}
                   >
                     <div className="p-5">
@@ -195,8 +195,8 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
                           disabled={selecting !== null}
                           className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
                             isSelected
-                              ? 'bg-[#004ac6] text-white opacity-70'
-                              : 'bg-[#004ac6] text-white hover:bg-[#003da0] active:scale-[0.98]'
+                              ? 'bg-[var(--brand-color)] text-white opacity-70'
+                              : 'bg-[var(--brand-color)] text-white hover:bg-[#003da0] active:scale-[0.98]'
                           }`}
                         >
                           {isSelected ? (

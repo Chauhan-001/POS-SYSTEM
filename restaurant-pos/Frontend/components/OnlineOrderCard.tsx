@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { User, Clock, Bike } from 'lucide-react';
+import { User, Clock, Bike, AlertTriangle } from 'lucide-react';
 import type { Order } from '../src/types';
 import { useCurrentTime } from '../src/hooks/useCurrentTime';
 import { computeRunningBillTotals } from '../src/utils/runningBill';
@@ -17,6 +17,10 @@ interface OnlineOrderCardProps {
   STATUS_COLORS: Record<string, string>;
   onOpenBilling: (order: Order) => void;
   getElapsedTime: (createdAt: string, now?: Date) => string;
+  /** When set, renders an "Item unavailable" action on the card. */
+  onAdjustOrder?: (order: Order) => void;
+  /** Whether the order already has adjustments (shows a small marker). */
+  hasAdjustments?: boolean;
 }
 
 const platformColors: Record<string, string> = {
@@ -29,7 +33,7 @@ const platformColors: Record<string, string> = {
 
 function OnlineOrderCard({
   order, currencySymbol, STATUS_COLORS,
-  onOpenBilling, getElapsedTime,
+  onOpenBilling, getElapsedTime, onAdjustOrder, hasAdjustments,
 }: OnlineOrderCardProps) {
   const now = useCurrentTime();
   const platformColor = platformColors[order.platform || ''] || 'bg-gray-100 text-gray-700';
@@ -47,10 +51,27 @@ function OnlineOrderCard({
             {order.platform || order.type}
           </span>
           <span className="font-bold text-sm text-gray-900">#{order.orderNumber}</span>
+          {hasAdjustments && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[8px] font-bold">
+              ADJUSTED
+            </span>
+          )}
         </div>
-        <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}>
-          {order.status}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {onAdjustOrder && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onAdjustOrder(order); }}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-600 border border-red-200 text-[9px] font-bold hover:bg-red-100 transition-all cursor-pointer"
+              title="Mark an item unavailable / adjust this order"
+            >
+              <AlertTriangle className="w-3 h-3" />
+              Item unavailable
+            </button>
+          )}
+          <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}>
+            {order.status}
+          </span>
+        </div>
       </div>
 
       <div className="space-y-1 mb-2">
@@ -64,6 +85,14 @@ function OnlineOrderCard({
           <Clock className="w-3 h-3 text-gray-400" />
           <span className="font-mono">{getElapsedTime(order.createdAt, now)}</span>
         </div>
+        {(order.mode === 'CAR' || order.parkingSlot || order.carPlate) && (
+          <div className="flex items-center gap-1.5 text-[10px] text-teal-700">
+            <span className="font-semibold">
+              🚗 {order.parkingSlot ? `Slot ${order.parkingSlot}` : 'Car'}
+              {order.carPlate ? ` · ${order.carPlate}` : ''}
+            </span>
+          </div>
+        )}
         {order.deliveryEta && (
           <div className="flex items-center gap-1.5 text-[10px] text-blue-600">
             <Bike className="w-3 h-3" />

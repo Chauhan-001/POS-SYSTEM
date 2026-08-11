@@ -96,8 +96,9 @@ export function generateResponse(
   if (resolution && resolution.product && state.missingFields.length === 0) {
     const qty = state.pendingQuantity || parsed?.items[0]?.quantity || 0;
     const unit = state.pendingUnit || parsed?.items[0]?.unit || resolution.product.unit;
+    const rate = parsed?.items[0]?.rate ?? state.pendingPurchasePrice ?? undefined;
     return {
-      message: getCompleteMessage(parsed.intent, resolution.product.name, qty, unit, language),
+      message: getCompleteMessage(parsed.intent, resolution.product.name, qty, unit, language, rate, parsed?.supplier, parsed?.date),
       responseType: 'confirmation',
       suggestedAction: 'confirm',
     };
@@ -256,14 +257,33 @@ function getCompleteMessage(
   productName: string,
   quantity: number,
   unit: string,
-  language: string
+  language: string,
+  rate?: number | null,
+  supplier?: string | null,
+  date?: string | null
 ): string {
   const action = getIntentActionPastTense(intent, language);
+  const rateClause =
+    rate != null && rate > 0
+      ? language === 'hi'
+        ? `, ${rate} रुपये/${unit} के दर से`
+        : ` at ₹${rate}/${unit}`
+      : '';
+  const supplierClause = supplier
+    ? language === 'hi'
+      ? `, ${supplier} से`
+      : ` from ${supplier}`
+    : '';
+  const dateClause = date
+    ? language === 'hi'
+      ? `, ${date} को`
+      : ` on ${date}`
+    : '';
 
   if (language === 'hi') {
-    return `${productName} के ${quantity} ${unit} ${action}. सही है?`;
+    return `${productName} के ${quantity} ${unit} ${action}${rateClause}${supplierClause}${dateClause}. सही है?`;
   }
-  return `${action} ${quantity} ${unit} ${productName}. Is that correct?`;
+  return `${action} ${quantity} ${unit} ${productName}${rateClause}${supplierClause}${dateClause}. Is that correct?`;
 }
 
 /**

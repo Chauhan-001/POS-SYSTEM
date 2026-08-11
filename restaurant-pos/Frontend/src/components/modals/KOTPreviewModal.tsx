@@ -129,7 +129,7 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
               </button>
               <button
                 onClick={onConfirmMerge}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-all shadow-sm cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-all shadow-sm cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 Merge & Print All
@@ -138,7 +138,7 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
           ) : (
             <button
               onClick={onConfirm}
-              className="flex items-center gap-1.5 px-5 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-all shadow-sm hover:shadow-md ml-auto cursor-pointer"
+              className="flex items-center gap-1.5 px-5 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-all shadow-sm hover:shadow-md ml-auto cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               Send to Kitchen ({totalItems})

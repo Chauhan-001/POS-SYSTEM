@@ -4,9 +4,18 @@
  *
  * Inventory Prompts — Template builders for inventory health,
  * purchase recommendations, low stock predictions, and waste analysis.
+ *
+ * Schema-compliant output matters: every response is validated against the
+ * feature's expected shape (see aiService.isValidFeatureData) and falls back
+ * to an algorithmic substitute when it drifts. Each prompt therefore demands
+ * ONLY the exact JSON object (no markdown fences / explanation) and shows a
+ * complete example so the configured model stays on-schema.
  */
 
 import type { SanitizedInventoryItem, SanitizedWasteEntry } from '../types';
+
+const STRICT_JSON_RULE =
+  'Return ONLY a valid JSON object — no markdown fences, no code blocks, no explanations, no text before or after.';
 
 export function buildHealthPrompt(items: SanitizedInventoryItem[], wasteTotal: number): string {
   const itemLines = items.map(i =>
@@ -20,15 +29,19 @@ ${itemLines}
 
 Total waste cost this period: ₹${wasteTotal}
 
-Respond with a JSON object containing:
+${STRICT_JSON_RULE} The object must match this exact schema, with scores computed from the data above (0-100):
+
 {
-  "overall": <number 0-100 indicating overall health>,
-  "stockHealth": <number 0-100>,
-  "wasteRate": <number 0-100>,
-  "expiryRisk": <number 0-100>,
-  "trend": "improving|stable|declining",
+  "overall": 82,
+  "stockHealth": 75,
+  "wasteRate": 90,
+  "expiryRisk": 40,
+  "trend": "stable",
   "recommendations": ["2-3 actionable recommendations"]
 }
+
+Example of a valid response:
+{"overall":82,"stockHealth":75,"wasteRate":90,"expiryRisk":40,"trend":"stable","recommendations":["Reorder paneer — below minimum.","Check dairy expiry dates."]}
 
 Base the scores on stock levels relative to min/max, expiry dates, and waste.`;
 }
@@ -36,7 +49,7 @@ Base the scores on stock levels relative to min/max, expiry dates, and waste.`;
 export function buildPurchaseRecPrompt(items: SanitizedInventoryItem[]): string {
   const lowItems = items.filter(i => i.status === 'low' || i.status === 'critical');
   const itemLines = lowItems.map(i =>
-    `${i.name}: stock=${i.currentStock}${i.unit}, min=${i.minStock}, max=${i.maxStock}, cost=₹${i.averageCost}/${i.unit}`
+    `${i.name}: stock=${i.currentStock}${i.unit}, min=${i.minStock}, max=${i.maxStock}, cost=₹${i.averageCost}/${i.unit}${i.expiryDate ? `, expires=${i.expiryDate}` : ''}`
   ).join('\n');
 
   return `You are an AI purchasing assistant for a restaurant. Recommend restock quantities for low items.
@@ -44,8 +57,10 @@ export function buildPurchaseRecPrompt(items: SanitizedInventoryItem[]): string 
 Items needing attention:
 ${itemLines || 'All items are adequately stocked.'}
 
-Consider typical restaurant restock quantities and costs.
-Respond with a JSON object containing:
+Consider typical restaurant restock quantities and costs. For items with an expiry date, keep restock quantities conservative so the batch can be used before it expires.
+
+${STRICT_JSON_RULE} The object must match this exact schema:
+
 {
   "recommendations": [
     {
@@ -53,17 +68,20 @@ Respond with a JSON object containing:
       "reason": "why it needs restocking",
       "suggestedQty": "amount with unit",
       "urgency": "low|medium|high",
-      "estimatedCost": <number>
+      "estimatedCost": 1234
     }
   ]
 }
+
+Example of a valid response:
+{"recommendations":[{"item":"Paneer","reason":"Below minimum stock","suggestedQty":"10 kg","urgency":"high","estimatedCost":4500}]}
 
 Include 1-2 predictive recommendations based on typical consumption patterns even for items that aren't low yet.`;
 }
 
 export function buildLowStockPrompt(items: SanitizedInventoryItem[]): string {
   const itemLines = items.filter(i => i.currentStock > 0).map(i =>
-    `${i.name}: stock=${i.currentStock}${i.unit}, min=${i.minStock}, avg cost=₹${i.averageCost}`
+    `${i.name}: stock=${i.currentStock}${i.unit}, min=${i.minStock}, avg cost=₹${i.averageCost}${i.expiryDate ? `, expires=${i.expiryDate}` : ''}`
   ).join('\n');
 
   return `You are an AI inventory forecaster for a restaurant. Predict which items will run out soon.
@@ -77,19 +95,23 @@ Typical daily consumption varies by item type. Consider that:
 - Dry goods at 1-10 units/day
 - Beverages at 10-30 units/day
 
-Respond with a JSON object containing:
+${STRICT_JSON_RULE} The object must match this exact schema:
+
 {
   "predictions": [
     {
       "item": "item name",
-      "daysUntilOut": <number>,
+      "daysUntilOut": 3,
       "confidence": "high|medium|low",
-      "currentStock": <number>,
+      "currentStock": 12,
       "unit": "unit string",
       "suggestedAction": "action text"
     }
   ]
 }
+
+Example of a valid response:
+{"predictions":[{"item":"Milk","daysUntilOut":1,"confidence":"high","currentStock":5,"unit":"L","suggestedAction":"Order immediately!"}]}
 
 Only include items predicted to run out within 7 days. Sort by daysUntilOut ascending.`;
 }
@@ -103,18 +125,22 @@ export function buildWasteAnalysisPrompt(entries: SanitizedWasteEntry[]): string
 
 ${entryLines || 'No waste entries recorded.'}
 
-Respond with a JSON object containing:
+${STRICT_JSON_RULE} The object must match this exact schema:
+
 {
-  "totalWasteCost": <number>,
+  "totalWasteCost": 2500,
   "topWasteItems": [
-    { "name": "item name", "cost": <number>, "percentage": <number> }
+    { "name": "item name", "cost": 1500, "percentage": 60 }
   ],
   "wasteByReason": [
-    { "reason": "spoiled|burnt|expired|dropped|other", "count": <number>, "cost": <number> }
+    { "reason": "spoiled|burnt|expired|dropped|other", "count": 3, "cost": 1800 }
   ],
   "trend": "increasing|stable|decreasing",
   "actionableAdvice": ["2-4 specific, actionable recommendations to reduce waste"]
 }
 
-Focus on actionable restaurant-specific advice.`;
+Example of a valid response:
+{"totalWasteCost":2500,"topWasteItems":[{"name":"Paneer","cost":1500,"percentage":60}],"wasteByReason":[{"reason":"spoiled","count":3,"cost":1800}],"trend":"increasing","actionableAdvice":["Check fridge temperature","Review portion sizes"]}
+
+Focus on actionable restaurant-specific advice computed from the log above.`;
 }

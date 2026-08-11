@@ -28,12 +28,12 @@ export default function OTPVerificationModal({ state, onTypedCodeChange, onVerif
     <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full border border-[#e1e2ed] p-6">
         <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
-          <Shield className="w-4 h-4 text-[#004ac6]" />
+          <Shield className="w-4 h-4 text-[var(--brand-color)]" />
           SMS Verification
         </h3>
         <p className="text-xs text-gray-600 mb-2">
           Enter the OTP sent to customer mobile
-          {state.phone ? <span className="font-mono font-bold text-[#004ac6]"> ({state.phone})</span> : null}
+          {state.phone ? <span className="font-mono font-bold text-[var(--brand-color)]"> ({state.phone})</span> : null}
         </p>
         {/* Server-issued OTPs echo the code in demo mode so the till can display it.
             In real SMS mode (no code) the customer reads it from their phone. */}
@@ -53,14 +53,14 @@ export default function OTPVerificationModal({ state, onTypedCodeChange, onVerif
             placeholder="Enter OTP"
             value={state.typedCode}
             onChange={(e) => onTypedCodeChange(e.target.value.replace(/\D/g, ""))}
-            className="w-full px-3 py-2 text-center text-lg font-mono font-bold border border-[#c3c6d7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+            className="w-full px-3 py-2 text-center text-lg font-mono font-bold border border-[#c3c6d7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
             autoFocus
           />
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="flex-1 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 cursor-pointer">
               Cancel
             </button>
-            <button type="submit" className="flex-1 py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm">
+            <button type="submit" className="flex-1 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm">
               Verify
             </button>
           </div>

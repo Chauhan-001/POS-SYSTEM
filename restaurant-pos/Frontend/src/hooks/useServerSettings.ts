@@ -47,6 +47,8 @@ export interface ServerSettingsApi {
   rollback: (toVersion: number, changeReason?: string) => Promise<boolean>;
   /** True once we've successfully talked to the backend at least once. */
   hasServerData: boolean;
+  /** Public store token (loyalty QR). null until the server provides one. */
+  publicToken: string | null;
 }
 
 interface Options {
@@ -92,8 +94,20 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
   const [serverVersion, setServerVersion] = useState(0);
   const [conflict, setConflict] = useState<SettingsConflict | null>(null);
   const [hasServerData, setHasServerData] = useState(false);
+  const [publicToken, setPublicToken] = useState<string | null>(null);
   const versionRef = useRef(0);
   const scopeRef = useRef<'restaurant' | 'branch' | 'device'>('restaurant');
+  /**
+   * Stable handle to the caller's setSettings. Callers (e.g. SettingsManager)
+   * frequently pass an inline arrow (`(updater) => ...`) whose identity changes
+   * on every render. If that callback were a useCallback dep of `refresh`, the
+   * refresh function would get a new identity on every render and the
+   * mount/online effect below would re-run on EVERY render → an infinite
+   * fetch loop that exhausts the shared /api rate limit (429) and breaks the
+   * whole Settings workspace (including the Subscription tab).
+   */
+  const setSettingsRef = useRef(setSettings);
+  useEffect(() => { setSettingsRef.current = setSettings; });
   /** Per-scope versions so the baseVersion always targets the edited scope. */
   const versionsRef = useRef<{ restaurant: number; branch: number; device: number }>({ restaurant: 0, branch: 0, device: 0 });
   const branchIdRef = useRef<string | undefined>(branchId || undefined);
@@ -114,9 +128,10 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
     }
     if (effective.settings && Object.keys(effective.settings).length > 0) {
       // Server has real config — merge over local for server-known keys.
-      setSettings((prev) => mergeServerOverLocal(prev, effective.settings));
+      setSettingsRef.current((prev) => mergeServerOverLocal(prev, effective.settings));
       setHasServerData(true);
     }
+    if (effective.publicToken) setPublicToken(effective.publicToken);
     if (effective.meta?.version) {
       versionRef.current = effective.meta.version;
       setServerVersion(effective.meta.version);
@@ -127,7 +142,7 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
     }
     setLastSynced(new Date().toISOString());
     setSyncStatus('synced');
-  }, [enabled, setSettings]);
+  }, [enabled]);
 
   // Initial load + reload on reconnect. Use the browser online/offline events
   // to avoid re-fetching while the device is known to be offline.
@@ -262,5 +277,6 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
     history,
     rollback,
     hasServerData,
+    publicToken,
   };
 }

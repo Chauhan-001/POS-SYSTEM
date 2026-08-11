@@ -11,6 +11,7 @@ import type { CartItem, Product, ProductVariant, LoyaltyReward, SystemSettings, 
 import { setDBData, getDBData } from '../data';
 import * as api from '../api/client';
 import { debugWarn } from '../utils/debugLog';
+import { findLinkedTakeaway } from './useOrders';
 
 interface BillingConfig {
   cartItems: any[];
@@ -29,6 +30,8 @@ interface BillingConfig {
   setCustomerPhone: (p: string) => void;
   appliedReward: LoyaltyReward | null;
   setAppliedReward: (r: LoyaltyReward | null) => void;
+  appliedOffer: any | null;
+  setAppliedOffer: (o: any | null) => void;
   paymentMethod: string;
   setPaymentMethod: (m: any) => void;
   orderType: string;
@@ -58,6 +61,7 @@ export function useBilling(config: BillingConfig) {
     searchedCustomer, setSearchedCustomer,
     customerPhone, setCustomerPhone,
     appliedReward, setAppliedReward,
+    appliedOffer, setAppliedOffer,
     paymentMethod, setPaymentMethod,
     orderType, setOrderType,
     splitDetails, setSplitDetails,
@@ -111,8 +115,10 @@ export function useBilling(config: BillingConfig) {
         if (itemInCart) baseDiscount += itemInCart.price;
       }
     }
+    // Server-validated promotion discount (authoritative amount from /offers/validate).
+    if (appliedOffer?.discount) baseDiscount += appliedOffer.discount;
     return baseDiscount + manualDiscount;
-  }, [cartItems, appliedReward, searchedCustomer, settings.visitMilestones, calculateCartSubtotal, manualDiscount]);
+  }, [cartItems, appliedReward, appliedOffer, searchedCustomer, settings.visitMilestones, calculateCartSubtotal, manualDiscount]);
 
   const calculateCartTaxes = useCallback(() => {
     const subtotal = calculateCartSubtotal();
@@ -264,6 +270,8 @@ export function useBilling(config: BillingConfig) {
       itemsCount: cartItems.length,
       items: cartItems,
       redeemedRewardTitle: appliedReward?.title,
+      appliedOfferTitle: appliedOffer?.offer?.title,
+      appliedOfferCode: appliedOffer?.offer?.couponCode,
       pointsRedeemed: pointsDeducted > 0 ? pointsDeducted : undefined,
       pointsEarned: pointsAccumulated > 0 ? pointsAccumulated : undefined,
     };
@@ -353,6 +361,10 @@ export function useBilling(config: BillingConfig) {
       customerName: searchedCustomer?.name || undefined,
       // Phase 1.6 — bills reference customerId (phone snapshot kept for historical integrity)
       customerId: (searchedCustomer?._id as string) || (searchedCustomer?.id as string) || undefined,
+      // Online-ordering: link the bill to its source order so unavailable-item
+      // adjustments can resolve + refund the correct bill (orderId is accepted
+      // by the bill schema; optional for dine-in/takeaway).
+      orderId: activeOrder?.id || undefined,
       pointsEarned: Math.round(pointsAccumulated * 100) / 100,
       pointsRedeemed: pointsDeducted,
       redeemedRewardTitle: appliedReward?.title,
@@ -385,12 +397,74 @@ export function useBilling(config: BillingConfig) {
       }
     }
 
+    // Takeaway orders: advance the linked panel row so the Takeaway tab shows
+    // the bill is paid and the food is Ready for collection (the cashier taps
+    // "Collected" once handed over — which removes it from the active view via
+    // the existing completed-order cleanup). Pushes to /api/takeaway-orders so
+    // other terminals polling the same restaurant see the same state.
+    // Resolved via the shared id→orderNumber helper so legacy rows (stale
+    // orderId) advance too.
+    if (activeOrder?.type === 'Takeaway') {
+      const linkedRow = findLinkedTakeaway(takeawayOrders, { id: activeOrder.id, orderNumber: activeOrder.orderNumber });
+      if (linkedRow) {
+        const paidAmount = Math.round(grandTotal * 100) / 100;
+        const paidRow = {
+          ...linkedRow,
+          status: 'Ready' as const,
+          paymentStatus: 'Paid' as const,
+          amount: paidAmount,
+          items: finalizedItems,
+        };
+        setTakeawayOrders(takeawayOrders.map((t: any) => t.id === linkedRow.id ? paidRow : t));
+        if (/^[a-fA-F0-9]{24}$/.test(linkedRow.id)) {
+          asyncOps.push(
+            api.updateTakeawayOrder(linkedRow.id, {
+              status: 'Ready',
+              paymentStatus: 'Paid',
+              amount: paidAmount,
+              items: finalizedItems.map((it: any) => ({
+                itemName: it.productName || it.product?.name || 'Item',
+                quantity: it.quantity ?? 1,
+                price: it.price ?? 0,
+                variantName: typeof it.selectedVariant === 'string' ? it.selectedVariant : it.selectedVariant?.name,
+              })),
+            }).then(() => {}).catch(err => debugWarn('useBilling', 'updateTakeawayOrder (paid) failed:', err))
+          );
+        }
+      }
+    }
+
     const updatedBills = [newBill, ...bills];
     setBills(updatedBills);
     asyncOps.push(
       api.createBill(newBill).then(() => {}).catch(err => debugWarn('useBilling', 'createBill failed:', err))
     );
     setDBData("pos_bills", updatedBills);
+
+    // ── Record the promotion redemption server-side (usage ledger + analytics) ─
+    // The backend claims the usage slot atomically and idempotently (keyed on
+    // billId), so a queued offline replay can never double-count.
+    if (appliedOffer?.offer?.id && appliedOffer.discount > 0) {
+      asyncOps.push(
+        api.applyOffer({
+          offerId: appliedOffer.offer.id,
+          couponCode: appliedOffer.offer.couponCode,
+          customerId: (searchedCustomer?._id as string) || (searchedCustomer?.id as string),
+          customerPhone: searchedCustomer?.phone || customerPhone || undefined,
+          billSubtotal: subtotal,
+          billItems: cartItems.map((item: any) => ({
+            id: item.product?.id || item.id,
+            name: item.product?.name || item.name || 'Item',
+            price: item.price || 0,
+            quantity: item.quantity || 1,
+            category: item.product?.category,
+          })),
+          billId: localBillId,
+        }).then((r) => {
+          if (r && !r.valid && !r.queuedOffline) debugWarn('useBilling', 'applyOffer rejected:', r.reason);
+        }).catch(err => debugWarn('useBilling', 'applyOffer failed:', err))
+      );
+    }
 
     if (activeOrder?.tableId) {
       setTables(tables.map((t: any) => t.id === activeOrder.tableId ? { ...t, status: "Available", orderSince: undefined, orderId: undefined } : t));
@@ -407,6 +481,7 @@ export function useBilling(config: BillingConfig) {
     setCustomerPhone("");
     setSearchedCustomer(null);
     setAppliedReward(null);
+    setAppliedOffer(null);
     setManualDiscount(0);
     setActiveOrder(null);
     showToast(`Payment of ${settings.currencySymbol}${grandTotal.toFixed(2)} received!`, "success");
@@ -422,9 +497,10 @@ export function useBilling(config: BillingConfig) {
     return newBill;
   }, [cartItems, setCartItems, activeOrder, setActiveOrder, orders, setOrders, customers, setCustomers, bills, setBills,
       customerPhone, setCustomerPhone, searchedCustomer, setSearchedCustomer, appliedReward, setAppliedReward,
+      appliedOffer, setAppliedOffer,
       paymentMethod, orderType, settings, currentEmployee, refreshDailyStats, showToast,
       calculateCartSubtotal, calculateCartDiscount, calculateCartTaxes, calculateCartGrandTotal,
-      tables, setTables, setManualDiscount, enqueueCustomerUpdate]);
+      tables, setTables, takeawayOrders, setTakeawayOrders, setManualDiscount, enqueueCustomerUpdate]);
 
   // Expose the guard for manual reset if needed
   const resetProcessingFlag = useCallback(() => {

@@ -78,7 +78,14 @@ const TableSchema = new Schema<ITable>(
 );
 
 TableSchema.index({ branchId: 1, section: 1 });
-TableSchema.index({ branchId: 1, number: 1 }, { unique: true });
+// Uniqueness on (branchId, number) applies ONLY to active (non-deleted)
+// tables. Soft-deleted rows keep order/history references intact but must
+// not block re-adding a table with the same number (partial index — the
+// live MongoDB index must match; see scripts/migrate-table-active-unique.ts).
+TableSchema.index(
+  { branchId: 1, number: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 TableSchema.index({ branchId: 1, floorId: 1 });
 TableSchema.index({ restaurantId: 1, status: 1 });
 

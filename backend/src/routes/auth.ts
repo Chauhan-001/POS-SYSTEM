@@ -22,11 +22,11 @@
  */
 
 import { Router } from 'express';
-import { login, refresh, logout, me, checkOwnerExists, registerOwner } from '../controllers/authController';
+import { login, refresh, logout, me, checkOwnerExists, registerOwner, generateCredentials } from '../controllers/authController';
 import { authIpLimiter, accountBackoff, publicLimiter } from '../middleware/rateLimiter';
 import { validate } from '../middleware/validate';
-import { loginSchema, refreshTokenSchema, logoutSchema, ownerRegistrationSchema } from '../validation';
-import { requireAuth } from '../middleware/authMiddleware';
+import { loginSchema, refreshTokenSchema, logoutSchema, ownerRegistrationSchema, generateCredentialsSchema } from '../validation';
+import { requireAuth, requireOwner } from '../middleware/authMiddleware';
 
 const router = Router();
 
@@ -39,5 +39,6 @@ router.post('/login', validate({ body: loginSchema }), authIpLimiter, accountBac
 router.post('/refresh', validate({ body: refreshTokenSchema }), publicLimiter, refresh);
 router.post('/logout', requireAuth, logout);
 router.get('/me', requireAuth, me);
+router.post('/generate-credentials', requireAuth, requireOwner(), validate({ body: generateCredentialsSchema }), generateCredentials);
 
 export default router;

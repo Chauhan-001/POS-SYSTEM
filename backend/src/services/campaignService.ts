@@ -2,13 +2,16 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Campaign Service — CRM campaign builder (Phase 1.6).
+ * Campaign Service — CRM campaign builder (Phase 1.6, extended).
  *
  * A campaign targets an audience (segments and/or manual phones), uses a
- * message template, has a schedule, and tracks delivery. The provider layer
- * (SMS/WhatsApp/Email/Push) is abstracted behind a `sendChannel` hook so real
- * gateways can be plugged in later; today delivery is recorded into
- * CampaignHistory with status 'sent' (best-effort, never fails billing).
+ * message template, has a schedule, and tracks delivery. Delivery is now
+ * asynchronous: `send()` claims the campaign (atomic status transition),
+ * records a pending CampaignHistory entry, enqueues a background job, and
+ * returns immediately. A worker (campaignQueue.ts) delivers per recipient
+ * through the deliveryService provider layer and writes back per-recipient
+ * results. A campaign is only ever marked 'sent'/'failed'/'partial' by the
+ * worker based on ACTUAL transmission results.
  */
 
 import mongoose from 'mongoose';
@@ -19,6 +22,8 @@ import CampaignHistory from '../models/CampaignHistory';
 import Offer from '../models/Offer';
 import { AppError } from '../utils/AppError';
 import { campaignRepo, auditLogRepo } from '../repositories';
+import { enqueueCampaign } from './campaignQueue';
+import { CAMPAIGN_TRANSITIONS, canTransition } from '../constants/marketingStates';
 import type { CampaignChannel, CampaignStatus } from '../models/Campaign';
 
 function objectId(v: string): mongoose.Types.ObjectId {
@@ -26,9 +31,11 @@ function objectId(v: string): mongoose.Types.ObjectId {
 }
 
 export interface SendCampaignResult {
+  accepted: boolean;
+  jobId: string;
   audienceCount: number;
-  sentCount: number;
-  failedCount: number;
+  channel: string;
+  status: string;
 }
 
 export class CampaignService {
@@ -112,6 +119,7 @@ export class CampaignService {
       entityType: 'campaign',
       entityId: (campaign as any)._id.toString(),
       performedBy: ctx.operator || 'System',
+      restaurantId,
       details: { name: data.name, audienceCount: phones.length },
     } as any);
 
@@ -147,19 +155,29 @@ export class CampaignService {
       entityType: 'campaign',
       entityId: id,
       performedBy: ctx.operator || 'System',
+      restaurantId,
       details: { name: data.name || existing.name },
     } as any);
     return campaign ? this.mapCampaign(campaign) : null;
   }
 
   async setStatus(restaurantId: string, id: string, status: CampaignStatus, ctx: { operator?: string } = {}): Promise<any | null> {
+    const existing = await campaignRepo.forTenant(restaurantId).findById(id);
+    if (!existing) throw new AppError(404, 'Campaign not found');
+
+    // State machine (Phase 4): reject arbitrary transitions.
+    if (!canTransition((existing as any).status, status, CAMPAIGN_TRANSITIONS)) {
+      throw new AppError(400, `Invalid status transition: ${(existing as any).status} → ${status}`);
+    }
+
     const campaign = await campaignRepo.forTenant(restaurantId).update(id, { status } as any);
     await auditLogRepo.create({
       action: 'CAMPAIGN_STATUS_CHANGED',
       entityType: 'campaign',
       entityId: id,
       performedBy: ctx.operator || 'System',
-      details: { status },
+      restaurantId,
+      details: { from: (existing as any).status, to: status },
     } as any);
     return campaign ? this.mapCampaign(campaign) : null;
   }
@@ -172,96 +190,83 @@ export class CampaignService {
       entityType: 'campaign',
       entityId: id,
       performedBy: ctx.operator || 'System',
+      restaurantId,
     } as any);
     return true;
   }
 
   /**
-   * Send a campaign. Resolves the audience, records a CampaignHistory entry
-   * per channel, marks the campaign sent, and (if linked to an offer) wires
-   * the history to the offer for redemption tracking.
+   * Send a campaign — NON-BLOCKING.
+   *  1. Validates status + audience.
+   *  2. Atomically claims the campaign (draft|scheduled → sending) so two
+   *     concurrent requests (or a scheduler tick + manual click) can never
+   *     double-send.
+   *  3. Records a pending CampaignHistory entry.
+   *  4. Enqueues the background delivery job and returns immediately.
    */
   async send(restaurantId: string, id: string, ctx: { operator?: string } = {}): Promise<SendCampaignResult> {
     const campaign = await campaignRepo.forTenant(restaurantId).findById(id);
     if (!campaign) throw new AppError(404, 'Campaign not found');
     const doc = campaign as any;
-    if (doc.status === 'sent' || doc.status === 'sending') {
-      throw new AppError(400, 'Campaign already sent');
+    if (doc.status === 'sent') throw new AppError(400, 'Campaign already sent');
+    if (doc.status === 'sending') throw new AppError(409, 'Campaign is already being sent');
+    if (!canTransition(doc.status, 'sending', CAMPAIGN_TRANSITIONS)) {
+      throw new AppError(400, `Cannot send a campaign in status "${doc.status}"`);
     }
 
-    await campaignRepo.forTenant(restaurantId).update(id, { status: 'sending' } as any);
-
-    const audience = doc.audience?.customerPhones || [];
+    const audience: string[] = doc.audience?.customerPhones || [];
+    if (audience.length === 0) throw new AppError(400, 'Campaign has an empty audience');
     const channel = (doc.template?.channel || 'sms') as CampaignChannel;
-    const messageContent = doc.template?.message || '';
 
-    // Abstracted provider layer — today records the delivery; plug real
-    // SMS/WhatsApp/Email/Push gateways into sendChannel() later.
-    let sentCount = 0;
-    const failed: string[] = [];
-    for (const phone of audience) {
-      try {
-        await this.sendChannel(channel, phone, messageContent);
-        sentCount++;
-      } catch (err: any) {
-        failed.push(phone);
-      }
-    }
+    // Atomic claim — only one caller wins; the loser gets 409.
+    const claimed = await campaignRepo.forTenant(restaurantId).findOneAndUpdate(
+      { _id: id, status: { $in: ['draft', 'scheduled'] } },
+      { status: 'sending' } as any,
+    );
+    if (!claimed) throw new AppError(409, 'Campaign is already being sent');
 
-    // Offer-linked campaign: touch the offer message templates for reference.
-    let offerTitle = '';
-    if (doc.offerId) {
-      const offer = await Offer.findOne({ _id: doc.offerId, restaurantId: objectId(restaurantId) }).lean().exec();
-      offerTitle = offer?.title || '';
-    }
+    const offerTitle = doc.offerId
+      ? (await Offer.findOne({ _id: doc.offerId, restaurantId: objectId(restaurantId) }).lean().exec())?.title
+      : '';
 
     const history = await CampaignHistory.create({
-      offerId: doc.offerId || objectId(restaurantId),
+      campaignId: id,
+      offerId: doc.offerId || null,
       restaurantId: objectId(restaurantId),
       channel,
       recipientPhones: audience,
       recipientCount: audience.length,
       openedCount: 0,
       redeemedCount: 0,
-      messageContent: `${offerTitle ? `[${offerTitle}] ` : ''}${messageContent}`,
-      isScheduled: false,
-      sentDate: new Date().toISOString(),
+      messageContent: `${offerTitle ? `[${offerTitle}] ` : ''}${doc.template?.message || ''}`,
+      isScheduled: doc.schedule?.mode === 'scheduled',
+      scheduledDate: doc.schedule?.scheduledAt ? new Date(doc.schedule.scheduledAt).toISOString() : undefined,
       campaignCost: 0,
-      status: failed.length === 0 ? 'sent' : failed.length === audience.length ? 'failed' : 'partial',
-      errorLog: failed.length > 0 ? `Failed: ${failed.slice(0, 10).join(', ')}` : undefined,
+      status: 'pending',
+      results: [],
     });
 
     await campaignRepo.forTenant(restaurantId).update(id, {
-      status: failed.length === audience.length && audience.length > 0 ? 'failed' : 'sent',
-      'stats.sentCount': sentCount,
-      'stats.failedCount': failed.length,
       $push: { historyIds: history._id.toString() },
     } as any);
+
+    enqueueCampaign({ campaignId: id, restaurantId, historyId: history._id.toString() });
 
     await auditLogRepo.create({
       action: 'CAMPAIGN_SENT',
       entityType: 'campaign',
       entityId: id,
       performedBy: ctx.operator || 'System',
-      details: { channel, audienceCount: audience.length, sentCount, failedCount: failed.length },
+      restaurantId,
+      details: { channel, audienceCount: audience.length, queued: true, jobId: history._id.toString() },
     } as any);
 
-    return { audienceCount: audience.length, sentCount, failedCount: failed.length };
-  }
-
-  /**
-   * Abstracted delivery provider. Replace with real gateway integrations
-   * (Twilio/SMS, WhatsApp Business API, SMTP, FCM/APNs). Logs delivery to the
-   * console; throws on hard failure.
-   */
-  private async sendChannel(channel: CampaignChannel, phone: string, message: string): Promise<void> {
-    const masked = phone.replace(/^(\d{2})\d{6}(\d{2})$/, '$1******$2');
-    console.log(`[Campaign] ${channel.toUpperCase()} → ${masked}: ${message.slice(0, 60)}`);
-    // Real providers would POST here. Simulated success keeps the flow safe.
+    return { accepted: true, jobId: history._id.toString(), audienceCount: audience.length, channel, status: 'sending' };
   }
 
   private mapCampaign(c: any): any {
     const doc = c.toObject ? c.toObject() : c;
+    const stats = doc.stats || {};
     return {
       id: doc._id.toString(),
       name: doc.name,
@@ -271,11 +276,19 @@ export class CampaignService {
       template: doc.template,
       schedule: doc.schedule,
       status: doc.status,
-      stats: doc.stats,
-      historyIds: doc.historyIds,
+      stats,
+      historyIds: doc.historyIds || [],
       createdBy: doc.createdBy,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
+      // Legacy/console-friendly fields (Phase 24): the admin CRM console and
+      // older consumers read these flat names.
+      channel: doc.template?.channel,
+      audienceCount: stats.audienceCount ?? doc.audience?.customerPhones?.length ?? 0,
+      scheduledAt: doc.schedule?.mode === 'scheduled' ? doc.schedule?.scheduledAt : undefined,
+      sentAt: doc.schedule?.dispatchedAt || undefined,
+      deliveryCount: stats.sentCount ?? 0,
+      redemptionCount: stats.redeemedCount ?? 0,
     };
   }
 }

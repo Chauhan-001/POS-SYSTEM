@@ -315,7 +315,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
             </button>
             <button
               onClick={() => { setIsAdding(true); setSelectedCustomer(null); }}
-              className="flex items-center gap-1 bg-[#004ac6] hover:bg-[#003ea8] text-white px-3 py-1.5 rounded-lg font-semibold text-xs transition-colors shadow-sm cursor-pointer"
+              className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-3 py-1.5 rounded-lg font-semibold text-xs transition-colors shadow-sm cursor-pointer"
             >
               <UserPlus className="w-3.5 h-3.5" />
               Enroll Member
@@ -332,7 +332,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
               placeholder="Search by name or 10-digit phone number..."
               value={search}
               onChange={(e: { target: { value: any; }; }) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
             />
           </div>
         </div>
@@ -353,7 +353,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 onClick={() => selectCustomerProfile(cust)}
                 className={`p-3 flex justify-between items-center cursor-pointer transition-all ${
                   selectedCustomer?.phone === cust.phone 
-                    ? 'bg-[#f3f3fe] border-l-4 border-l-[#004ac6]' 
+                    ? 'bg-[#f3f3fe] border-l-4 border-l-[var(--brand-color)]' 
                     : 'hover:bg-gray-50'
                 }`}
               >
@@ -386,7 +386,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
 
                 <div className="text-right flex items-center gap-2">
                   <div>
-                    <span className="font-bold font-mono text-xs text-[#004ac6] block">{cust.points} pts</span>
+                    <span className="font-bold font-mono text-xs text-[var(--brand-color)] block">{cust.points} pts</span>
                     <span className="text-[9px] text-gray-400 block">{cust.visits} visits</span>
                   </div>
                   <ChevronRight className="w-4 h-4 text-gray-400" />
@@ -450,7 +450,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., 9876543210"
                     value={newPhone}
                     onChange={(e: { target: { value: string; }; }) => setNewPhone(e.target.value.replace(/\D/g, ''))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -463,7 +463,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., Ramesh Deshmukh"
                     value={newName}
                     onChange={(e: { target: { value: any; }; }) => setNewName(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -476,7 +476,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., ramesh@gmail.com"
                     value={newEmail}
                     onChange={(e: { target: { value: any; }; }) => setNewEmail(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   />
                 </div>
 
@@ -487,7 +487,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     type="date"
                     value={newBday}
                     onChange={(e: { target: { value: any; }; }) => setNewBday(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   />
                 </div>
 
@@ -498,7 +498,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., Prefers corner table, gluten intolerant, coffee sweetener..."
                     value={newNotes}
                     onChange={(e: { target: { value: any; }; }) => setNewNotes(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[#004ac6] h-16 resize-none"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] h-16 resize-none"
                   />
                 </div>
               </div>
@@ -514,7 +514,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-[#004ac6] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer flex items-center gap-1"
+                className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer flex items-center gap-1"
               >
                 <Check className="w-4 h-4" />
                 Register Member
@@ -528,7 +528,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
             {/* Header Profile */}
             <div className="flex items-center justify-between border-b border-[#e1e2ed] pb-4">
               <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-full border text-lg flex items-center justify-center font-bold shadow-inner ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-200 text-red-600' : 'bg-[#f3f3fe] border-[#c3c6d7] text-[#004ac6]'}`}>
+                <div className={`w-12 h-12 rounded-full border text-lg flex items-center justify-center font-bold shadow-inner ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-200 text-red-600' : 'bg-[#f3f3fe] border-[#c3c6d7] text-[var(--brand-color)]'}`}>
                   {selectedCustomer.name.charAt(0).toUpperCase()}
                 </div>
                 <div>
@@ -563,7 +563,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
                   <Award className="w-3 h-3" /> Points
                 </span>
-                <span className="text-md font-bold text-[#004ac6] font-mono">{selectedCustomer.points ?? 0}</span>
+                <span className="text-md font-bold text-[var(--brand-color)] font-mono">{selectedCustomer.points ?? 0}</span>
                 <span className="text-[8px] text-gray-400 block">Lifetime {selectedCustomer.lifetimePoints ?? 0}</span>
               </div>
               
@@ -596,7 +596,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 type="button"
                 onClick={() => loadServerProfile(selectedCustomer)}
                 disabled={isProfileLoading}
-                className="flex items-center gap-1 text-[9px] font-semibold text-[#004ac6] hover:text-[#003ea8] disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-1 text-[9px] font-semibold text-[var(--brand-color)] hover:text-[#003ea8] disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw className={`w-3 h-3 ${isProfileLoading ? 'animate-spin' : ''}`} />
                 {isProfileLoading ? 'Syncing profile…' : 'Refresh from server'}
@@ -624,7 +624,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 value={customerNote}
                 onChange={(e: { target: { value: any; }; }) => setCustomerNote(e.target.value)}
                 placeholder="Register VIP tables preferences, beverage sweetness, allergies..."
-                className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-1 focus:ring-[#004ac6] h-16 resize-none bg-gray-50 focus:bg-white"
+                className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] h-16 resize-none bg-gray-50 focus:bg-white"
               />
               <div className="flex justify-end">
                 <button
@@ -689,14 +689,14 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     value={importText}
                     onChange={(e) => setImportText(e.target.value)}
                     placeholder={'phone,name,email\n9876543210,Aarav Mehta,aarav@example.com\n9123456789,Priya Sharma,priya@example.com'}
-                    className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#004ac6] h-40 resize-y"
+                    className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] h-40 resize-y"
                   />
                   {importStatus && (
-                    <p className="mt-2 text-[10px] font-semibold text-[#004ac6] bg-blue-50 border border-blue-100 rounded px-2 py-1.5">{importStatus}</p>
+                    <p className="mt-2 text-[10px] font-semibold text-[var(--brand-color)] bg-blue-50 border border-blue-100 rounded px-2 py-1.5">{importStatus}</p>
                   )}
                   <div className="flex gap-2 justify-end mt-4">
                     <button onClick={() => { setIsImportOpen(false); setImportStatus(null); setImportText(''); }} className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 cursor-pointer">Cancel</button>
-                    <button onClick={handleImportCsv} className="px-5 py-2 bg-[#004ac6] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold cursor-pointer">Import</button>
+                    <button onClick={handleImportCsv} className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold cursor-pointer">Import</button>
                   </div>
                 </div>
               </div>
@@ -743,8 +743,8 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
 
             {/* Redeemed Loyalty Offers Section — Phase 1.6 real ledger (server) with local fallback */}
             <div className="flex-1 min-h-[140px] flex flex-col mt-2">
-              <label className="text-[10px] font-bold uppercase text-[#004ac6] mb-2 flex items-center gap-1">
-                <Gift className="w-3.5 h-3.5 text-[#004ac6]" />
+              <label className="text-[10px] font-bold uppercase text-[var(--brand-color)] mb-2 flex items-center gap-1">
+                <Gift className="w-3.5 h-3.5 text-[var(--brand-color)]" />
                 Redeemed Loyalty Offers
               </label>
 
@@ -764,7 +764,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                           </span>
                         </div>
                         <div className="text-right shrink-0">
-                          <span className="font-bold font-mono text-[#004ac6] bg-blue-100/80 px-2 py-0.5 rounded text-[10px] block">
+                          <span className="font-bold font-mono text-[var(--brand-color)] bg-blue-100/80 px-2 py-0.5 rounded text-[10px] block">
                             -{tx.points} pts
                           </span>
                         </div>
@@ -784,7 +784,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                           </span>
                         </div>
                         <div className="text-right shrink-0">
-                          <span className="font-bold font-mono text-[#004ac6] bg-blue-100/80 px-2 py-0.5 rounded text-[10px] block">
+                          <span className="font-bold font-mono text-[var(--brand-color)] bg-blue-100/80 px-2 py-0.5 rounded text-[10px] block">
                             -{pur.pointsRedeemed || 50} pts
                           </span>
                         </div>

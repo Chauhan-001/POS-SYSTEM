@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Navbar } from './Navbar'
 import { useSidebar } from '../context/SidebarContext'
+import { QuotaAlertBanner } from '../components/QuotaAlertBanner'
 import { cn } from '../utils/cn'
 
 export function DashboardLayout() {
@@ -14,6 +15,7 @@ export function DashboardLayout() {
         'flex flex-1 flex-col overflow-hidden transition-all duration-300',
       )}>
         <Navbar />
+        <QuotaAlertBanner />
         <main className="flex-1 overflow-y-auto bg-surface-50 p-6 dark:bg-surface-950">
           <Outlet />
         </main>

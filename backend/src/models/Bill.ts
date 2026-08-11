@@ -38,6 +38,8 @@ export interface IBill extends Document {
   orderType: string;
   restaurantId?: mongoose.Types.ObjectId;
   branchId?: mongoose.Types.ObjectId;
+  /** Source Order this bill settles (online ordering adjustments need it). */
+  orderId?: mongoose.Types.ObjectId | null;
   /** Loyalty customer reference (Phase 1.6) — phone snapshot kept for historical integrity */
   customerId?: mongoose.Types.ObjectId;
   customerPhone?: string;
@@ -91,6 +93,7 @@ const BillSchema = new Schema<IBill>(
     orderType: { type: String, required: true, trim: true },
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', default: null, index: true },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
+    orderId: { type: Schema.Types.ObjectId, ref: 'Order', default: null, index: true },
     customerId: { type: Schema.Types.ObjectId, ref: 'Customer', default: null, index: true },
     customerPhone: { type: String, trim: true },
     customerName: { type: String, trim: true },

@@ -1,4 +1,4 @@
-import { Layers, Users, Award, Shield, DollarSign, Activity, FileText, RefreshCw, TrendingDown, BarChart3, CalendarClock, Building2, Receipt, TrendingUp, Monitor } from 'lucide-react';
+import { Layers, Users, Award, Shield, DollarSign, Activity, FileText, RefreshCw, TrendingDown, BarChart3, CalendarClock, Building2, Receipt, TrendingUp, Monitor, ToggleLeft, QrCode } from 'lucide-react';
 
 import { useState, useEffect } from 'react';
 import type { RolePermissions } from '../src/types';
@@ -53,22 +53,33 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
       setIsKiosk(prev => !prev);
     }
   };
-  // ─── Plan-Aware Feature Gates ────────────────────────────────
-  // These check BOTH moduleSettings AND the subscription plan features.
-  // If the plan doesn't include a feature, the item is hidden regardless of module settings.
-  const planHas = (f: string) => subscriptionFeatures.includes(f);
-
-  const isLoyaltyEnabled = moduleSettings.enableLoyalty !== false && planHas('loyalty');
-  const isReservationsEnabled = moduleSettings.enableReservations !== false && planHas('reservations');
-  const isMultiBranchEnabled = moduleSettings.enableMultiBranch === true && planHas('multi_branch');
-  const isExpensesEnabled = moduleSettings.enableExpenseManagement !== false && planHas('expense_tracking');
-  const isInventoryEnabled = planHas('inventory');
-  const isAnalyticsEnabled = planHas('analytics');
-
   const isOwner = role === 'Owner';
   const isManager = role === 'Manager';
   const isCashier = role === 'Cashier';
   const perms = rolePermissions;
+
+  // ─── Strict Plan-Aware Feature Gates ─────────────────────────
+  // Every tile checks BOTH the Settings module toggle AND the subscription
+  // plan: a feature NOT included in the plan is hidden for EVERY role (Owner
+  // included) — the plan is the hard gate. Settings toggles let the Owner
+  // fine-tune visibility WITHIN the features the plan includes.
+  const planHas = (f: string) => subscriptionFeatures.includes(f);
+  const planHasAny = (...features: string[]) => features.some((f) => planHas(f));
+  const ownerFullAccess = (moduleEnabled: boolean, feature: string): boolean =>
+    moduleEnabled && planHas(feature);
+
+  const isLoyaltyEnabled = ownerFullAccess(moduleSettings.enableLoyalty !== false, 'loyalty');
+  const isReservationsEnabled = ownerFullAccess(moduleSettings.enableReservations !== false, 'reservations');
+  const isMultiBranchEnabled = ownerFullAccess(moduleSettings.enableMultiBranch === true, 'multi_branch');
+  const isExpensesEnabled = ownerFullAccess(moduleSettings.enableExpenseManagement !== false, 'expense_tracking');
+  const isInventoryEnabled = ownerFullAccess(true, 'inventory');
+  const isAnalyticsEnabled = ownerFullAccess(true, 'analytics');
+  const isFinanceEnabled = ownerFullAccess(true, 'finance');
+  const isProductsEnabled = ownerFullAccess(moduleSettings.enableProducts !== false, 'products');
+  const isOffersEnabled = moduleSettings.enableOffers !== false && planHasAny('offers', 'marketing');
+  const isStaffEnabled = ownerFullAccess(moduleSettings.enableStaff !== false, 'staff');
+  const isMenuAvailabilityEnabled = moduleSettings.enableMenuAvailability !== false && planHasAny('online_ordering', 'qr_ordering');
+  const isQrStudioEnabled = moduleSettings.enableQROrdering !== false && planHas('qr_ordering');
 
   // Check if a workspace item is accessible based on role
   const canAccess = (itemId: string): boolean => {
@@ -79,6 +90,7 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
       switch (itemId) {
         case 'Staff': return perms?.cashierCanManageStaff === true;
         case 'Products': return perms?.cashierCanManageProducts === true;
+        case 'Menu Availability': return perms?.cashierCanManageProducts === true;
         case 'Expenses': return perms?.cashierCanManageExpenses === true;
         case 'Inventory': return perms?.cashierCanAccessInventory === true;
         case 'Customers': return perms?.cashierCanManageCustomers === true;
@@ -96,6 +108,7 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
       switch (itemId) {
         case 'Staff': return perms?.managerCanManageStaff === true;
         case 'Products': return perms?.managerCanManageProducts === true;
+        case 'Menu Availability': return perms?.managerCanManageProducts === true;
         case 'Expenses': return perms?.managerCanManageExpenses === true;
         case 'Inventory': return perms?.managerCanAccessInventory === true;
         case 'Customers': return perms?.managerCanManageCustomers === true;
@@ -112,22 +125,24 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
   };
 
   const items = [
-    ...(isInventoryEnabled ? [{ icon: Layers, label: 'Inventory', desc: 'Stock & purchase management', action: () => onNavigate('Inventory'), color: 'text-[#004ac6]' as const }] : []),
-    { icon: Layers, label: 'Products', desc: 'Catalog management', action: () => onNavigate('Products'), color: 'text-orange-600' },
+    ...(isInventoryEnabled ? [{ icon: Layers, label: 'Inventory', desc: 'Stock & purchase management', action: () => onNavigate('Inventory'), color: 'text-[var(--brand-color)]' as const }] : []),
+    ...(isProductsEnabled ? [{ icon: Layers, label: 'Products', desc: 'Catalog management', action: () => onNavigate('Products'), color: 'text-orange-600' as const }] : []),
+    ...(isMenuAvailabilityEnabled ? [{ icon: ToggleLeft, label: 'Menu Availability', desc: 'Online ordering availability', action: () => onNavigate('MenuAvailability'), color: 'text-teal-600' as const }] : []),
+    ...(isQrStudioEnabled ? [{ icon: QrCode, label: 'QR Studio', desc: 'Print QR ordering stickers', action: () => onNavigate('QrStudio'), color: 'text-purple-600' as const }] : []),
     ...(isExpensesEnabled ? [{ icon: TrendingDown, label: 'Expenses', desc: 'Expense tracking', action: () => onNavigate('Expenses'), color: 'text-red-600' as const }] : []),
     ...(isReservationsEnabled ? [{ icon: CalendarClock, label: 'Reservations', desc: 'Table booking & waitlist', action: () => onNavigate('Reservations'), color: 'text-rose-600' as const }] : []),
     ...(isAnalyticsEnabled ? [{ icon: TrendingUp, label: 'Analytics', desc: 'Business intelligence & trends', action: () => onNavigate('Analytics'), color: 'text-indigo-600' as const }] : []),
-    ...(isAnalyticsEnabled ? [{ icon: BarChart3, label: 'Finance', desc: 'Profit & Loss statement', action: () => onNavigate('Finance'), color: 'text-emerald-600' as const }] : []),
+    ...(isFinanceEnabled ? [{ icon: BarChart3, label: 'Finance', desc: 'Profit & Loss statement', action: () => onNavigate('Finance'), color: 'text-emerald-600' as const }] : []),
     ...(isLoyaltyEnabled ? [{ icon: Users, label: 'Customers', desc: 'Loyalty management', action: () => onNavigate('Customers'), color: 'text-green-600' as const }] : []),
-    { icon: Award, label: 'Offers', desc: 'Reward tiers', action: () => onNavigate('Offers'), color: 'text-amber-600' },
-    { icon: Shield, label: 'Staff', desc: 'Employee management', action: () => onNavigate('Staff'), color: 'text-blue-600' },
+    ...(isOffersEnabled ? [{ icon: Award, label: 'Offers', desc: 'Reward tiers', action: () => onNavigate('Offers'), color: 'text-amber-600' as const }] : []),
+    ...(isStaffEnabled ? [{ icon: Shield, label: 'Staff', desc: 'Employee management', action: () => onNavigate('Staff'), color: 'text-blue-600' as const }] : []),
     ...(isMultiBranchEnabled ? [{ icon: Building2, label: 'Branches', desc: 'Multi-location management', action: () => onNavigate('Branches'), color: 'text-purple-600' as const }] : []),
     { icon: DollarSign, label: 'Daily Sales', desc: 'View today revenue', action: onOpenDailySales, color: 'text-green-600' },
     { icon: Activity, label: 'Activity Feed', desc: 'Transaction history', action: onOpenActivityFeed, color: 'text-blue-600' },
     { icon: FileText, label: 'Z-Report', desc: 'End of day report', action: onOpenZReport, color: 'text-purple-600' },
     { icon: Receipt, label: 'Receipt History', desc: 'Search & reprint receipts', action: () => onNavigate('ReceiptHistory'), color: 'text-amber-600' },
-    { icon: RefreshCw, label: 'Sync Status', desc: 'Cloud sync panel', action: onOpenSyncPanel, color: 'text-[#004ac6]' },
-    ...(isElectron ? [{ icon: Monitor, label: 'Kiosk Mode', desc: isKiosk ? 'Full-screen (active)' : 'Enter full-screen kiosk', action: handleToggleKiosk, color: isKiosk ? 'text-[#004ac6]' as const : 'text-gray-500' as const }] : []),
+    { icon: RefreshCw, label: 'Sync Status', desc: 'Cloud sync panel', action: onOpenSyncPanel, color: 'text-[var(--brand-color)]' },
+    ...(isElectron ? [{ icon: Monitor, label: 'Kiosk Mode', desc: isKiosk ? 'Full-screen (active)' : 'Enter full-screen kiosk', action: handleToggleKiosk, color: isKiosk ? 'text-[var(--brand-color)]' as const : 'text-gray-500' as const }] : []),
   ];
 
   const filteredItems = items.filter(item => canAccess(item.label));
@@ -140,7 +155,7 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
           const Icon = item.icon;
           return (
             <button key={item.label} onClick={item.action}
-              className="p-6 bg-white rounded-xl border border-[#e1e2ed] hover:shadow-md hover:border-[#004ac6]/30 transition-all text-left cursor-pointer">
+              className="p-6 bg-white rounded-xl border border-[#e1e2ed] hover:shadow-md hover:border-[var(--brand-color)]/30 transition-all text-left cursor-pointer">
               <Icon className={`w-8 h-8 ${item.color} mb-2`} />
               <p className="text-sm font-bold">{item.label}</p>
               <p className="text-xs text-gray-500">{item.desc}</p>

@@ -1,23 +1,67 @@
-import { Trash2, Plus, X, BarChart3, TrendingUp, AlertTriangle, Lightbulb, Loader2 } from 'lucide-react';
+import { Trash2, Plus, X, Lightbulb } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { WASTE_ENTRIES } from '../data';
-import { useNotify, useInventory } from '../InventoryManager';
-import { analyzeWaste, type WasteAnalysis } from '../../../src/ai/aiData';
+import { useNotify, useInventory, useInventoryEventsCtx } from '../InventoryManager';
+import { analyzeWaste, type WasteAnalysis, type AiResult } from '../../../src/ai/aiData';
+import type { WasteEntry } from '../types';
 
 const WASTE_REASONS = ['spoiled', 'burnt', 'expired', 'dropped', 'other'] as const;
+
+/**
+ * Parse the waste reason out of the backend event details. The stock engine
+ * stores details like "spoiled Milk discarded" or "Expired batch discarded
+ * (exp …)" — the reason is the first keyword when it matches a known cause.
+ */
+function reasonFromDetails(details?: string): WasteEntry['reason'] {
+  const dl = (details || '').toLowerCase();
+  if (dl.includes('spoiled')) return 'spoiled';
+  if (dl.includes('burnt')) return 'burnt';
+  if (dl.includes('expired')) return 'expired';
+  if (dl.includes('dropped')) return 'dropped';
+  return 'other';
+}
 
 export default function WasteManagement({ moduleSettings }: { moduleSettings?: Record<string, boolean> }) {
   const notify = useNotify();
   const { items, removeStock } = useInventory();
-  const [wasteLog, setWasteLog] = useState(WASTE_ENTRIES);
+  // Real waste feed — the InventoryEvent collection (type 'waste'), loaded once
+  // by InventoryManager. No hardcoded/demo rows: an empty list is honest.
+  const { events, refreshEvents } = useInventoryEventsCtx();
   const [showForm, setShowForm] = useState(false);
   const [formItem, setFormItem] = useState('');
   const [formQty, setFormQty] = useState('');
   const [formReason, setFormReason] = useState('spoiled');
 
+  // Cost per unit comes from the REAL catalog (product averageCost in MongoDB).
+  const itemCostByName = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of items) m.set(i.name.toLowerCase(), i.averageCost || 0);
+    return m;
+  }, [items]);
+
+  const wasteLog = useMemo<WasteEntry[]>(() => {
+    if (!events) return []; // offline — show honest empty state, never demo data
+    return events
+      .filter(e => e.type === 'waste')
+      .map(e => {
+        const qty = Math.abs(Number(e.quantity) || 0);
+        const name = e.item || 'Item';
+        const avgCost = itemCostByName.get(name.toLowerCase()) || 0;
+        return {
+          id: e.id,
+          item: name,
+          quantity: qty,
+          unit: e.unit || 'pcs',
+          reason: reasonFromDetails(e.details),
+          cost: Math.round(qty * avgCost),
+          date: String(e.timestamp || '').slice(0, 10),
+        };
+      })
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [events, itemCostByName]);
+
   const totalWaste = wasteLog.reduce((s, w) => s + w.cost, 0);
-  const [wasteAnalysis, setWasteAnalysis] = useState<WasteAnalysis | null>(null);
+  const [wasteAnalysis, setWasteAnalysis] = useState<AiResult<WasteAnalysis> | null>(null);
   useEffect(() => {
     analyzeWaste(wasteLog).then(setWasteAnalysis).catch(() => setWasteAnalysis(null));
   }, [wasteLog]);
@@ -29,17 +73,14 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
       return;
     }
     const qtyNum = parseFloat(formQty);
-    const cost = qtyNum * item.averageCost;
-    // The stock engine handles stock deduction + InventoryEvent (type waste) +
-    // AuditLog server-side — no separate addEvent call needed.
     const detail = formReason === 'other'
       ? `${item.name} discarded`
       : `${formReason} ${item.name} discarded`;
+    // The stock engine handles stock deduction + InventoryEvent (type waste) +
+    // AuditLog server-side — then we re-fetch the feed so the log below shows
+    // the freshly persisted record (single source of truth = MongoDB).
     await removeStock(item.name, qtyNum, { type: 'waste', details: detail, reason: formReason });
-    setWasteLog(prev => [{
-      id: `wst_${Date.now()}`, item: item.name, quantity: qtyNum,
-      unit: item.unit, reason: formReason as any, cost: Math.round(cost), date: new Date().toISOString().slice(0, 10)
-    }, ...prev]);
+    await refreshEvents();
     notify(`${formQty} ${item.unit} ${item.name} logged as waste`, 'success');
     setFormItem('');
     setFormQty('');
@@ -124,10 +165,17 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
             </div>
             <span className="text-sm font-bold text-gray-800">AI Waste Analysis</span>
             <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-              wasteAnalysis.trend === 'increasing' ? 'bg-red-50 text-red-700' :
-              wasteAnalysis.trend === 'decreasing' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'
+              wasteAnalysis.source === 'live'
+                ? 'bg-emerald-50 text-emerald-600'
+                : 'bg-amber-50 text-amber-600'
             }`}>
-              {wasteAnalysis.trend === 'increasing' ? '📈 Increasing' : wasteAnalysis.trend === 'decreasing' ? '📉 Decreasing' : '➡️ Stable'}
+              {wasteAnalysis.source === 'live' ? '● AI live' : '● Offline estimate'}
+            </span>
+            <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
+              wasteAnalysis.data.trend === 'increasing' ? 'bg-red-50 text-red-700' :
+              wasteAnalysis.data.trend === 'decreasing' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'
+            }`}>
+              {wasteAnalysis.data.trend === 'increasing' ? '📈 Increasing' : wasteAnalysis.data.trend === 'decreasing' ? '📉 Decreasing' : '➡️ Stable'}
             </span>
           </div>
 
@@ -137,7 +185,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
               <div>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Top Waste Items</p>
                 <div className="space-y-2">
-                  {wasteAnalysis.topWasteItems.map(item => (
+                  {wasteAnalysis.data.topWasteItems.map(item => (
                     <div key={item.name} className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-gray-700">{item.name}</span>
                       <div className="flex items-center gap-2">
@@ -154,7 +202,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
               <div>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">By Reason</p>
                 <div className="space-y-2">
-                  {wasteAnalysis.wasteByReason.map(r => (
+                  {wasteAnalysis.data.wasteByReason.map(r => (
                     <div key={r.reason} className="flex items-center justify-between">
                       <span className="text-xs capitalize font-semibold text-gray-700">{r.reason}</span>
                       <span className="text-[10px] font-bold text-gray-500">{r.count}x · ₹{r.cost}</span>
@@ -170,7 +218,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
                 <Lightbulb className="w-3.5 h-3.5" /> Actionable Advice
               </p>
               <ul className="space-y-1.5">
-                {wasteAnalysis.actionableAdvice.map((advice, i) => (
+                {wasteAnalysis.data.actionableAdvice.map((advice, i) => (
                   <li key={i} className="flex items-start gap-2 text-xs text-amber-900">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1 shrink-0" />
                     {advice}
@@ -182,31 +230,45 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         </motion.div>
       )}
 
-      {/* Waste entries as cards */}
+      {/* Waste entries as cards — every row comes from the backend feed */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}
         className="space-y-3"
       >
-        {wasteLog.map((w, i) => (
-          <motion.div key={w.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2, delay: i * 0.03 }}
-            className="bg-white rounded-2xl border border-[#e1e2ed] p-4 hover:shadow-md transition-all"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-lg">
-                  {reasonIcons[w.reason] || '📦'}
-                </div>
-                <div>
-                  <p className="text-sm font-bold">{w.item}</p>
-                  <p className="text-[10px] text-gray-400 capitalize">{w.reason} · {w.date}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-lg font-bold font-mono text-red-600">-{w.quantity} {w.unit}</p>
-                <p className="text-xs text-gray-500">₹{w.cost}</p>
-              </div>
+        {wasteLog.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-10 text-center shadow-sm">
+            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-3">
+              <Trash2 className="w-5 h-5 text-red-400" />
             </div>
-          </motion.div>
-        ))}
+            <p className="text-sm font-semibold text-gray-600">No waste logged yet</p>
+            <p className="text-xs text-gray-400 mt-1">
+              {events === null
+                ? 'Offline — waste activity is unavailable until the connection is back.'
+                : 'Logged waste entries will appear here, synced from your database.'}
+            </p>
+          </div>
+        ) : (
+          wasteLog.map((w, i) => (
+            <motion.div key={w.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2, delay: i * 0.03 }}
+              className="bg-white rounded-2xl border border-[#e1e2ed] p-4 hover:shadow-md transition-all"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-lg">
+                    {reasonIcons[w.reason] || '📦'}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold">{w.item}</p>
+                    <p className="text-[10px] text-gray-400 capitalize">{w.reason} · {w.date}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-lg font-bold font-mono text-red-600">-{w.quantity} {w.unit}</p>
+                  <p className="text-xs text-gray-500">₹{w.cost}</p>
+                </div>
+              </div>
+            </motion.div>
+          ))
+        )}
       </motion.div>
     </div>
   );

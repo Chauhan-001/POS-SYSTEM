@@ -1,13 +1,19 @@
-import { ShoppingCart, Utensils, SlidersHorizontal, Trash2, ClipboardCheck, X } from 'lucide-react';
+import { ShoppingCart, Utensils, SlidersHorizontal, Trash2, ClipboardCheck, X, PackagePlus, RotateCcw } from 'lucide-react';
 import type { TimelineEntry } from '../types';
 
 const typeConfig = {
   purchased: { icon: ShoppingCart, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: 'Purchased' },
+  purchase: { icon: PackagePlus, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: 'Purchase' },
   sold: { icon: Utensils, color: 'text-blue-600 bg-blue-50 border-blue-200', label: 'Sold' },
   adjusted: { icon: SlidersHorizontal, color: 'text-amber-600 bg-amber-50 border-amber-200', label: 'Adjusted' },
   waste: { icon: Trash2, color: 'text-red-600 bg-red-50 border-red-200', label: 'Waste' },
   closing: { icon: ClipboardCheck, color: 'text-purple-600 bg-purple-50 border-purple-200', label: 'Closing' },
-};
+  return: { icon: RotateCcw, color: 'text-teal-600 bg-teal-50 border-teal-200', label: 'Return' },
+} as const;
+
+// Unknown backend types (future-proofing) fall back to a neutral card instead
+// of crashing on typeConfig[entry.type].icon === undefined.
+const FALLBACK_CONFIG = { icon: PackagePlus, color: 'text-gray-600 bg-gray-50 border-gray-200', label: 'Activity' };
 
 export default function TimelineCard({ entry, isLast, onDelete }: {
   entry: TimelineEntry;
@@ -15,7 +21,7 @@ export default function TimelineCard({ entry, isLast, onDelete }: {
   /** When provided, renders a delete button (used for real purchase rows). */
   onDelete?: (id: string) => void;
 }) {
-  const config = typeConfig[entry.type];
+  const config = typeConfig[entry.type as keyof typeof typeConfig] ?? FALLBACK_CONFIG;
   const Icon = config.icon;
   return (
     <div className="group relative flex gap-4 pb-6">

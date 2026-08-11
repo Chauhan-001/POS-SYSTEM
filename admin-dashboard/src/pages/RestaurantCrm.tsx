@@ -588,7 +588,8 @@ function CampaignsTab({ restaurantId }: { restaurantId: string }) {
   if (error) return <ErrorPage message={(error as any).message} onRetry={() => refetch()} />
 
   const STATUS_VARIANT: Record<string, any> = {
-    draft: 'neutral', scheduled: 'info', active: 'success', paused: 'warning', completed: 'neutral', cancelled: 'danger',
+    draft: 'neutral', scheduled: 'info', sending: 'info', sent: 'success',
+    active: 'success', paused: 'warning', failed: 'danger', completed: 'neutral', cancelled: 'danger',
   }
 
   return (
@@ -599,18 +600,50 @@ function CampaignsTab({ restaurantId }: { restaurantId: string }) {
       ) : !data || data.data.length === 0 ? (
         <EmptyState icon={<Megaphone size={40} />} title="No campaigns" description="Campaigns built from the restaurant's CRM will appear here." />
       ) : (
-        <div className="divide-y divide-surface-100 dark:divide-surface-800 px-6 pb-4">
-          {(data.data || []).map((c: any) => (
-            <div key={c.id} className="py-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-surface-900 dark:text-surface-100">{c.name}</p>
-                <Badge variant={STATUS_VARIANT[c.status] || 'neutral'} className="text-[9px] capitalize">{c.status}</Badge>
-              </div>
-              <p className="text-[11px] text-surface-500 mt-0.5">{c.channel} · {c.audienceCount ?? 0} recipients</p>
-              {c.scheduledAt && <p className="text-[10px] text-surface-400 mt-0.5">Scheduled: {formatDateTime(c.scheduledAt)}</p>}
-              {c.sentAt && <p className="text-[10px] text-surface-400 mt-0.5">Sent: {formatDateTime(c.sentAt)}</p>}
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-surface-200 dark:border-surface-700">
+                <th className="text-left py-3 px-6 text-xs text-surface-500 font-semibold">Campaign</th>
+                <th className="text-left py-3 pr-4 text-xs text-surface-500 font-semibold">Status</th>
+                <th className="text-left py-3 pr-4 text-xs text-surface-500 font-semibold">Channel</th>
+                <th className="text-left py-3 pr-4 text-xs text-surface-500 font-semibold">Audience</th>
+                <th className="text-left py-3 pr-4 text-xs text-surface-500 font-semibold">Schedule</th>
+                <th className="text-left py-3 pr-4 text-xs text-surface-500 font-semibold">Delivered / Failed</th>
+                <th className="text-left py-3 pr-4 text-xs text-surface-500 font-semibold">Redeemed</th>
+                <th className="text-left py-3 text-xs text-surface-500 font-semibold">Created By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data.data || []).map((c: any) => (
+                <tr key={c.id} className="border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors">
+                  <td className="py-3 px-6">
+                    <p className="font-semibold text-surface-900 dark:text-surface-100">{c.name}</p>
+                    <p className="text-[10px] text-surface-400 mt-0.5">Created {c.createdAt ? formatDate(c.createdAt) : '—'}</p>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <Badge variant={STATUS_VARIANT[c.status] || 'neutral'} className="text-[9px] capitalize">{c.status}</Badge>
+                  </td>
+                  <td className="py-3 pr-4 capitalize text-surface-600">{c.channel || '—'}</td>
+                  <td className="py-3 pr-4">{formatNumber(c.audienceCount ?? 0)}</td>
+                  <td className="py-3 pr-4 text-surface-500">
+                    {c.schedule?.mode === 'scheduled' && c.schedule?.scheduledAt
+                      ? formatDateTime(c.schedule.scheduledAt)
+                      : c.status === 'sent' && c.sentAt
+                        ? `Sent ${formatDateTime(c.sentAt)}`
+                        : 'Send now'}
+                  </td>
+                  <td className="py-3 pr-4">
+                    <span className="text-success font-semibold">{formatNumber(c.deliveryCount ?? c.stats?.sentCount ?? 0)}</span>
+                    {' / '}
+                    <span className="text-danger font-semibold">{formatNumber(c.stats?.failedCount ?? 0)}</span>
+                  </td>
+                  <td className="py-3 pr-4">{formatNumber(c.redemptionCount ?? c.stats?.redeemedCount ?? 0)}</td>
+                  <td className="py-3 text-surface-500">{c.createdBy || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </Card>

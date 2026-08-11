@@ -10,6 +10,7 @@
 
 import { Request, Response } from 'express';
 import * as aiAnalytics from '../services/aiAnalyticsService';
+import { getQuotaReport } from '../modules/ai/services/aiQuotaTracker';
 import { formatSuccess, formatError } from '../utils/responseFormatter';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -55,6 +56,19 @@ function extractTimeGroup(req: Request): aiAnalytics.TimeGroup {
     return groupBy as aiAnalytics.TimeGroup;
   }
   return 'day';
+}
+
+// ─── LLM API Key Quota (live per-key quota snapshots) ─────────────────────
+// Reports the latest provider-reported rate-limit windows for every configured
+// API key (primary + fallbacks), plus runtime 429/parking facts. Keys are
+// masked server-side — the admin UI never sees a raw key.
+
+export async function getAiQuota(req: Request, res: Response): Promise<void> {
+  try {
+    res.json(formatSuccess(getQuotaReport(), 'AI quota retrieved'));
+  } catch (err: any) {
+    res.status(500).json(formatError(err.message || 'Failed to get AI quota'));
+  }
 }
 
 // ─── Dashboard Summary ────────────────────────────────────────────────────
@@ -403,6 +417,7 @@ export async function getAvailableFilters(req: Request, res: Response): Promise<
 }
 
 export default {
+  getAiQuota,
   getDashboardSummary,
   getTokenSummary,
   getTokenTimeSeries,

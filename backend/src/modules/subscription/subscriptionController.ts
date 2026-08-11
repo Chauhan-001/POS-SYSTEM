@@ -62,7 +62,9 @@ export async function verifyPayment(req: Request, res: Response): Promise<void> 
 export async function handleWebhook(req: Request, res: Response): Promise<void> {
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
-    const rawBody = JSON.stringify(req.body);
+    // Use the exact raw body (captured before express.json parsed it) so the
+    // signature matches Razorpay's HMAC; never re-serialize req.body.
+    const rawBody = (req as any).razorpayRawBody ?? JSON.stringify(req.body);
     const result = await subscriptionService.handleWebhook(rawBody, signature);
     res.json(result);
   } catch (error) {

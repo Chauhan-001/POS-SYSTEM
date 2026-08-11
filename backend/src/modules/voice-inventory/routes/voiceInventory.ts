@@ -28,11 +28,12 @@ import { Router } from 'express';
 import { requireAuth } from '../../../middleware/authMiddleware';
 import { requireFeature } from '../../../middleware/subscriptionMiddleware';
 import { validate } from '../../../middleware/validate';
-import { apiLimiter } from '../../../middleware/rateLimiter';
+import { voiceApiLimiter } from '../../../middleware/rateLimiter';
 import {
   parseVoiceCommand,
   transcribeVoiceAudio,
   confirmVoiceAction,
+  undoVoiceAction,
   listAliases,
   createAlias,
   updateAlias,
@@ -54,6 +55,7 @@ import {
   voiceParseRequestSchema,
   voiceTranscribeSchema,
   voiceConfirmSchema,
+  voiceUndoSchema,
   aliasCreateSchema,
   aliasUpdateSchema,
   aliasBulkSchema,
@@ -89,7 +91,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: voiceParseRequestSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   parseVoiceCommand
 );
 
@@ -102,7 +104,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: voiceTranscribeSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   transcribeVoiceAudio
 );
 
@@ -116,8 +118,21 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: voiceConfirmSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   confirmVoiceAction
+);
+
+/**
+ * POST /api/voice-inventory/undo
+ * Undo a previously confirmed voice action (reverses the stock change).
+ */
+router.post(
+  '/undo',
+  requireAuth,
+  requireFeature('inventory'),
+  validate({ body: voiceUndoSchema }),
+  voiceApiLimiter,
+  undoVoiceAction
 );
 
 // ─── ALIAS MANAGEMENT ──────────────────────────────────────────────
@@ -137,7 +152,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: aliasCreateSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   createAlias
 );
 
@@ -150,7 +165,7 @@ router.put(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: aliasUpdateSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   updateAlias
 );
 
@@ -158,7 +173,7 @@ router.put(
  * DELETE /api/voice-inventory/aliases/:id
  * Soft-delete an alias entry.
  */
-router.delete('/aliases/:id', requireAuth, requireFeature('inventory'), apiLimiter, deleteAlias);
+router.delete('/aliases/:id', requireAuth, requireFeature('inventory'), voiceApiLimiter, deleteAlias);
 
 /**
  * POST /api/voice-inventory/aliases/bulk
@@ -169,7 +184,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: aliasBulkSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   bulkCreateAliases
 );
 
@@ -184,7 +199,7 @@ router.get(
   requireAuth,
   requireFeature('inventory'),
   validate({ query: voiceHistorySchema }),
-  apiLimiter,
+  voiceApiLimiter,
   getVoiceHistory
 );
 
@@ -199,7 +214,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: resolveProductSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   resolveSpokenProduct
 );
 
@@ -212,7 +227,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: learnSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   learnCorrection
 );
 
@@ -225,7 +240,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: generateAliasesSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   generateProductAliases
 );
 
@@ -238,7 +253,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: suggestProductSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   suggestNewProduct
 );
 
@@ -252,7 +267,7 @@ router.get(
   '/product-aliases',
   requireAuth,
   requireFeature('inventory'),
-  apiLimiter,
+  voiceApiLimiter,
   listProductAliases
 );
 
@@ -264,7 +279,7 @@ router.put(
   '/product-aliases/:id',
   requireAuth,
   requireFeature('inventory'),
-  apiLimiter,
+  voiceApiLimiter,
   updateProductAliases
 );
 
@@ -280,7 +295,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: converseSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   handleConverse
 );
 
@@ -293,7 +308,7 @@ router.get(
   requireAuth,
   requireFeature('inventory'),
   validate({ query: analyticsSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   handleAnalytics
 );
 
@@ -307,7 +322,7 @@ router.post(
   requireAuth,
   requireFeature('inventory'),
   validate({ body: createProductFromVoiceSchema }),
-  apiLimiter,
+  voiceApiLimiter,
   createProductFromVoice
 );
 

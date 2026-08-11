@@ -16,6 +16,7 @@ export interface ITakeawayOrder extends Document {
   status: 'Preparing' | 'Ready' | 'Collected' | 'Completed';
   amount: number;
   paymentStatus: 'Pending' | 'Paid';
+  orderId?: mongoose.Types.ObjectId;
   branchId?: mongoose.Types.ObjectId;
   items: Array<{
     itemName: string;
@@ -37,6 +38,7 @@ const TakeawayOrderSchema = new Schema<ITakeawayOrder>(
     status: { type: String, default: 'Preparing', enum: ['Preparing', 'Ready', 'Collected', 'Completed'], index: true },
     amount: { type: Number, required: true, min: 0 },
     paymentStatus: { type: String, default: 'Pending', enum: ['Pending', 'Paid'] },
+    orderId: { type: Schema.Types.ObjectId, ref: 'Order', default: null, index: true },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
     items: [{
       itemName: { type: String, required: true },

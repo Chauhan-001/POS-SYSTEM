@@ -25,7 +25,7 @@ export default function SyncPanelModal({ isOpen, syncState, onClose, onSync }: S
     <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 border border-[#e1e2ed] p-6" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-bold text-sm mb-4 flex items-center gap-1.5">
-          <RefreshCw className="w-4 h-4 text-[#004ac6]" />
+          <RefreshCw className="w-4 h-4 text-[var(--brand-color)]" />
           Sync Status
         </h3>
         <div className="space-y-3">
@@ -41,7 +41,7 @@ export default function SyncPanelModal({ isOpen, syncState, onClose, onSync }: S
             <span className="text-xs text-gray-600">Pending Changes</span>
             <span className="text-xs font-mono">{syncState.pendingChanges}</span>
           </div>
-          <button onClick={onSync} className="w-full py-2 bg-[#004ac6] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer">
+          <button onClick={onSync} className="w-full py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer">
             Sync Now
           </button>
         </div>

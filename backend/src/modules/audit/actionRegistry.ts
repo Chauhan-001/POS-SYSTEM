@@ -135,7 +135,9 @@ const REG: Record<string, ActionMeta> = {
   'offer.created': { module: 'offer', category: 'business', severity: 'medium', label: 'Offer created' },
   'offer.updated': { module: 'offer', category: 'business', severity: 'low', label: 'Offer updated' },
   'offer.deleted': { module: 'offer', category: 'business', severity: 'medium', label: 'Offer deleted' },
+  'offer.status_changed': { module: 'offer', category: 'business', severity: 'medium', label: 'Offer status changed' },
   'offer.validated': { module: 'offer', category: 'business', severity: 'low', label: 'Offer validation' },
+  'offer.redeemed': { module: 'offer', category: 'business', severity: 'low', label: 'Offer redeemed' },
 
   // ── Billing / payments ──────────────────────────────────────────
   'bill.generated': { module: 'billing', category: 'billing', severity: 'low', label: 'Bill generated' },
@@ -200,6 +202,14 @@ const REG: Record<string, ActionMeta> = {
   'support.ticket.deleted': { module: 'support', category: 'support', severity: 'high', label: 'Ticket deleted' },
   'support.ticket.restored': { module: 'support', category: 'support', severity: 'medium', label: 'Ticket restored' },
   'support.satisfaction_recorded': { module: 'support', category: 'support', severity: 'low', label: 'Satisfaction recorded' },
+
+  // ── Online ordering: availability + order adjustments + refunds ───
+  'availability.updated': { module: 'availability', category: 'configuration', severity: 'medium', label: 'Online availability updated' },
+  'order.adjusted': { module: 'order', category: 'business', severity: 'high', label: 'Order adjusted' },
+  'order.cancelled': { module: 'order', category: 'business', severity: 'high', label: 'Order cancelled' },
+  'refund.created': { module: 'refund', category: 'billing', severity: 'medium', label: 'Refund created' },
+  'refund.completed': { module: 'refund', category: 'billing', severity: 'medium', label: 'Refund completed' },
+  'refund.failed': { module: 'refund', category: 'billing', severity: 'high', label: 'Refund failed' },
 
   // ── Reports / analytics / data ──────────────────────────────────
   'report.exported': { module: 'report', category: 'data', severity: 'medium', label: 'Report exported' },
@@ -306,6 +316,12 @@ const LEGACY_TO_CANONICAL: Record<string, string> = {
   'CAMPAIGN_STATUS_CHANGED': 'campaign.status_changed',
   'CAMPAIGN_DELETED': 'campaign.deleted',
   'CAMPAIGN_SENT': 'campaign.sent',
+  'OFFER_CREATED': 'offer.created',
+  'OFFER_UPDATED': 'offer.updated',
+  'OFFER_DELETED': 'offer.deleted',
+  'OFFER_STATUS_CHANGED': 'offer.status_changed',
+  'OFFER_APPLIED': 'offer.redeemed',
+  'COUPON_APPLIED': 'offer.redeemed',
   'CUSTOMER_CREATED': 'customer.created',
   'CUSTOMER_UPDATED': 'customer.updated',
   'CUSTOMER_BLOCKED': 'customer.blocked',

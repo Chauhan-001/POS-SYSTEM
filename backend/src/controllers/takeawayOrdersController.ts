@@ -9,6 +9,12 @@
 
 import { Request, Response } from 'express';
 import { takeawayOrderService } from '../services';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
+
+function authCtx(req: Request) {
+  const user = (req as AuthenticatedRequest).user;
+  return { restaurantId: user?.restaurantId };
+}
 
 /**
  * GET /api/takeaway-orders — List takeaway orders with optional filters.
@@ -19,6 +25,8 @@ export async function listTakeawayOrders(req: Request, res: Response): Promise<v
     const result = await takeawayOrderService.list({
       status: status as string,
       branchId: branchId as string,
+      // Tenant isolation — never return another restaurant's takeaway orders.
+      restaurantId: authCtx(req).restaurantId,
     });
     res.json({ data: result.data, total: result.total });
   } catch (error) {

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Phone, MapPin, Package as PackageIcon, ShoppingCart, ChevronRight, Plus, Edit2, Trash2 } from 'lucide-react';
-import { fetchSuppliers, createSupplier as apiCreateSupplier, updateSupplier as apiUpdateSupplier, deleteSupplier as apiDeleteSupplier } from '../../../src/api/client';
+import { fetchSuppliers, createSupplier as apiCreateSupplier, updateSupplier as apiUpdateSupplier, deleteSupplier as apiDeleteSupplier, CACHE_INVALIDATED_EVENT } from '../../../src/api/client';
 import type { Supplier } from '../types';
 import Modal from '../components/Modal';
 import { useNotify, useInventory } from '../InventoryManager';
@@ -29,22 +29,34 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selected, setSelected] = useState<Supplier | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await fetchSuppliers({ limit: 200 });
-        if (!cancelled && Array.isArray(data)) {
-          setSuppliers(data.map((s: any) => ({
-            id: s.id, name: s.name, phone: s.phone || '', email: s.email || '',
-            address: s.address || '', items: Array.isArray(s.items) ? s.items : [],
-            lastPurchase: '-', averageCost: 0, status: s.status || 'active', totalPurchases: 0,
-          })));
-        }
-      } catch { /* offline — keep empty list */ }
-    })();
-    return () => { cancelled = true; };
+  const suppliersLoadSeq = useRef(0);
+  const loadSuppliers = useCallback(async () => {
+    const seq = ++suppliersLoadSeq.current;
+    try {
+      const data = await fetchSuppliers({ limit: 200 });
+      if (seq !== suppliersLoadSeq.current) return;
+      if (Array.isArray(data)) {
+        setSuppliers(data.map((s: any) => ({
+          id: s.id, name: s.name, phone: s.phone || '', email: s.email || '',
+          address: s.address || '', items: Array.isArray(s.items) ? s.items : [],
+          lastPurchase: '-', averageCost: 0, status: s.status || 'active', totalPurchases: 0,
+        })));
+      }
+    } catch { /* offline — keep empty list */ }
   }, []);
+
+  useEffect(() => { void loadSuppliers(); }, [loadSuppliers]);
+
+  // Re-fetch when a supplier write (create/edit/delete here or on another
+  // screen) invalidates the cache — fetchSuppliers is TTL-gated (1h), so this
+  // only hits the network when the cache was just cleared.
+  useEffect(() => {
+    const onInvalidated = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === 'pos_suppliers') void loadSuppliers();
+    };
+    window.addEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
+    return () => window.removeEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
+  }, [loadSuppliers]);
   const [modalMode, setModalMode] = useState<'closed' | 'add' | 'edit'>('closed');
   const [form, setForm] = useState<SupplierForm>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -134,7 +146,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           <p className="text-xs text-gray-400 mt-0.5">{suppliers.length} suppliers</p>
         </div>
         <button onClick={openAdd}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#004ac6] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
         >
           <Plus className="w-4 h-4" /> Add Supplier
         </button>
@@ -150,7 +162,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           const isActive = supplier.status === 'active';
           return (
             <motion.div key={supplier.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: i * 0.04 }}
-              className="bg-white rounded-2xl border border-[#e1e2ed] p-5 hover:shadow-lg hover:border-[#004ac6]/20 transition-all group"
+              className="bg-white rounded-2xl border border-[#e1e2ed] p-5 hover:shadow-lg hover:border-[var(--brand-color)]/20 transition-all group"
             >
               <div className="flex items-start gap-3 mb-4">
                 <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white font-bold text-sm shrink-0`}>
@@ -163,7 +175,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
                     <span className="text-[10px] text-gray-400 capitalize">{supplier.status}</span>
                   </div>
                 </div>
-                <button onClick={() => setSelected(supplier)} className="p-1 text-gray-300 hover:text-[#004ac6] transition-colors">
+                <button onClick={() => setSelected(supplier)} className="p-1 text-gray-300 hover:text-[var(--brand-color)] transition-colors">
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
@@ -184,7 +196,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
                 </div>
                 <div className="flex items-center gap-1">
                   <button onClick={(e) => { e.stopPropagation(); openEdit(supplier); }}
-                    className="p-1.5 text-gray-300 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer">
+                    className="p-1.5 text-gray-300 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer">
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); confirmDelete(supplier); }}
@@ -209,7 +221,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
               <div className="sticky top-0 bg-white border-b border-[#e1e2ed] px-5 py-4 flex items-center justify-between z-10">
                 <h2 className="font-bold text-base">{selected.name}</h2>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => { setSelected(null); openEdit(selected); }} className="text-gray-400 hover:text-[#004ac6] p-1 cursor-pointer"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => { setSelected(null); openEdit(selected); }} className="text-gray-400 hover:text-[var(--brand-color)] p-1 cursor-pointer"><Edit2 className="w-4 h-4" /></button>
                   <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer"><X className="w-5 h-5" /></button>
                 </div>
               </div>
@@ -254,11 +266,11 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
 
                 <div className="flex gap-2">
                   <button onClick={() => { setSelected(null); onNavigate?.('purchase'); }}
-                    className="flex-1 py-3 bg-[#004ac6] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2">
+                    className="flex-1 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2">
                     <ShoppingCart className="w-4 h-4" /> New Order
                   </button>
                   <button onClick={() => { setSelected(null); openEdit(selected); }}
-                    className="flex-1 py-3 border border-[#e1e2ed] text-gray-600 rounded-2xl text-sm font-bold hover:border-[#004ac6]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    className="flex-1 py-3 border border-[#e1e2ed] text-gray-600 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <Edit2 className="w-4 h-4" /> Edit
                   </button>
@@ -276,25 +288,25 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
             <div className="col-span-2">
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier Name</label>
               <input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="e.g. Amul Dairy" />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Phone</label>
               <input type="text" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="+91 98765 43210" />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Email</label>
               <input type="text" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="email@example.com" />
             </div>
             <div className="col-span-2">
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Address</label>
               <input type="text" value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20 focus:border-[#004ac6]"
+                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="City, State" />
             </div>
           </div>
@@ -308,7 +320,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
                 return (
                   <button key={item} onClick={() => toggleItem(item)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      selected ? 'bg-[#004ac6] text-white shadow-sm' : 'bg-white border border-[#e1e2ed] text-gray-600 hover:border-[#004ac6]/30'
+                      selected ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'bg-white border border-[#e1e2ed] text-gray-600 hover:border-[var(--brand-color)]/30'
                     }`}
                   >
                     {item}
@@ -330,7 +342,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
 
           <div className="flex gap-3 justify-end pt-4 border-t border-[#e1e2ed]">
             <button onClick={closeModal} className="px-5 py-2.5 border border-gray-300 rounded-xl text-sm font-semibold hover:bg-gray-50 cursor-pointer transition-all">Cancel</button>
-            <button onClick={handleSave} className="px-5 py-2.5 bg-[#004ac6] text-white rounded-xl text-sm font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm transition-all">
+            <button onClick={handleSave} className="px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-xl text-sm font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm transition-all">
               {modalMode === 'edit' ? 'Save Changes' : 'Add Supplier'}
             </button>
           </div>

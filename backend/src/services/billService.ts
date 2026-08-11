@@ -13,6 +13,7 @@
  * to prevent duplicate invoice numbers across multiple POS terminals.
  */
 
+import mongoose from 'mongoose';
 import { billRepo, billItemRepo, customerRepo, employeeRepo, auditLogRepo, dailySummaryRepo } from '../repositories';
 import { InvoiceCounter, DailySummary, MonthlySummary, YearlySummary, Customer } from '../models';
 import { stockMovementService } from './stockMovementService';
@@ -247,6 +248,11 @@ export class BillService {
     // Tenant isolation — always stamp the restaurant on the immutable record.
     if (ctx.restaurantId) billData.restaurantId = ctx.restaurantId;
     if (ctx.branchId) billData.branchId = ctx.branchId;
+
+    // Source order link (online ordering adjustments resolve the bill via orderId).
+    if (billData.orderId && !mongoose.Types.ObjectId.isValid(billData.orderId)) {
+      delete billData.orderId;
+    }
 
     // ── Phase 1.10 — Offline-replay idempotency ───────────────────
     // The POS terminal sends its stable local bill id as `clientRef`. If the

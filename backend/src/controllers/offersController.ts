@@ -18,11 +18,16 @@ import { generateRecommendations, type RecommendationContext } from '../services
 import { updateAllSegments, getSegments, getSegmentById } from '../services/segmentEngine';
 import { getUpcomingFestivals, isFestivalSeason } from '../services/festivalService';
 import { offerValidationService } from '../services';
+import { resolveMenuProductScope } from '../services/productService';
 import { AppError } from '../utils/AppError';
+import { audit } from '../utils/audit';
+import { OFFER_TRANSITIONS, canTransition } from '../constants/marketingStates';
 
-// Helper to get restaurant ID from request
+// Helper to get restaurant ID from the authenticated user ONLY.
+// Tenant identity is always derived server-side from the JWT (req.user), never
+// trusted from client-supplied body/query fields.
 function getRestaurantId(req: Request): string {
-  return (req as any).restaurantId || (req as any).user?.restaurantId || '';
+  return String((req as any).user?.restaurantId || '');
 }
 
 // ─── OFFER CRUD ───────────────────────────────────────────────
@@ -75,6 +80,12 @@ export async function createOffer(req: Request, res: Response): Promise<void> {
     delete data._id;
 
     const offer = await OfferModel.create(data);
+    await audit(req, {
+      action: 'OFFER_CREATED',
+      entityType: 'offer',
+      entityId: (offer as any)._id.toString(),
+      details: { title: offer.title, type: offer.type, status: offer.status },
+    });
     res.status(201).json(offer);
   } catch (error: any) {
     console.error('[Offers] create error:', error.message);
@@ -95,6 +106,12 @@ export async function updateOffer(req: Request, res: Response): Promise<void> {
       { new: true }
     );
     if (!offer) { res.status(404).json({ error: 'Offer not found' }); return; }
+    await audit(req, {
+      action: 'OFFER_UPDATED',
+      entityType: 'offer',
+      entityId: req.params.id,
+      details: { title: offer.title, status: offer.status },
+    });
     res.json(offer);
   } catch (error: any) {
     console.error('[Offers] update error:', error.message);
@@ -111,6 +128,12 @@ export async function deleteOffer(req: Request, res: Response): Promise<void> {
       { new: true }
     );
     if (!offer) { res.status(404).json({ error: 'Offer not found' }); return; }
+    await audit(req, {
+      action: 'OFFER_DELETED',
+      entityType: 'offer',
+      entityId: req.params.id,
+      details: { title: offer.title },
+    });
     res.json({ success: true });
   } catch (error: any) {
     console.error('[Offers] delete error:', error.message);
@@ -127,12 +150,28 @@ export async function updateOfferStatus(req: Request, res: Response): Promise<vo
       res.status(400).json({ error: 'Invalid status' }); return;
     }
 
+    const oid = new mongoose.Types.ObjectId(restaurantId);
+    const current = await OfferModel.findOne({ _id: req.params.id, restaurantId: oid, isDeleted: { $ne: true } }).lean();
+    if (!current) { res.status(404).json({ error: 'Offer not found' }); return; }
+
+    // State machine (Phase 4): reject nonsensical transitions like expired → active.
+    if (!canTransition(current.status, status, OFFER_TRANSITIONS)) {
+      res.status(400).json({ error: `Invalid status transition: ${current.status} → ${status}` });
+      return;
+    }
+
     const offer = await OfferModel.findOneAndUpdate(
-      { _id: req.params.id, restaurantId: new mongoose.Types.ObjectId(restaurantId) },
+      { _id: req.params.id, restaurantId: oid },
       { $set: { status } },
       { new: true }
     );
     if (!offer) { res.status(404).json({ error: 'Offer not found' }); return; }
+    await audit(req, {
+      action: 'OFFER_STATUS_CHANGED',
+      entityType: 'offer',
+      entityId: req.params.id,
+      details: { from: current.status, to: status, title: offer.title },
+    });
     res.json(offer);
   } catch (error: any) {
     console.error('[Offers] status update error:', error.message);
@@ -150,15 +189,22 @@ export async function getRecommendations(req: Request, res: Response): Promise<v
     // Gather context data
     const oid = new mongoose.Types.ObjectId(restaurantId);
 
+    // TENANT ISOLATION (Phase 1): every query is scoped to the authenticated
+    // restaurant. Products are this restaurant's own menu only (shared/global
+    // catalog only as a fresh-account fallback), so recommendations never
+    // suggest items the restaurant doesn't sell. Customers are strictly
+    // scoped — cross-tenant customer data must never reach a recommendation.
+    const productScope = await resolveMenuProductScope(String(restaurantId));
     const [products, customerCount, activeCustomers] = await Promise.all([
-      ProductModel.find({ isDeleted: { $ne: true } }).lean(),
-      CustomerModel.countDocuments({ isDeleted: { $ne: true } }),
-      CustomerModel.countDocuments({ isDeleted: { $ne: true }, visits: { $gte: 1 } }),
+      ProductModel.find({ $or: productScope, isDeleted: { $ne: true } }).lean(),
+      CustomerModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true } }),
+      CustomerModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true }, visits: { $gte: 1 } }),
     ]);
 
     // Get today's new customers
     const today = new Date().toISOString().split('T')[0];
     const newCustomersToday = await CustomerModel.countDocuments({
+      restaurantId: oid,
       isDeleted: { $ne: true },
       createdAt: { $gte: new Date(today) },
     });
@@ -195,6 +241,8 @@ export async function getRecommendations(req: Request, res: Response): Promise<v
 export async function listSegments(req: Request, res: Response): Promise<void> {
   try {
     const restaurantId = getRestaurantId(req);
+    if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
+    const oid = new mongoose.Types.ObjectId(restaurantId);
     const segments = await getSegments(restaurantId);
 
     // Get customer details for the first segment if requested
@@ -203,7 +251,10 @@ export async function listSegments(req: Request, res: Response): Promise<void> {
     if (segmentId) {
       const segment = await getSegmentById(segmentId as string, restaurantId);
       if (segment && segment.customerPhones.length > 0) {
+        // Phones come from a tenant-scoped segment; still scope the lookup to
+        // the restaurant so cross-tenant phone collisions can never leak.
         customers = await CustomerModel.find({
+          restaurantId: oid,
           phone: { $in: segment.customerPhones },
           isDeleted: { $ne: true },
         }).limit(50).lean();

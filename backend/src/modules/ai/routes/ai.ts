@@ -31,6 +31,8 @@ import {
   closingAssistant,
   weatherRecommendation,
   offerRecommendations,
+  marketingGenerate,
+  offerCopy,
 } from '../controllers/aiController';
 import { requireAuth } from '../../../middleware/authMiddleware';
 import { requireFeature } from '../../../middleware/subscriptionMiddleware';
@@ -46,6 +48,8 @@ import {
   closingAssistantSchema,
   weatherSchema,
   offerRecommendationsSchema,
+  marketingGenerateSchema,
+  offerCopySchema,
 } from '../validators/ai';
 import { isAiEnabled } from '../config';
 
@@ -64,6 +68,7 @@ router.get('/status', (_req, res) => {
     features: [
       'summary', 'closing', 'inventory-health', 'purchase-recommendation',
       'low-stock', 'waste-analysis', 'voice-parse', 'weather', 'offers',
+      'marketing', 'offer-copy',
     ],
   });
 });
@@ -181,6 +186,26 @@ router.post('/offers',
   validate({ body: offerRecommendationsSchema }),
   aiRateLimiter,
   offerRecommendations,
+);
+
+// ─── MARKETING (Create-with-AI) ───────────────────────────────────────
+
+/** POST /api/ai/marketing/generate — full marketing plan from owner's goal */
+router.post('/marketing/generate',
+  requireAuth,
+  requireFeature('ai'),
+  validate({ body: marketingGenerateSchema }),
+  aiRateLimiter,
+  marketingGenerate,
+);
+
+/** POST /api/ai/offer-copy — generate offer title/description/messages */
+router.post('/offer-copy',
+  requireAuth,
+  requireFeature('ai'),
+  validate({ body: offerCopySchema }),
+  aiRateLimiter,
+  offerCopy,
 );
 
 export default router;

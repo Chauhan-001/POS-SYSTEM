@@ -16,6 +16,7 @@
 
 import React from 'react';
 import { CartItem, SystemSettings } from '../src/types';
+import { formatKOTTimestamp } from '../src/utils/kotTime';
 
 interface ThermalKOTProps {
   order: {
@@ -120,7 +121,7 @@ export default function ThermalKOT({ order, kot, settings, className }: ThermalK
         </div>
         <div style={{ fontSize: 10, marginTop: 6, lineHeight: 1.5 }}>
           {kot.type}
-          {showTime ? `  |  ${kot.printedAt}` : ''}
+          {showTime ? `  |  ${formatKOTTimestamp(kot.printedAt)}` : ''}
           <br />
           By: {kot.printedBy}
         </div>

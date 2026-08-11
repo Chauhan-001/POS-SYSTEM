@@ -3,16 +3,30 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Campaign History Model — Tracks offer campaigns sent to customers via
- * WhatsApp, SMS, email, or app notifications.
+ * WhatsApp, SMS, email, app notifications, or webhook.
+ *
+ * Phase 17: `results[]` records the outcome of EVERY recipient delivery attempt
+ * (individual failures are never lost), and `campaignId` links the record back
+ * to the Campaign that produced it (replacing reliance on the offerId only).
  */
 
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type CampaignChannel = 'whatsapp' | 'sms' | 'email' | 'app_notification' | 'website' | 'in_app';
+export type CampaignChannel = 'whatsapp' | 'sms' | 'email' | 'app_notification' | 'website' | 'in_app' | 'webhook';
+
+export interface DeliveryResultEntry {
+  phone: string;
+  status: 'delivered' | 'failed';
+  error?: string;
+  deliveredAt?: string;
+}
 
 export interface ICampaignHistory extends Document {
-  offerId: mongoose.Types.ObjectId;
+  /** Offer this delivery promoted — null when the campaign has no linked offer. */
+  offerId?: mongoose.Types.ObjectId | null;
   restaurantId: mongoose.Types.ObjectId;
+  /** Owning campaign (delivery-queue era) — null/absent for legacy rows. */
+  campaignId?: mongoose.Types.ObjectId;
   channel: CampaignChannel;
   /** Customer phones that were contacted */
   recipientPhones: string[];
@@ -22,6 +36,8 @@ export interface ICampaignHistory extends Document {
   openedCount: number;
   /** Count of redeemed */
   redeemedCount: number;
+  /** Per-recipient delivery outcome (never loses individual failures) */
+  results: DeliveryResultEntry[];
   /** Message sent (template rendered) */
   messageContent: string;
   /** Whether the campaign is scheduled (vs sent immediately) */
@@ -40,13 +56,28 @@ export interface ICampaignHistory extends Document {
 
 const CampaignHistorySchema = new Schema<ICampaignHistory>(
   {
-    offerId: { type: Schema.Types.ObjectId, ref: 'Offer', required: true, index: true },
+    offerId: { type: Schema.Types.ObjectId, ref: 'Offer', default: null, index: true },
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true, index: true },
-    channel: { type: String, enum: ['whatsapp', 'sms', 'email', 'app_notification', 'website', 'in_app'], required: true },
+    campaignId: { type: Schema.Types.ObjectId, ref: 'Campaign', default: null, index: true },
+    channel: { type: String, enum: ['whatsapp', 'sms', 'email', 'app_notification', 'website', 'in_app', 'webhook'], required: true },
     recipientPhones: [{ type: String, trim: true }],
     recipientCount: { type: Number, default: 0, min: 0 },
     openedCount: { type: Number, default: 0, min: 0 },
     redeemedCount: { type: Number, default: 0, min: 0 },
+    results: {
+      type: [
+        new Schema(
+          {
+            phone: { type: String, trim: true, required: true },
+            status: { type: String, enum: ['delivered', 'failed'], required: true },
+            error: { type: String, trim: true, default: undefined },
+            deliveredAt: { type: String, trim: true, default: undefined },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
     messageContent: { type: String, default: '', trim: true },
     isScheduled: { type: Boolean, default: false },
     scheduledDate: { type: String, trim: true },
@@ -60,5 +91,6 @@ const CampaignHistorySchema = new Schema<ICampaignHistory>(
 
 CampaignHistorySchema.index({ offerId: 1, sentDate: -1 });
 CampaignHistorySchema.index({ restaurantId: 1, sentDate: -1 });
+CampaignHistorySchema.index({ restaurantId: 1, campaignId: 1, createdAt: -1 });
 
 export default mongoose.model<ICampaignHistory>('CampaignHistory', CampaignHistorySchema);

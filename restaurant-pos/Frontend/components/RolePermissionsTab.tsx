@@ -56,7 +56,7 @@ const PERMISSION_ROWS: PermissionRow[] = [
   { managerKey: 'managerCanAccessReports', cashierKey: 'cashierCanAccessReports', label: 'Reports', description: 'Sales reports & analytics', icon: BarChart, color: 'text-purple-600' },
   { managerKey: 'managerCanAccessAnalytics', cashierKey: 'cashierCanAccessAnalytics', label: 'Analytics', description: 'Business intelligence & trends', icon: TrendingUp, color: 'text-indigo-600' },
   { managerKey: 'managerCanAccessFinance', cashierKey: 'cashierCanAccessFinance', label: 'Finance', description: 'Profit & Loss statements', icon: BarChart3, color: 'text-emerald-600' },
-  { managerKey: 'managerCanAccessInventory', cashierKey: 'cashierCanAccessInventory', label: 'Inventory', description: 'Stock, purchase & supplier management', icon: Layers, color: 'text-[#004ac6]' },
+  { managerKey: 'managerCanAccessInventory', cashierKey: 'cashierCanAccessInventory', label: 'Inventory', description: 'Stock, purchase & supplier management', icon: Layers, color: 'text-[var(--brand-color)]' },
   { managerKey: 'managerCanManageCustomers', cashierKey: 'cashierCanManageCustomers', label: 'Customers', description: 'Loyalty profiles & history', icon: User, color: 'text-green-600' },
   { managerKey: 'managerCanManageOffers', cashierKey: 'cashierCanManageOffers', label: 'Offers', description: 'Create & manage reward tiers', icon: Award, color: 'text-amber-600' },
   { managerKey: 'managerCanAccessReservations', cashierKey: 'cashierCanAccessReservations', label: 'Reservations', description: 'Table booking & waitlist', icon: CalendarClock, color: 'text-rose-600' },
@@ -105,13 +105,13 @@ interface Preset {
 
 const MANAGER_PRESETS: Preset[] = [
   { id: 'm-full', label: 'Full Access', description: 'All 13 permissions enabled', value: managerPreset(true), icon: Sparkles, color: 'text-emerald-600' },
-  { id: 'm-recommended', label: 'Recommended', description: 'Balanced default setup', value: RECOMMENDED_MANAGER, icon: Gauge, color: 'text-[#004ac6]' },
+  { id: 'm-recommended', label: 'Recommended', description: 'Balanced default setup', value: RECOMMENDED_MANAGER, icon: Gauge, color: 'text-[var(--brand-color)]' },
   { id: 'm-restricted', label: 'Restricted', description: 'Billing & operations only', value: managerPreset(false), icon: Lock, color: 'text-amber-600' },
 ];
 
 const CASHIER_PRESETS: Preset[] = [
   { id: 'c-full', label: 'Full Access', description: 'All 13 permissions enabled', value: cashierPreset(true), icon: Sparkles, color: 'text-emerald-600' },
-  { id: 'c-reports-discounts', label: 'Reports & Discounts', description: 'View reports + apply discounts', value: { cashierCanAccessReports: true, cashierCanApplyDiscounts: true }, icon: BarChart, color: 'text-[#004ac6]' },
+  { id: 'c-reports-discounts', label: 'Reports & Discounts', description: 'View reports + apply discounts', value: { cashierCanAccessReports: true, cashierCanApplyDiscounts: true }, icon: BarChart, color: 'text-[var(--brand-color)]' },
   { id: 'c-standard', label: 'Standard', description: 'Billing & operations only', value: cashierPreset(false), icon: Lock, color: 'text-amber-600' },
 ];
 
@@ -138,7 +138,7 @@ function ToggleCell({ enabled, onClick, title }: { enabled: boolean; onClick: ()
         type="button"
         onClick={onClick}
         title={title}
-        className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none cursor-pointer ${enabled ? 'bg-[#004ac6]' : 'bg-gray-200'}`}
+        className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none cursor-pointer ${enabled ? 'bg-[var(--brand-color)]' : 'bg-gray-200'}`}
       >
         <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${enabled ? 'left-6' : 'left-1'}`} />
       </button>
@@ -282,7 +282,7 @@ function RoleNavPreview({ roleLabel, roleIcon: RoleIcon, headerColor, badge, sid
               !m.exists
                 ? 'border-dashed border-gray-200 bg-gray-50/50 opacity-40'
                 : m.visible
-                  ? 'border-blue-100 bg-blue-50 text-[#004ac6]'
+                  ? 'border-blue-100 bg-blue-50 text-[var(--brand-color)]'
                   : 'border-dashed border-gray-200 bg-gray-50 text-gray-300'
             }`}
           >
@@ -327,13 +327,13 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
       <div className="max-w-4xl mx-auto space-y-5 pb-6">
         {/* ── Info header ── */}
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
-          <Shield className="w-5 h-5 text-[#004ac6] shrink-0 mt-0.5" />
-          <div className="text-xs text-[#004ac6]">
+          <Shield className="w-5 h-5 text-[var(--brand-color)] shrink-0 mt-0.5" />
+          <div className="text-xs text-[var(--brand-color)]">
             <p className="font-bold mb-1">Role-Based Access Control</p>
             <p className="text-blue-700/70">
-              <strong className="text-[#004ac6]">Owner</strong> always has full access.
-              Use the toggles to define exactly what <strong className="text-[#004ac6]">Manager</strong> and{' '}
-              <strong className="text-[#004ac6]">Cashier</strong> can access — changes apply instantly and are saved with the rest of your settings.
+              <strong className="text-[var(--brand-color)]">Owner</strong> always has full access.
+              Use the toggles to define exactly what <strong className="text-[var(--brand-color)]">Manager</strong> and{' '}
+              <strong className="text-[var(--brand-color)]">Cashier</strong> can access — changes apply instantly and are saved with the rest of your settings.
               Base modules (billing, orders, kitchen) stay available to every role.
             </p>
           </div>
@@ -394,14 +394,14 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
                     onClick={() => onApplyPreset(p.value)}
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isActive
-                        ? 'border-[#004ac6] bg-blue-50/60 ring-1 ring-[#004ac6]/20'
-                        : 'border-[#e1e2ed] hover:border-[#004ac6]/40 hover:bg-blue-50/30'
+                        ? 'border-[var(--brand-color)] bg-blue-50/60 ring-1 ring-[var(--brand-color)]/20'
+                        : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/40 hover:bg-blue-50/30'
                     }`}
                   >
                     <div className="flex items-center gap-1.5 mb-1">
                       <Icon className={`w-3.5 h-3.5 ${p.color}`} />
                       <p className="text-[11px] font-bold text-[#191b23]">{p.label}</p>
-                      {isActive && <Check className="w-3 h-3 text-[#004ac6] ml-auto" />}
+                      {isActive && <Check className="w-3 h-3 text-[var(--brand-color)] ml-auto" />}
                     </div>
                     <p className="text-[9px] text-gray-400">{p.description}</p>
                   </button>
@@ -432,14 +432,14 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
                     onClick={() => onApplyPreset(p.value)}
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isActive
-                        ? 'border-[#004ac6] bg-blue-50/60 ring-1 ring-[#004ac6]/20'
-                        : 'border-[#e1e2ed] hover:border-[#004ac6]/40 hover:bg-blue-50/30'
+                        ? 'border-[var(--brand-color)] bg-blue-50/60 ring-1 ring-[var(--brand-color)]/20'
+                        : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/40 hover:bg-blue-50/30'
                     }`}
                   >
                     <div className="flex items-center gap-1.5 mb-1">
                       <Icon className={`w-3.5 h-3.5 ${p.color}`} />
                       <p className="text-[11px] font-bold text-[#191b23]">{p.label}</p>
-                      {isActive && <Check className="w-3 h-3 text-[#004ac6] ml-auto" />}
+                      {isActive && <Check className="w-3 h-3 text-[var(--brand-color)] ml-auto" />}
                     </div>
                     <p className="text-[9px] text-gray-400">{p.description}</p>
                   </button>
@@ -470,7 +470,7 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
           ))}
 
           {/* Billing capabilities section */}
-          <div className="px-3 py-2 bg-blue-50/60 border-b border-[#e1e2ed] text-[10px] font-bold text-[#004ac6] uppercase tracking-wider">
+          <div className="px-3 py-2 bg-blue-50/60 border-b border-[#e1e2ed] text-[10px] font-bold text-[var(--brand-color)] uppercase tracking-wider">
             Billing Capabilities
           </div>
           <MatrixRow row={DISCOUNT_ROW} rolePermissions={rolePermissions} onToggle={onToggle} />
@@ -479,7 +479,7 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
         {/* ── Live preview ── */}
         <div className="bg-white rounded-xl border border-[#e1e2ed] p-4">
           <div className="flex items-center gap-2 mb-1">
-            <Eye className="w-4 h-4 text-[#004ac6]" />
+            <Eye className="w-4 h-4 text-[var(--brand-color)]" />
             <h4 className="text-xs font-bold text-[#191b23]">Live Preview</h4>
             <span className="ml-auto text-[9px] text-gray-400">Updates as you toggle</span>
           </div>

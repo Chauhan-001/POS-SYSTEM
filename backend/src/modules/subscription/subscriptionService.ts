@@ -19,16 +19,15 @@ export const GRACE_PERIOD_DAYS = 10;
 // Single source of truth for the free-trial length (config.subscription.trialDays).
 const TRIAL_DAYS = config.subscription.trialDays;
 
+import { FEATURE_CATALOG } from '../../constants/planFeatures';
+
 /**
  * Every feature unlocked during the 7-day free trial.
  * Trial subscribers get the full product — feature restrictions apply only
  * after a paid plan is selected. Mirrors admin onboarding 'trial' mode.
+ * Derived from the central catalog so new features never drift.
  */
-const ALL_TRIAL_FEATURES = [
-  'core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty',
-  'reservations', 'multi_branch', 'analytics', 'custom_branding',
-  'advanced_reports', 'expense_tracking', 'api_access', 'priority_support',
-];
+const ALL_TRIAL_FEATURES = FEATURE_CATALOG.map((f) => f.key);
 
 export class SubscriptionService {
   async getPlans() {

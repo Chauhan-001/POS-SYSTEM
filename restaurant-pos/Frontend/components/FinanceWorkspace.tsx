@@ -240,7 +240,7 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
                 {PERIODS.map(p => (
                   <button key={p.key} onClick={() => setPeriod(p.key)}
                     className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
-                      period === p.key ? 'bg-[#004ac6] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      period === p.key ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
                     }`}>
                     {p.label}
                   </button>

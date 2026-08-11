@@ -44,6 +44,7 @@ import { useAuth } from './hooks/useAuth';
 import FirstTimeSetup from '../components/FirstTimeSetup';
 import LoginScreen from '../components/LoginScreen';
 import PinLoginScreen from '../components/PinLoginScreen';
+import { useAutoLock } from './hooks/useAutoLock';
 import ReceiptModal from '../components/ReceiptModal';
 import ShortcutsGuide from '../components/ShortcutsGuide';
 import KOTModal from '../components/KOTModal';
@@ -79,6 +80,8 @@ const safeLazy = (loader: () => Promise<{ default: React.ComponentType<any> }>) 
   );
 
 const ProductManager = safeLazy(() => import('../components/ProductManager'));
+const MenuAvailabilityPage = safeLazy(() => import('../components/MenuAvailabilityPage'));
+const QrStudioPage = safeLazy(() => import('../components/QrStudioPage'));
 const CustomerManager = safeLazy(() => import('../components/CustomerManager'));
 const OffersManager = safeLazy(() => import('../components/OffersManager'));
 const ReportsManager = safeLazy(() => import('../components/ReportsManager'));
@@ -100,6 +103,7 @@ import { useBilling } from './hooks/useBilling';
 import { useOrders } from './hooks/useOrders';
 import { useLoyalty } from './hooks/useLoyalty';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { usePOSLiveEvents } from './hooks/usePOSLiveEvents';
 // Modal components
 import ConfirmationDialog from './components/modals/ConfirmationDialog';
 import PaymentConfirmModal from './components/modals/PaymentConfirmModal';
@@ -122,9 +126,53 @@ export default function App() {
 
   // Core POS state — everything comes from here
   const pos = usePOSState();
+  // Live socket: refetch orders after an adjustment so this terminal's KDS
+  // shows cancelled KOT lines immediately (not on the next 30s poll).
+  const handleOrderAdjusted = useCallback(() => {
+    if (!navigator.onLine) return;
+    api.fetchOrders()
+      .then((list: any) => {
+        if (!Array.isArray(list) || list.length === 0) return;
+        pos.setOrders((prev: any[]) => {
+          const incoming = new Map(list.map((o: any) => [o._id || o.id, o]));
+          const next = prev.map((o: any) => {
+            const fresh = incoming.get(o._id || o.id);
+            if (!fresh) return o;
+            // List rows carry kotRecords but items/timeline are separate
+            // collections — keep the local copies when the fresh row is empty.
+            return {
+              ...o,
+              ...fresh,
+              items: fresh.items?.length ? fresh.items : o.items,
+              timeline: fresh.timeline?.length ? fresh.timeline : o.timeline,
+            };
+          });
+          // Append any orders missing locally (adjusted on another terminal
+          // while this one had never seen the order).
+          for (const fresh of list) {
+            const id = fresh._id || fresh.id;
+            if (id && !next.some((o: any) => (o._id || o.id) === id)) next.push(fresh);
+          }
+          return next;
+        });
+      })
+      .catch(() => undefined);
+  }, [pos.setOrders]);
+  // Live QR-ordering events (new online orders, ready alerts, waiter calls).
+  // Best-effort socket — falls back to existing polling when unavailable.
+  usePOSLiveEvents(showToast, handleOrderAdjusted);
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = React.useState(false);
   // Position + PIN switch-user screen (opened from the Exit button)
   const [isPinSwitchOpen, setIsPinSwitchOpen] = React.useState(false);
+
+  // Auto-lock: after the configured idle timeout, require the sign-in method to
+  // resume. Reads autoLockMinutes from the store's security settings.
+  useAutoLock(
+    Number(pos.settings?.security?.autoLockMinutes) || 0,
+    () => {
+      if (pos.currentEmployee) setIsPinSwitchOpen(true);
+    },
+  );
 
   // ─── Auth integration ───────────────────────────────────────
   const auth = useAuth();
@@ -133,6 +181,9 @@ export default function App() {
   // On mount, check if an Owner exists. If not, show FirstTimeSetup.
   // Uses a 'loading' tri-state to avoid flashing the wrong screen.
   const [setupState, setSetupState] = React.useState<'loading' | 'setup' | 'ready'>('loading');
+  // First-run sign-in gate: 'login' = "I already have admin credentials",
+  // 'register' = "I don't — register this restaurant as Owner".
+  const [firstRunChoice, setFirstRunChoice] = React.useState<'login' | 'register'>('login');
 
   React.useEffect(() => {
     let cancelled = false;
@@ -206,7 +257,10 @@ export default function App() {
           deviceId,
           deviceName: navigator.platform || 'Unknown',
           os: navigator.platform || '',
-          osVersion: navigator.userAgent || '',
+          // Backend schema caps osVersion at 80 chars — a full userAgent string
+          // (100-200+ chars) makes /api/devices/register 400 and the device
+          // never registers, so the subscription device count stays at 0.
+          osVersion: (navigator.userAgent || '').slice(0, 80),
           appVersion: '1.0.0',
         });
       } catch {
@@ -284,6 +338,20 @@ export default function App() {
       navigate(targetPath, { replace: true });
     }
   }, [pos.activeWorkspace, pos.currentEmployee]);
+
+  // ============ GLOBAL THEME APPLICATION ============
+  // Applies the saved Settings → Theme to <html> on every load and whenever it
+  // changes (brand/accent tokens tint the UI via --brand-color / --accent-color).
+  // This runs app-wide regardless of which workspace is open, so the theme
+  // persists across navigation and reloads (not just while Settings is open).
+  useEffect(() => {
+    const root = document.documentElement;
+    const saved = pos.settings?.theme;
+    root.style.setProperty('--brand-color', saved?.brandColor || '#004ac6');
+    root.style.setProperty('--accent-color', saved?.accentColor || '#10b981');
+    if (saved?.mode === 'dark') root.classList.add('pos-dark');
+    else root.classList.remove('pos-dark');
+  }, [pos.settings?.theme]);
 
   // ============ ROLE-BASED WORKSPACE GUARD ============
   // Map each workspace to the permission toggles that gate it.
@@ -380,6 +448,8 @@ export default function App() {
     setCustomerPhone: pos.setCustomerPhone,
     appliedReward: pos.appliedReward,
     setAppliedReward: pos.setAppliedReward,
+    appliedOffer: pos.appliedOffer,
+    setAppliedOffer: pos.setAppliedOffer,
     paymentMethod: pos.paymentMethod,
     setPaymentMethod: pos.setPaymentMethod,
     orderType: pos.orderType,
@@ -527,6 +597,41 @@ export default function App() {
       api.updateOrder(orderId, syncedOrder).catch((err: any) => debugWarn('App', 'updateOrder (cancel item) failed:', err));
     }
   }, [pos.setOrders, pos.activeOrder, pos.setActiveOrder, pos.cartItems, pos.setCartItems, pos.currentEmployee, showToast]);
+
+  // ============ ORDER ADJUSTMENT → KDS SYNC ============
+  // The adjustment modal returns the server-refreshed order (new totals +
+  // KOT lines marked cancelled). Swap it into pos.orders immediately so the
+  // Kitchen Display shows the cancelled item without waiting for the poll.
+  const handleOrderUpdated = useCallback((order: any) => {
+    if (!order) return;
+    const serverId = order._id || order.id;
+    if (!serverId) return;
+    const normalized = {
+      ...order,
+      id: serverId,
+      items: Array.isArray(order.items) ? order.items : [],
+      kotRecords: Array.isArray(order.kotRecords) ? order.kotRecords : [],
+      timeline: Array.isArray(order.timeline) ? order.timeline : [],
+    };
+    pos.setOrders((prev: any[]) => {
+      const idx = prev.findIndex((o: any) => (o.id === serverId || o._id === serverId));
+      if (idx === -1) return prev;
+      const next = [...prev];
+      const prevOrder = next[idx];
+      // The adjustment response assembles kotRecords but order items/timeline
+      // live in separate collections — preserve the local copies when absent.
+      next[idx] = {
+        ...normalized,
+        ...(prevOrder.id && !normalized.items?.length ? { items: prevOrder.items } : {}),
+        ...(prevOrder.id && !normalized.timeline?.length ? { timeline: prevOrder.timeline } : {}),
+      };
+      return next;
+    });
+    // If the adjusted order is the one on screen (active), refresh it too.
+    pos.setActiveOrder((prev: any) =>
+      prev && (prev.id === serverId || prev._id === serverId) ? { ...prev, ...normalized } : prev
+    );
+  }, [pos.setOrders, pos.setActiveOrder]);
 
   // ============ KEYBOARD SHORTCUTS ============
   useKeyboardShortcuts({
@@ -758,7 +863,7 @@ export default function App() {
     ));
   }, [pos.setCartItems]);
 
-  const handleRecallHeldOrder = useCallback((holdId: string) => {
+  const handleRecallHeldOrder = useCallback(async (holdId: string) => {
     const found = pos.heldOrders.find((h: any) => h.id === holdId);
     if (found) {
       if (found.orderId) {
@@ -783,7 +888,7 @@ export default function App() {
           pos.setActiveOrder(mergedOrder);
         } else {
           const fresh: Order = {
-            id: found.orderId, orderNumber: pos.orders.length + 1001,
+            id: found.orderId, orderNumber: await orderMgmt.getNextOrderNumber(),
             type: found.type || 'Takeaway', status: 'New',
             createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
             items: found.items, kotRecords: [], timeline: [{
@@ -821,7 +926,7 @@ export default function App() {
   }, [pos.heldOrders, pos.orders, pos.setHeldOrders, pos.setOrders,
       pos.setActiveOrder, pos.setCartItems, pos.setCustomerPhone,
       pos.setSearchedCustomer, pos.setOrderType, pos.setIsHeldDrawerOpen,
-      pos.currentEmployee, showToast]);
+      pos.currentEmployee, showToast, orderMgmt.getNextOrderNumber]);
 
   // ============ RECEIPT PREVIEW (LIVE BILL) ============
   const handleOpenReceiptPreview = useCallback((order: Order) => {
@@ -866,15 +971,15 @@ export default function App() {
       const firstAvailable = pos.tables.find((t: any) => t.status === 'Available');
       pos.tourArtifactRef.current.ordersCount = pos.orders.length;
       if (firstAvailable) {
-        const newOrder = orderMgmt.handleCreateOrder('Dine In', firstAvailable.id);
+        const newOrder = await orderMgmt.handleCreateOrder('Dine In', firstAvailable.id);
         if (newOrder) pos.tourArtifactRef.current.tourOrderIds = [...(pos.tourArtifactRef.current.tourOrderIds || []), newOrder.id];
         pos.tourArtifactRef.current.tableId = firstAvailable.id;
       } else if (pos.tables.length > 0) {
-        const newOrder = orderMgmt.handleCreateOrder('Dine In', pos.tables[0].id);
+        const newOrder = await orderMgmt.handleCreateOrder('Dine In', pos.tables[0].id);
         if (newOrder) pos.tourArtifactRef.current.tourOrderIds = [...(pos.tourArtifactRef.current.tourOrderIds || []), newOrder.id];
         pos.tourArtifactRef.current.tableId = pos.tables[0].id;
       } else {
-        const newOrder = orderMgmt.handleCreateOrder('Takeaway');
+        const newOrder = await orderMgmt.handleCreateOrder('Takeaway');
         if (newOrder) pos.tourArtifactRef.current.tourOrderIds = [...(pos.tourArtifactRef.current.tourOrderIds || []), newOrder.id];
       }
     },
@@ -888,15 +993,16 @@ export default function App() {
         billing.handleAddProductToCart(available[0]);
         if (available.length > 1) billing.handleAddProductToCart(available[1]);
       } else {
-        // Demo fallback: inject hardcoded products + cart items so the tour works without backend
-        const demoProducts = [
-          { id: 'demo_prod_1', name: 'Grilled Chicken Burger', price: 12.99, category: 'Main Course', image: '', gstPercent: 5, availability: true, code: 'B001' },
-          { id: 'demo_prod_2', name: 'Classic Margherita Pizza', price: 14.99, category: 'Main Course', image: '', gstPercent: 5, availability: true, code: 'P001' },
+        // No catalog yet — the tour never injects hardcoded products into the
+        // product catalog (pos.products and its localStorage cache must stay
+        // DB-backed only, or Menu Availability would show fake items). Demo
+        // items are cart-only and transient: nothing is persisted to the
+        // catalog or any DB-backed collection. The "Add Items" tour step is
+        // skipped automatically because there is no product-card target.
+        const demoItems = [
+          { id: 'demo_cart_1', product: { id: 'demo_cart_1', name: 'Cart Demo Item', price: 12.99, category: '', image: '', gstPercent: 5, availability: true, code: '' }, quantity: 2, price: 12.99 },
+          { id: 'demo_cart_2', product: { id: 'demo_cart_2', name: 'Cart Practice Item', price: 14.99, category: '', image: '', gstPercent: 5, availability: true, code: '' }, quantity: 1, price: 14.99 },
         ];
-        // Inject products so product cards render (needed for [data-tour="product-card"] target)
-        pos.setProducts(demoProducts);
-        // Inject cart items so billing/KOT/hold/pay steps work
-        const demoItems = demoProducts.map(p => ({ id: `${p.id}_none`, product: p, quantity: p.id === 'demo_prod_1' ? 2 : 1, price: p.price }));
         pos.setCartItems(demoItems);
       }
     },
@@ -913,7 +1019,7 @@ export default function App() {
       }
       loyalty.handleCustomerPhoneChange(phone);
     },
-    openOffersPopup: async () => pos.setIsOffersPopupOpen(true),
+    openOffersPopup: async () => pos.moduleSettings.enableOffersPopup !== false && pos.setIsOffersPopupOpen(true),
     closeOffersPopup: async () => pos.setIsOffersPopupOpen(false),
     openKOTPreview: async () => showKOTPreview(),
     confirmKOT: async () => {
@@ -1134,11 +1240,12 @@ export default function App() {
   }, [auth, pos, showToast]);
 
   // Show loading screen while checking auth
+  const isFirstRun = setupState === 'setup';
   if (auth.isLoading || setupState === 'loading') {
     return (
       <div className="h-full flex items-center justify-center bg-[#faf8ff]">
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-[#004ac6] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <div className="w-8 h-8 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-sm text-gray-500">Initializing POS Terminal...</p>
         </div>
       </div>
@@ -1147,7 +1254,25 @@ export default function App() {
 
   // Show LoginScreen if not authenticated
   if (!auth.isAuthenticated) {
-    return <LoginScreen onLoginSuccess={handleFirstLogin} settings={pos.settings} />;
+    if (firstRunChoice === 'register') {
+      return (
+        <FirstTimeSetup
+          onSetupComplete={(emp, pin) => {
+            setFirstRunChoice('login');
+            handleSetupComplete(emp, pin);
+          }}
+        />
+      );
+    }
+    return (
+      <LoginScreen
+        onLoginSuccess={handleFirstLogin}
+        settings={pos.settings}
+        employees={pos.employees}
+        isFirstRun={isFirstRun}
+        onRegister={() => setFirstRunChoice('register')}
+      />
+    );
   }
 
   // Show first-time setup if no Owner exists
@@ -1176,7 +1301,7 @@ export default function App() {
   if (needsPlanSelection === 'loading') {
     return (
       <div className="h-full flex items-center justify-center bg-[#faf8ff]">
-        <div className="w-8 h-8 border-2 border-[#004ac6] border-t-transparent rounded-full animate-spin" />
+        <div className="w-8 h-8 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -1188,7 +1313,7 @@ export default function App() {
   return (
     <div className="h-full overflow-hidden bg-[#faf8ff] text-[#191b23] flex flex-col font-sans">
       {!pos.currentEmployee ? (
-        <LoginScreen onLoginSuccess={handleFirstLogin} settings={pos.settings} />
+        <LoginScreen onLoginSuccess={handleFirstLogin} settings={pos.settings} employees={pos.employees} isFirstRun={isFirstRun} onRegister={() => setFirstRunChoice('register')} />
       ) : (
         <>
           {/* Trial countdown banner */}
@@ -1228,10 +1353,10 @@ export default function App() {
               <AppSidebar
                 activeWorkspace={pos.activeWorkspace as string}
                 onNavigate={(ws) => pos.setActiveWorkspace(ws as any)}
-                showKitchen={pos.moduleSettings.enableKitchenDisplay !== false}
+                showKitchen={pos.moduleSettings.enableKitchenDisplay !== false && (pos.settings.kotOutputMode ?? 'both') !== 'print'}
                 role={pos.currentEmployee?.role}
                 rolePermissions={pos.rolePermissions}
-                onLogout={() => setIsPinSwitchOpen(true)}
+                onLogout={handleFullLogout}
                 onTour={() => { pos.setIsOnboardingOpen(true); localStorage.removeItem('pos_onboarding_done'); }}
                 onKeys={() => pos.setIsShortcutOpen(true)}
               />
@@ -1239,7 +1364,7 @@ export default function App() {
             <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#faf8ff]">
               <React.Suspense fallback={
                 <div className="flex items-center justify-center h-full">
-                  <div className="w-6 h-6 border-2 border-[#004ac6] border-t-transparent rounded-full animate-spin" />
+                  <div className="w-6 h-6 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin" />
                   <span className="ml-3 text-sm text-gray-500">Loading...</span>
                 </div>
               }>
@@ -1250,7 +1375,6 @@ export default function App() {
                   bills={pos.bills}
                   orders={pos.orders}
                   tables={pos.tables}
-                  customers={pos.customers}
                   employees={pos.employees}
                   products={pos.products}
                   currentEmployee={pos.currentEmployee!}
@@ -1269,8 +1393,9 @@ export default function App() {
                   onNavigate={(ws) => pos.setActiveWorkspace(ws as any)}
                   onOpenDailySales={() => pos.setIsDailySalesOpen(true)}
                   onOpenZReport={() => pos.setIsZReportOpen(true)}
-                  onOpenSyncPanel={() => pos.setIsSyncPanelOpen(true)}
                   moduleSettings={pos.moduleSettings}
+                  hasInventory={pos.hasInventory}
+                  onRefreshData={pos.refreshAllFromApi}
                 />
               )}
               {pos.activeWorkspace === 'Orders' && (
@@ -1287,12 +1412,20 @@ export default function App() {
                   onOpenReceiptPreview={handleOpenReceiptPreview}
                   employees={pos.employees}
                   settings={pos.settings}
+                  moduleSettings={pos.moduleSettings}
                   currentEmployee={pos.currentEmployee!}
                   showToast={showToast}
                   onAddTable={orderMgmt.handleAddTable}
                   onUpdateTable={orderMgmt.handleUpdateTable}
                   onDeleteTable={orderMgmt.handleDeleteTable}
                   floors={pos.floors}
+                  products={pos.products}
+                  role={pos.currentEmployee?.role}
+                  activeTab={pos.ordersActiveTab}
+                  onActiveTabChange={pos.setOrdersActiveTab}
+                  viewMode={pos.ordersViewMode}
+                  onViewModeChange={pos.setOrdersViewMode}
+                  onOrderUpdated={handleOrderUpdated}
                 />
               )}
               {pos.activeWorkspace === 'Billing' && (
@@ -1331,6 +1464,8 @@ export default function App() {
                     calculateCartGrandTotal={billing.calculateCartGrandTotal}
                     onAdjustQuantity={billing.handleAdjustQuantity}
                     onDeleteItem={billing.handleDeleteCartItem}
+                    onClearCart={() => pos.setCartItems([])}
+                    onCloseOrder={orderMgmt.handleCloseOrder}
                     onShowKOT={showKOTPreview}
                     onShowPayment={() => pos.setIsPaymentConfirmOpen(true)}
                     onHoldOrder={handleHoldCurrentOrder}
@@ -1381,7 +1516,7 @@ export default function App() {
                     searchedCustomer={pos.searchedCustomer}
                     customerPhone={pos.customerPhone}
                     onCustomerPhoneChange={loyalty.handleCustomerPhoneChange as any}
-                    onOpenOffers={() => pos.setIsOffersPopupOpen(true)}
+                    onOpenOffers={() => pos.moduleSettings.enableOffersPopup !== false && pos.setIsOffersPopupOpen(true)}
                     loyaltyPhoneRef={pos.loyaltyPhoneRef}
                     quickFireRef={pos.quickFireRef}
                     appliedReward={pos.appliedReward}
@@ -1402,7 +1537,7 @@ export default function App() {
               {pos.activeWorkspace === 'Products' && (
                  <div className="flex flex-col flex-1 min-h-0">
                    <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
                      <span className="text-sm font-bold text-[#191b23]">Products</span>
                      <span className="text-[10px] text-gray-400 ml-auto">Catalog Management</span>
                    </div>
@@ -1411,10 +1546,24 @@ export default function App() {
                   </div>
                 </div>
               )}
+              {pos.activeWorkspace === 'MenuAvailability' && pos.moduleSettings.enableMenuAvailability !== false && (
+                <MenuAvailabilityPage
+                  products={pos.products}
+                  branches={pos.branches}
+                  currencySymbol={pos.settings.currencySymbol}
+                  onBack={() => pos.setActiveWorkspace('More')}
+                />
+              )}
+              {pos.activeWorkspace === 'QrStudio' && pos.moduleSettings.enableQROrdering !== false && (
+                <QrStudioPage
+                  currencySymbol={pos.settings.currencySymbol}
+                  onBack={() => pos.setActiveWorkspace('More')}
+                />
+              )}
               {pos.activeWorkspace === 'Customers' && (
                  <div className="flex flex-col flex-1 min-h-0">
                    <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
+                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
                      <span className="text-sm font-bold text-[#191b23]">Customers</span>
                      <span className="text-[10px] text-gray-400 ml-auto">Loyalty Management</span>
                    </div>
@@ -1429,7 +1578,7 @@ export default function App() {
               {pos.activeWorkspace === 'Reports' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('Dashboard')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to Dashboard"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('Dashboard')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to Dashboard"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Reports & Analytics</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Sales analytics & intelligence</span>
                   </div>
@@ -1444,7 +1593,7 @@ export default function App() {
               {pos.activeWorkspace === 'Staff' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Staff</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Employee Management</span>
                   </div>
@@ -1454,7 +1603,7 @@ export default function App() {
               {pos.activeWorkspace === 'Branches' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Branch Management</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Multi-location management</span>
                   </div>
@@ -1498,7 +1647,7 @@ export default function App() {
               {pos.activeWorkspace === 'Expenses' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Expenses</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Expense tracking & management</span>
                   </div>
@@ -1515,7 +1664,7 @@ export default function App() {
               {pos.activeWorkspace === 'Reservations' && pos.moduleSettings.enableReservations !== false && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Reservations</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Table booking & guest queue</span>
                   </div>
@@ -1539,7 +1688,7 @@ export default function App() {
               {pos.activeWorkspace === 'Analytics' && pos.hasAnalytics && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Analytics</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Business intelligence & trends</span>
                   </div>
@@ -1555,7 +1704,7 @@ export default function App() {
               {pos.activeWorkspace === 'Finance' && pos.hasAnalytics && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[#191b23]">Finance</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Profit & Loss statement</span>
                   </div>
@@ -1571,13 +1720,8 @@ export default function App() {
               {pos.activeWorkspace === 'Inventory' && pos.hasInventory && (
                 <div className="flex flex-col flex-1 min-h-0"><InventoryManager onBack={() => pos.setActiveWorkspace('More')} moduleSettings={pos.moduleSettings} /></div>
               )}
-              {pos.activeWorkspace === 'Kitchen' && (
+              {pos.activeWorkspace === 'Kitchen' && pos.moduleSettings.enableKitchenDisplay !== false && (pos.settings.kotOutputMode ?? 'both') !== 'print' && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('Dashboard')} className="p-1.5 text-gray-400 hover:text-[#004ac6] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to Dashboard"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Kitchen Display</span>
-                    <span className="text-[10px] text-gray-400 ml-auto">Live order status</span>
-                  </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
                     <KitchenDisplay
                       orders={pos.orders}
@@ -1699,6 +1843,7 @@ export default function App() {
         paymentMethod={pos.paymentMethod}
         searchedCustomer={pos.searchedCustomer}
         appliedReward={pos.appliedReward}
+        appliedOffer={pos.appliedOffer}
         splitDetails={pos.splitDetails}
         totals={{
           subtotal: billing.calculateCartSubtotal(),
@@ -1733,13 +1878,24 @@ export default function App() {
       />
 
       <OffersPopup
-        isOpen={pos.isOffersPopupOpen}
+        isOpen={pos.isOffersPopupOpen && pos.moduleSettings.enableOffersPopup !== false}
         searchedCustomer={pos.searchedCustomer}
         rewards={pos.rewards}
         settings={pos.settings}
         appliedReward={pos.appliedReward}
+        appliedOffer={pos.appliedOffer}
+        cartItems={pos.cartItems}
+        subtotal={billing.calculateCartSubtotal()}
         onClose={() => pos.setIsOffersPopupOpen(false)}
         onApplyReward={loyalty.handleRedeemRewardTier}
+        onApplyOffer={(applied) => {
+          pos.setAppliedOffer(applied);
+          showToast(`Offer applied: ${applied.offer?.title || 'Promotion'}`, 'success');
+        }}
+        onRemoveOffer={() => {
+          pos.setAppliedOffer(null);
+          showToast('Offer removed from this bill.', 'info');
+        }}
       />
 
       <SplitPaymentModal

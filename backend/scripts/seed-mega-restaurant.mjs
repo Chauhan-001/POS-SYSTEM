@@ -276,6 +276,17 @@ const PRODUCT_DEFS = [
   ['MF040','Gulab Jamun','Desserts',99,18,0],
 ];
 
+// Koramangala-only price overrides (keyed by product code from PRODUCT_DEFS;
+// the head branch keeps the base price). The customer site's getMenu applies
+// branchPrice per branch, so the two storefronts visibly diverge — this is
+// what branch-scoped pricing looks like in action.
+const BRANCH_PRICE_OVERRIDES = {
+  MF026: 79, // Garlic Naan      ₹69 → ₹79
+  MF027: 65, // Butter Naan      ₹59 → ₹65
+  MF004: 469, // BBQ Chicken Pizza ₹449 → ₹469
+  MF022: 349, // Chicken Biryani  ₹329 → ₹349
+};
+
 const FIRST_M = ['Aarav','Vivaan','Aditya','Vihaan','Arjun','Reyansh','Sai','Arnav','Ayaan','Krishna','Ishaan','Rohan','Kabir','Dev','Rahul','Vikram','Amit','Siddharth','Nikhil','Pranav','Adarsh','Kunal','Gaurav','Manish'];
 const FIRST_F = ['Diya','Ananya','Aadhya','Kiara','Riya','Prisha','Ishita','Navya','Saanvi','Anika','Priya','Sneha','Meera','Anjali','Kavya','Nisha','Pooja','Divya','Tanvi','Shreya','Vaishnavi','Sakshi','Ritika','Simran'];
 const LAST = ['Sharma','Verma','Gupta','Iyer','Nair','Reddy','Singh','Patel','Mehta','Kulkarni','Pillai','Rao','Kumar','Joshi','Menon','Chawla','Bhat','Desai','Kapoor','Malhotra','Banerjee','Chatterjee','Shetty','Hegde','Naidu','Acharya','Gowda','Pillai','Das','Bose'];
@@ -412,7 +423,10 @@ async function main() {
     const productDocs = PRODUCT_DEFS.map(([code, name, category, price, gst, fav]) => ({
       name, code, price, category, gstPercent: gst, availability: true, favorite: !!fav,
       restaurantId: new mongoose.Types.ObjectId(restId),
-      branchPrice: {}, currentStock: randInt(20, 400), unit: 'pcs',
+      branchPrice: BRANCH_PRICE_OVERRIDES[code]
+        ? { [String(secondOid)]: BRANCH_PRICE_OVERRIDES[code] }
+        : {},
+      currentStock: randInt(20, 400), unit: 'pcs',
       minStock: randInt(5, 20), maxStock: randInt(200, 800), reorderLevel: randInt(8, 30),
       averageCost: Math.round(price * 0.45 * 100) / 100,
       supplier: pick(['FreshMart Supplies','Metro Wholesale','Karnataka Agro','Spice Junction','Daily Fresh Foods']),
@@ -512,14 +526,14 @@ async function main() {
     // ─── Offers ───────────────────────────────────────────────
     log('[11] Bulk: offers');
     const offerDocs = [
-      { title: 'Monsoon Special — 15% Off', description: '15% off on all Main Course items this week.', type: 'percentage', value: 15, status: 'active', minOrderValue: 500, startDate: '2026-07-25', endDate: '2026-08-15' },
-      { title: 'Flat ₹150 Off', description: 'Flat ₹150 off on orders above ₹1499.', type: 'flat', value: 150, status: 'active', minOrderValue: 1499 },
-      { title: 'Buy 1 Get 1 Pizza', description: 'Buy any large pizza, get a small Margherita free.', type: 'bogo', value: 0, status: 'active', freeItemName: 'Margherita Pizza', freeItemQty: 1 },
-      { title: 'Weekend Biryani Combo', description: 'Biryani + drink combo at a special price.', type: 'combo', value: 100, status: 'scheduled', comboProductIds: ['MF022', 'BV003'], comboPrice: 399, scheduledDate: '2026-08-08' },
-      { title: 'First Order 20% Off', description: '20% off for first-time customers.', type: 'percentage', value: 20, status: 'active', minOrderValue: 400 },
-      { title: 'Cashback ₹100', description: '₹100 cashback on bills above ₹2000.', type: 'cashback', value: 100, status: 'active', cashbackValue: 100, minOrderValue: 2000 },
-      { title: 'Diwali Festival Feast', description: 'Special festive discount for the Diwali week.', type: 'festival', value: 25, status: 'scheduled', scheduledDate: '2026-11-09' },
-      { title: 'Happy Hours 10% Off', description: '10% off between 3-6 PM on weekdays.', type: 'percentage', value: 10, status: 'active', minOrderValue: 300 },
+      { title: 'Monsoon Special — 15% Off', description: '15% off on all Main Course items this week.', type: 'percentage', value: 15, status: 'active', minOrderValue: 500, startDate: '2026-07-25', endDate: '2026-08-15', couponCode: 'MONSOON15' },
+      { title: 'Flat ₹150 Off', description: 'Flat ₹150 off on orders above ₹1499.', type: 'flat', value: 150, status: 'active', minOrderValue: 1499, couponCode: 'FLAT150' },
+      { title: 'Buy 1 Get 1 Pizza', description: 'Buy any large pizza, get a small Margherita free.', type: 'bogo', value: 0, status: 'active', freeItemName: 'Margherita Pizza', freeItemQty: 1, couponCode: 'BOGO1PIZZA' },
+      { title: 'Weekend Biryani Combo', description: 'Biryani + drink combo at a special price.', type: 'combo', value: 100, status: 'scheduled', comboProductIds: ['MF022', 'BV003'], comboPrice: 399, scheduledDate: '2026-08-08', couponCode: 'BIRYANI100' },
+      { title: 'First Order 20% Off', description: '20% off for first-time customers.', type: 'percentage', value: 20, status: 'active', minOrderValue: 400, couponCode: 'FIRST20' },
+      { title: 'Cashback ₹100', description: '₹100 cashback on bills above ₹2000.', type: 'cashback', value: 100, status: 'active', cashbackValue: 100, minOrderValue: 2000, couponCode: 'CASHBACK100' },
+      { title: 'Diwali Festival Feast', description: 'Special festive discount for the Diwali week.', type: 'festival', value: 25, status: 'scheduled', scheduledDate: '2026-11-09', couponCode: 'DIWALI25' },
+      { title: 'Happy Hours 10% Off', description: '10% off between 3-6 PM on weekdays.', type: 'percentage', value: 10, status: 'active', minOrderValue: 300, couponCode: 'HAPPY10' },
     ].map((o) => ({
       ...o,
       restaurantId: new mongoose.Types.ObjectId(restId),
@@ -530,18 +544,28 @@ async function main() {
     logGreen(`${offerDocs.length} offers`);
 
     // ─── Tables ───────────────────────────────────────────────
+    // Explicit _id + status so Dine-In orders/reservations below can bind to
+    // the REAL table ObjectId (the floor plan matches order.tableId to
+    // table.id to render occupancy). Status is recomputed from live orders +
+    // active reservations after those arrays are built (see the reconciliation
+    // block after [19]).
     log('[12] Bulk: tables');
     const tableDocs = [];
     const sections = ['Window', 'Main Hall', 'VIP', 'Outdoor', 'Family'];
     const shapes = ['circle', 'square', 'rectangle'];
+    const tableByNumber = {}; // String(branchId) → { number → tableDoc }
     let tno = 1;
     for (const b of [headOid, secondOid]) {
       for (let i = 1; i <= 16; i++) {
-        tableDocs.push({
-          number: i, capacity: [2, 4, 6, 8, 10][i % 5], section: pick(sections),
+        const tbl = {
+          _id: O(), number: i, capacity: [2, 4, 6, 8, 10][i % 5], section: pick(sections),
+          status: 'Available',
           branchId: b, shape: pick(shapes), x: randInt(40, 520), y: randInt(40, 640),
           isDeleted: false, deletedAt: null, createdAt: now, updatedAt: now,
-        });
+        };
+        if (!tableByNumber[String(b)]) tableByNumber[String(b)] = {};
+        tableByNumber[String(b)][i] = tbl;
+        tableDocs.push(tbl);
         tno++;
       }
     }
@@ -1166,13 +1190,26 @@ async function main() {
         const createdAt = new Date(`${dateStr}T${time}:00`);
         const cust = rng() < 0.5 ? pick(customers) : null;
         const oid = O();
+        // Dine In orders bind to the REAL table ObjectId for this branch — the
+        // floor plan shows occupancy by matching order.tableId to table.id, and
+        // tableStateService.reconcileTable looks live orders up by tableId.
+        // tableNumber is derived from the chosen table doc so both stay in sync
+        // (they were two independent random rolls before, so a Dine-In order
+        // could name table 't5' while numbering table 9). Stored as a hex
+        // string to match the Order model's String tableId field. Optional
+        // chaining keeps the seed crash-proof if the table layout ever changes.
+        const tNum = type === 'Dine In' ? randInt(1, 16) : undefined;
+        const tDoc = tNum ? tableByNumber[String(branchOid)]?.[tNum] : undefined;
         orderDocs.push({
           _id: oid,
           orderNumber: onum,
           type,
           status,
-          tableId: type === 'Dine In' ? `t${randInt(1, 16)}` : undefined,
-          tableNumber: type === 'Dine In' ? randInt(1, 16) : undefined,
+          // CRITICAL: tenant stamp — without restaurantId these orders leak into
+          // EVERY tenant's POS (the list endpoint scopes by restaurantId).
+          restaurantId: new mongoose.Types.ObjectId(restId),
+          tableNumber: tNum,
+          tableId: tDoc ? String(tDoc._id) : undefined,
           platform: ['Swiggy', 'Zomato'].includes(type) ? type : undefined,
           branchId: branchOid,
           customerPhone: cust ? cust.phone : undefined,
@@ -1270,6 +1307,8 @@ async function main() {
           orderNumber: tkonum,
           customerName: name,
           customerPhone: phone,
+          // CRITICAL: tenant stamp — see orderDocs comment above.
+          restaurantId: new mongoose.Types.ObjectId(restId),
           status: isToday ? pick(['Preparing', 'Ready', 'Collected']) : pick(['Preparing', 'Ready', 'Collected', 'Completed']),
           amount: Math.round(amount * 100) / 100,
           paymentStatus: isToday ? (rng() < 0.6 ? 'Paid' : 'Pending') : pick(['Paid', 'Paid', 'Paid', 'Pending']),
@@ -1294,16 +1333,21 @@ async function main() {
         const cust = pick(customers);
         const past = ahead < 0;
         const status = past ? pick(['Seated', 'Seated', 'Seated', 'Cancelled', 'No Show']) : pick(['Confirmed', 'Confirmed', 'Confirmed', 'Pending']);
+        const resBranch = rng() < 0.6 ? headOid : secondOid;
+        const resNum = randInt(1, 16);
+        const resTbl = tableByNumber[String(resBranch)]?.[resNum];
         resDocs.push({
           customerName: cust.name,
           customerPhone: cust.phone,
           guestCount: randInt(1, 10),
           date: dateStr,
           time: pick(TIME_SLOTS),
-          tableId: `t${randInt(1, 16)}`,
-          tableNumber: randInt(1, 16),
+          // Real table ObjectId binding (same as orders) so ReservationWorkspace
+          // and table-state reconciliation can resolve the table.
+          tableId: resTbl ? String(resTbl._id) : undefined,
+          tableNumber: resNum,
           status,
-          branchId: rng() < 0.6 ? headOid : secondOid,
+          branchId: resBranch,
           restaurantId: new mongoose.Types.ObjectId(restId),
           notes: rng() < 0.25 ? pick(['Window seat preferred', 'Anniversary dinner', 'Business lunch', 'Birthday cake ordered', 'Vegetarian']) : undefined,
           occasion: rng() < 0.2 ? pick(['Birthday', 'Anniversary', 'Business', 'Family Dinner']) : undefined,
@@ -1317,6 +1361,39 @@ async function main() {
       }
     }
     await insertChunked('reservations', resDocs);
+
+    // ─── Table status reconciliation (Dine-In occupancy) ───────
+    // Persist lifecycle status on each table doc like the backend's
+    // tableStateService.reconcileTable: a non-terminal Dine-In order occupies
+    // the table; else a today Confirmed/Pending reservation reserves it; else
+    // Available. This is what the Orders grid + dashboard count as Occupied.
+    // Only TODAY's Dine-In orders count — the seed keeps ~15% of PAST days'
+    // orders open as historical volume, and a real floor plan at day-end
+    // closes those tables, so counting them would leave a permanent full house.
+    log('Table statuses (from TODAY\'s live orders + active reservations)');
+    const TERMINAL_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
+    const todayLocal = localDateStr(new Date());
+    const occupiedTableIds = new Set();
+    for (const o of orderDocs) {
+      if (o.type !== 'Dine In' || !o.tableId || TERMINAL_STATUSES.includes(o.status)) continue;
+      if (localDateStr(o.createdAt) !== todayLocal) continue; // only live TODAY
+      occupiedTableIds.add(String(o.tableId));
+    }
+    const reservedTableIds = new Set();
+    for (const r of resDocs) {
+      if (r.tableId && (r.status === 'Confirmed' || r.status === 'Pending') && r.date === todayLocal) reservedTableIds.add(String(r.tableId));
+    }
+    let occ = 0, resCount = 0;
+    const tableStatusWrites = tableDocs.map((t) => {
+      const sid = String(t._id);
+      let st = 'Available';
+      if (occupiedTableIds.has(sid)) { st = 'Occupied'; occ++; }
+      else if (reservedTableIds.has(sid)) { st = 'Reserved'; resCount++; }
+      t.status = st;
+      return { updateOne: { filter: { _id: t._id }, update: { $set: { status: st } } } };
+    });
+    await db.collection('tables').bulkWrite(tableStatusWrites);
+    logGreen(`${occ} tables Occupied / ${resCount} Reserved / ${tableDocs.length - occ - resCount} Available`);
     logGreen(`${resDocs.length} reservations`);
 
     // ─── Waiting list ─────────────────────────────────────────

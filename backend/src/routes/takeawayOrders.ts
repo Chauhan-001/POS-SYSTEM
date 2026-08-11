@@ -16,12 +16,12 @@ import {
 } from '../controllers/takeawayOrdersController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
-import { createTakeawayOrderSchema, updateTakeawayOrderSchema, takeawayOrderQuerySchema, takeawayOrderParamsSchema, nextNumberQuerySchema } from '../validation';
+import { createTakeawayOrderSchema, updateTakeawayOrderSchema, takeawayOrderQuerySchema, takeawayOrderParamsSchema, takeawayNextNumberQuerySchema } from '../validation';
 
 const router = Router();
 
 // All staff can view and manage takeaway orders
-router.get('/next-number', requireAuth, validate({ query: nextNumberQuerySchema }), getNextOrderNumber);
+router.get('/next-number', requireAuth, validate({ query: takeawayNextNumberQuerySchema }), getNextOrderNumber);
 router.get('/', requireAuth, validate({ query: takeawayOrderQuerySchema }), listTakeawayOrders);
 router.get('/:id', requireAuth, validate({ params: takeawayOrderParamsSchema }), getTakeawayOrder);
 router.post('/', requireAuth, validate({ body: createTakeawayOrderSchema }), createTakeawayOrder);

@@ -21,6 +21,7 @@ import RestaurantSettings, { SettingsScope } from '../models/RestaurantSettings'
 import { SettingsPatchInput, SettingsRollbackInput, EffectiveSettingsResult } from '../types';
 import { deepMerge } from '../utils/deepMerge';
 import AuditLog from '../../../models/AuditLog';
+import { ensurePublicToken } from '../../../utils/publicToken';
 
 /**
  * The branchId column is an ObjectId, but older clients / demo data can send
@@ -124,8 +125,19 @@ export class SettingsService {
     // fallback) for display, PLUS the per-scope versions so the client can send
     // the correct baseVersion for whichever scope it edits.
     const meta = deviceDoc || branchDoc || restaurantDoc;
+
+    // Public store token: generated lazily the first time a device asks for
+    // settings, so pre-existing tenants get one retroactively without a migration.
+    // Exposed OUTSIDE the settings blob — it is derived identity, not a value the
+    // operator edits, and it must not leak into the settings history/merge.
+    let publicToken = '';
+    try {
+      publicToken = await ensurePublicToken(restaurantId);
+    } catch { /* public token is best-effort; never fail the settings read */ }
+
     return {
       settings: merged,
+      publicToken,
       meta: {
         version: meta?.settingsVersion || 1,
         scope: deviceDoc ? 'device' : branchDoc ? 'branch' : 'restaurant',

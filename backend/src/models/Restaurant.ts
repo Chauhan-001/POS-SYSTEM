@@ -74,6 +74,8 @@ export interface IRestaurant extends Document {
   tempPasswordShown?: boolean;
   secretKey?: string;
   apiKey?: string;
+  /** Publicly-shareable token used in QR links (single per restaurant, read-only on the live public store). */
+  publicToken?: string;
   adminNotes?: Array<{ id: string; note: string; admin: string; timestamp: Date }>;
   auditTrail?: Array<{ id: string; action: string; admin: string; timestamp: Date; reason?: string }>;
   settings?: Record<string, unknown>;
@@ -170,6 +172,7 @@ const RestaurantSchema = new Schema<IRestaurant>(
     tempPasswordShown: { type: Boolean, default: false },
     secretKey: { type: String },
     apiKey: { type: String },
+    publicToken: { type: String, trim: true, index: { unique: true, sparse: true } },
     adminNotes: [{
       id: { type: String },
       note: { type: String },

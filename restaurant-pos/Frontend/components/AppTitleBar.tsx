@@ -40,7 +40,7 @@ export default function AppTitleBar({
       {/* Left: brand + branch selector */}
       <div className="flex items-center gap-2.5 min-w-0">
         <div className="flex items-center gap-2 pr-2.5 border-r border-[#2e3039]">
-          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#2563eb] to-[#004ac6] flex items-center justify-center shadow-sm shrink-0">
+          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#2563eb] to-[var(--brand-color)] flex items-center justify-center shadow-sm shrink-0">
             <UtensilsCrossed className="w-3.5 h-3.5 text-white" />
           </div>
           <div className="flex items-center gap-1.5 min-w-0">
@@ -90,7 +90,7 @@ export default function AppTitleBar({
                       }}
                       className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-colors cursor-pointer ${
                         branch.id === currentBranchId
-                          ? 'bg-[#004ac6] text-white'
+                          ? 'bg-[var(--brand-color)] text-white'
                           : 'text-gray-300 hover:bg-[#3a3c47]'
                       }`}
                     >

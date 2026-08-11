@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Clock, ChefHat, UtensilsCrossed, Bell, AlertCircle, CheckCircle, ArrowRight, Table2, User, RefreshCw, Maximize2, Minimize2, Volume2, VolumeX, XCircle, Ban } from 'lucide-react';
 import type { Order, KOTRecord, KOTStatus } from '../src/types';
+import { getKOTElapsedMinutes, kotPrintedTimeMs } from '../src/utils/kotTime';
 
 const CANCEL_REASONS = [
   { id: 'out_of_stock', label: 'Out of Stock' },
@@ -42,13 +43,10 @@ const COLUMN_CONFIG = [
   { id: 'Ready' as KOTStatus, label: 'Ready to Serve', icon: CheckCircle, color: 'bg-green-500', borderColor: 'border-green-400', bgColor: 'bg-green-50', textColor: 'text-green-700' },
 ];
 
-function getElapsedMinutes(from: string): number {
-  const created = new Date(from).getTime();
-  return Math.floor((Date.now() - created) / 60000);
-}
-
 function formatElapsed(minutes: number): string {
-  if (minutes < 1) return 'Just now';
+  // Guard against NaN/invalid input (missing printedAt on legacy records) so
+  // the badge can never render "NaNh NaNm ago".
+  if (!Number.isFinite(minutes) || minutes < 1) return 'Just now';
   if (minutes < 60) return `${minutes}m ago`;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -74,7 +72,11 @@ function getKOTStatusTransitions(currentStatus: KOTStatus): KOTStatus[] {
 
 export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrderItem, showToast, settings }: KitchenDisplayProps) {
   const [fullscreen, setFullscreen] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  // Initial alert-sound state follows the Settings "Quick Sound Alerts" module
+  // toggle (default ON when unset, so existing behavior is unchanged).
+  const [soundEnabled, setSoundEnabled] = useState(
+    () => settings?.moduleSettings?.enableQuickSoundAlerts !== false
+  );
   const [prevKotCount, setPrevKotCount] = useState(0);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -177,14 +179,20 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
       }
     });
     Object.keys(grouped).forEach(key => {
-      grouped[key].sort((a, b) => new Date(a.kot.printedAt).getTime() - new Date(b.kot.printedAt).getTime());
+      // Sort oldest-first by printed time; unknown timestamps sort last
+      // (kotPrintedTimeMs → null → MAX_SAFE_INTEGER) instead of producing
+      // NaN orderings or floating unknown cards to the top.
+      grouped[key].sort((a, b) =>
+        (kotPrintedTimeMs(a.kot.printedAt) ?? Number.MAX_SAFE_INTEGER) -
+        (kotPrintedTimeMs(b.kot.printedAt) ?? Number.MAX_SAFE_INTEGER)
+      );
     });
     return grouped;
   }, [kotCards]);
 
   const totalActiveKots = kotCards.length;
   const urgentKots = useMemo(() => {
-    return kotCards.filter(c => getElapsedMinutes(c.kot.printedAt) >= AGING_THRESHOLDS.urgent).length;
+    return kotCards.filter(c => getKOTElapsedMinutes(c.kot.printedAt) >= AGING_THRESHOLDS.urgent).length;
   }, [kotCards, now]);
 
   const handleAdvanceKOTStatus = useCallback((card: KotCardData, targetStatus: KOTStatus) => {
@@ -316,7 +324,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
                 ) : (
                   columnCards.map(card => {
                     const { kot, orderId, orderNumber, tableNumber, waiterName, customerName } = card;
-                    const elapsedMinutes = getElapsedMinutes(kot.printedAt);
+                    const elapsedMinutes = getKOTElapsedMinutes(kot.printedAt);
                     const urgency = getUrgencyStyle(elapsedMinutes);
                     const totalQty = kot.items.reduce((s, i) => s + i.quantity, 0);
                     const transitions = getKOTStatusTransitions(kot.status);

@@ -20,6 +20,9 @@ export interface IEmployee extends Document {
   name: string;
   role: 'Owner' | 'Manager' | 'Cashier';
   pin: string;
+  /** Optional bcrypt-hashed login password, used when the restaurant's login
+   * method is "password" (distinct from the quick-switch PIN). */
+  password?: string;
   status: 'Active' | 'Inactive';
   restaurantId?: mongoose.Types.ObjectId;
   branchId?: mongoose.Types.ObjectId;
@@ -36,6 +39,7 @@ const EmployeeSchema = new Schema<IEmployee>(
     name: { type: String, required: true, trim: true },
     role: { type: String, required: true, enum: ['Owner', 'Manager', 'Cashier'], index: true },
     pin: { type: String, required: true, minlength: 4, maxlength: 60 },
+    password: { type: String, default: null, minlength: 6, maxlength: 100 },
     status: { type: String, default: 'Active', enum: ['Active', 'Inactive'] },
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', default: null, index: true },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },

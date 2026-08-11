@@ -147,16 +147,19 @@ function getDeviceInfo() {
     deviceId: getOrCreateDeviceId(),
     deviceName: typeof navigator !== 'undefined' ? navigator.platform || 'Unknown' : 'Unknown',
     os: typeof navigator !== 'undefined' ? navigator.platform || '' : '',
-    osVersion: typeof navigator !== 'undefined' ? navigator.userAgent || '' : '',
+    // Backend schema caps osVersion at 80 chars — truncate the userAgent so
+    // login-time device registration doesn't 400 (which would break device
+    // counting/limits shown on the Subscription page).
+    osVersion: typeof navigator !== 'undefined' ? (navigator.userAgent || '').slice(0, 80) : '',
     appVersion: '1.0.0',
   };
 }
 
 export default apiClient;
 
-export async function apiLogin(username: string, password: string, rememberMe = false) {
+export async function apiLogin(username: string, password: string, rememberMe = false, mode: 'password' | 'pin' | 'role_pin' = 'pin') {
   const { data } = await apiClient.post('/auth/login', {
-    username, password, rememberMe, deviceInfo: getDeviceInfo(),
+    username, password, rememberMe, mode, deviceInfo: getDeviceInfo(),
   });
   return data;
 }

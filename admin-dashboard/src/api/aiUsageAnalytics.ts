@@ -40,6 +40,11 @@ function buildQuery(filter?: AnalyticsFilter): string {
   return params.toString();
 }
 
+// ─── Live API-Key Quota (per-key rate-limit snapshots) ────────
+
+export const getAiQuota = () =>
+  api.get('/api/admin/analytics/ai/quota').then(r => r.data);
+
 // ─── Dashboard Summary ────────────────────────────────────────
 
 export const getDashboardSummary = (filter?: AnalyticsFilter) =>
