@@ -14,6 +14,9 @@ export interface ICustomerRequest extends Document {
   orderType: 'TABLE' | 'CAR' | 'TAKEAWAY' | 'PICKUP';
   tableId?: mongoose.Types.ObjectId;
   carId?: string;
+  /** For ONLINE_ORDER requests — the order this call refers to. */
+  orderId?: mongoose.Types.ObjectId;
+  orderNumber?: number;
   customer?: {
     name?: string;
     phone?: string;
@@ -27,7 +30,8 @@ export interface ICustomerRequest extends Document {
     | 'PLATE'
     | 'SPOON'
     | 'ASSISTANCE'
-    | 'ORDER_READY';
+    | 'ORDER_READY'
+    | 'ONLINE_ORDER';
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
   status: 'PENDING' | 'SEEN' | 'ACCEPTED' | 'COMPLETED' | 'ARCHIVED';
   message?: string;
@@ -36,6 +40,8 @@ export interface ICustomerRequest extends Document {
   assignedTo?: mongoose.Types.ObjectId;
   assignedAt?: Date;
   completedAt?: Date;
+  /** Display name of the employee who acknowledged the call. */
+  completedBy?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,6 +80,15 @@ const CustomerRequestSchema = new Schema<ICustomerRequest>(
       trim: true,
       index: true,
     },
+    orderId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Order',
+      index: true,
+    },
+    orderNumber: {
+      type: Number,
+      index: true,
+    },
     customer: {
       name: { type: String, trim: true },
       phone: { type: String, trim: true },
@@ -81,7 +96,7 @@ const CustomerRequestSchema = new Schema<ICustomerRequest>(
     },
     type: {
       type: String,
-      enum: ['CALL_WAITER', 'WATER', 'BILL', 'CLEANING', 'PLATE', 'SPOON', 'ASSISTANCE', 'ORDER_READY'],
+      enum: ['CALL_WAITER', 'WATER', 'BILL', 'CLEANING', 'PLATE', 'SPOON', 'ASSISTANCE', 'ORDER_READY', 'ONLINE_ORDER'],
       required: true,
       index: true,
     },
@@ -118,6 +133,10 @@ const CustomerRequestSchema = new Schema<ICustomerRequest>(
     },
     completedAt: {
       type: Date,
+    },
+    completedBy: {
+      type: String,
+      trim: true,
     },
   },
   {

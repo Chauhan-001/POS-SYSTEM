@@ -31,6 +31,7 @@ import OffersPage from './OffersPage';
 import PromotePage from './PromotePage';
 import AnalyticsOverview from './AnalyticsOverview';
 import MarketingSettingsPanel from './MarketingSettingsPanel';
+import EasyOfferMaker from './EasyOfferMaker';
 import * as api from '../../src/api/client';
 import { debugWarn } from '../../src/utils/debugLog';
 
@@ -54,6 +55,7 @@ export default function MarketingWorkspace({
   const [toast, setToast] = useState('');
   const [createPrefill, setCreatePrefill] = useState<any>(null);
   const [promoteOfferId, setPromoteOfferId] = useState<string | null>(null);
+  const [easyOpen, setEasyOpen] = useState(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -264,7 +266,20 @@ export default function MarketingWorkspace({
               onDuplicate={handleDuplicate}
               onPromote={goPromoteOffer}
               onCreate={() => { setCreatePrefill(null); setTab('create'); }}
+              onOpenEasy={() => setEasyOpen(true)}
             />
+          )}
+          {easyOpen && (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={() => setEasyOpen(false)}>
+              <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <EasyOfferMaker
+                  onClose={() => setEasyOpen(false)}
+                  onSaved={() => { setEasyOpen(false); data.refresh(); }}
+                  products={products}
+                  currencySymbol={currencySymbol}
+                />
+              </div>
+            </div>
           )}
           {tab === 'promote' && (
             <PromotePage

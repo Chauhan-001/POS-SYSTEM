@@ -2,6 +2,21 @@ import { Request, Response } from 'express';
 import { subscriptionService } from './subscriptionService';
 import { entitlementService } from '../../services/entitlementService';
 
+/**
+ * Resolve the tenant identity for subscription routes.
+ *
+ * SECURITY (tenant isolation): the restaurant id is derived EXCLUSIVELY from
+ * the authenticated user's JWT (req.user.restaurantId). Client-supplied
+ * restaurantId in body/query is NEVER trusted — otherwise any authenticated
+ * POS user could read or mutate another restaurant's subscription (IDOR).
+ * Platform admins manage subscriptions through the admin API, which has its
+ * own surface-gated routes.
+ */
+function tenantRestaurantId(req: Request): string | undefined {
+  const rid = (req as any).user?.restaurantId;
+  return rid ? String(rid) : undefined;
+}
+
 export async function getPlans(_req: Request, res: Response): Promise<void> {
   try {
     const plans = await subscriptionService.getPlans();
@@ -14,7 +29,7 @@ export async function getPlans(_req: Request, res: Response): Promise<void> {
 
 export async function getStatus(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.query.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;
@@ -29,7 +44,7 @@ export async function getStatus(req: Request, res: Response): Promise<void> {
 
 export async function createOrder(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.body.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     const { planId } = req.body;
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
@@ -45,7 +60,7 @@ export async function createOrder(req: Request, res: Response): Promise<void> {
 
 export async function verifyPayment(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.body.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     const { orderId, paymentId, signature } = req.body;
     if (!restaurantId || !orderId || !paymentId || !signature) {
       res.status(400).json({ error: 'Missing payment verification parameters' });
@@ -75,7 +90,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
 export async function getHistory(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.query.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;
@@ -90,7 +105,7 @@ export async function getHistory(req: Request, res: Response): Promise<void> {
 
 export async function getPaymentHistory(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.query.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;
@@ -105,7 +120,7 @@ export async function getPaymentHistory(req: Request, res: Response): Promise<vo
 
 export async function manualRenew(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.body.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;
@@ -121,7 +136,7 @@ export async function manualRenew(req: Request, res: Response): Promise<void> {
 
 export async function calculateProration(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.query.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     const { targetPlan } = req.query;
     if (!restaurantId || !targetPlan) {
       res.status(400).json({ error: 'Restaurant ID and targetPlan query params required' });
@@ -140,7 +155,7 @@ export async function calculateProration(req: Request, res: Response): Promise<v
 
 export async function changePlan(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.body.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     const { planId } = req.body;
     if (!restaurantId || !planId) {
       res.status(400).json({ error: 'Restaurant ID and plan ID required' });
@@ -156,7 +171,7 @@ export async function changePlan(req: Request, res: Response): Promise<void> {
 
 export async function extendTrial(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.body.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     const days = parseInt(req.body.days || '7', 10);
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
@@ -172,7 +187,7 @@ export async function extendTrial(req: Request, res: Response): Promise<void> {
 
 export async function getBranchUsage(req: Request, res: Response): Promise<void> {
   try {
-    const restaurantId = req.query.restaurantId || (req as any).user?.restaurantId;
+    const restaurantId = tenantRestaurantId(req);
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;

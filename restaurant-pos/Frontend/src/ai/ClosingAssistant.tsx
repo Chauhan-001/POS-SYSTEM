@@ -33,12 +33,18 @@ const ClosingAssistant: React.FC<ClosingAssistantProps> = ({
   const [data, setData] = useState<ClosingAssistantData | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Fire once per modal open (mount) — the Z-Report modal unmounts when
+  // closed, so mount == fresh user-trigger. Deps are intentionally empty:
+  // the async wasteCost fetch inside the modal resolves AFTER mount and would
+  // otherwise re-fire a second LLM call with near-identical data. The backend
+  // cache absorbs repeats anyway.
   useEffect(() => {
     setLoading(true);
     generateClosingAssistant(totalRevenue, orderCount, lowStockItems, wasteCost)
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [totalRevenue, orderCount, lowStockItems, wasteCost]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) {
     return (

@@ -9,7 +9,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Tag, Plus, Search, Play, Pause, Copy, Trash2, Megaphone, Eye, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Tag, Plus, Search, Play, Pause, Copy, Trash2, Megaphone, Eye, RefreshCw, AlertTriangle, Wand2 } from 'lucide-react';
 import { offerValueLabel, OFFER_TYPE_LABELS, EmptyState, Spinner, fmtNumber } from './shared';
 import OfferDetailModal from './OfferDetailModal';
 
@@ -24,11 +24,13 @@ interface OffersPageProps {
   onDuplicate: (offer: any) => void;
   onPromote: (offerId: string) => void;
   onCreate: () => void;
+  /** Open the giant-button Easy Offer/Combo wizard. */
+  onOpenEasy?: () => void;
 }
 
 type Filter = 'all' | 'live' | 'scheduled' | 'draft' | 'expired';
 
-export default function OffersPage({ offers, loading, currencySymbol, onRefresh, onEdit, onStatusChange, onDelete, onDuplicate, onPromote, onCreate }: OffersPageProps) {
+export default function OffersPage({ offers, loading, currencySymbol, onRefresh, onEdit, onStatusChange, onDelete, onDuplicate, onPromote, onCreate, onOpenEasy }: OffersPageProps) {
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -84,6 +86,11 @@ export default function OffersPage({ offers, loading, currencySymbol, onRefresh,
           <button onClick={onCreate} className="flex items-center gap-1.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all active:scale-95 cursor-pointer">
             <Plus className="w-3.5 h-3.5" /> Create Promotion
           </button>
+          {onOpenEasy && (
+            <button onClick={onOpenEasy} className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all active:scale-95 cursor-pointer" title="Pick dishes, tap a discount — the money is calculated for you">
+              <Wand2 className="w-3.5 h-3.5" /> Easy Offer
+            </button>
+          )}
         </div>
       </div>
 

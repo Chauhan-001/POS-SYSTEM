@@ -46,6 +46,7 @@ export async function adminLogin(req: Request, res: Response): Promise<void> {
       restaurantId: user.restaurantId.toString(),
       role: 'super_admin' as const,
       name: user.name,
+      surface: 'admin' as const, // admin-dashboard surface — rejected on POS routes
     };
     const token = jwt.sign(tokenPayload, config.jwtSecret, { expiresIn: '24h', issuer: config.jwtIssuer });
     res.json({

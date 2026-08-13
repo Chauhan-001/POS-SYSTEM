@@ -22,13 +22,34 @@ const SOCKET_URL =
 
 export function usePOSLiveEvents(
   showToast?: (message: string, type?: 'success' | 'info' | 'warning') => void,
-  onOrderAdjusted?: (orderId: string) => void
+  onOrderAdjusted?: (orderId: string) => void,
+  currentBranchId?: string | null,
+  shouldFilterByBranch?: boolean,
+  /** Fired after a new online/QR order is created (refetch orders + tables). */
+  onOrderCreated?: () => void,
+  /** Fired for every customer service call (bell badge increment). */
+  onWaiterCall?: (payload: any) => void
 ) {
   const toastRef = useRef(showToast);
   toastRef.current = showToast;
   const adjustedRef = useRef(onOrderAdjusted);
   adjustedRef.current = onOrderAdjusted;
+  const orderCreatedRef = useRef(onOrderCreated);
+  orderCreatedRef.current = onOrderCreated;
+  const waiterCallRef = useRef(onWaiterCall);
+  waiterCallRef.current = onWaiterCall;
   const lastReadyOrderRef = useRef<string | null>(null);
+  const branchRef = useRef<string | null>(currentBranchId ?? null);
+  branchRef.current = currentBranchId ?? null;
+  const branchFilteredRef = useRef(shouldFilterByBranch === true);
+  branchFilteredRef.current = shouldFilterByBranch === true;
+
+  /** Branch isolation for live toasts: in multi-branch mode, only toast for
+   *  this terminal's active branch (a branchless payload is kept — legacy
+   *  rows have no branch to compare against). Owner on the head branch sees
+   *  everything (the same rule the lists use). */
+  const inBranchScope = (payloadBranch?: string | null): boolean =>
+    !branchFilteredRef.current || !payloadBranch || payloadBranch === branchRef.current;
 
   useEffect(() => {
     let socket: Socket | null = null;
@@ -81,7 +102,7 @@ export function usePOSLiveEvents(
       });
 
       socket.on('order:created', (payload: any) => {
-        if (!payload?.orderNumber) return;
+        if (!payload?.orderNumber || !inBranchScope(payload?.branchId)) return;
         const mode = payload.mode ? ` · ${String(payload.mode).toLowerCase()}` : '';
         const where = payload.parkingSlot
           ? ` · Slot ${payload.parkingSlot}`
@@ -89,6 +110,9 @@ export function usePOSLiveEvents(
             ? ` · Table ${payload.tableNumber}`
             : '';
         toastRef.current?.(`🛒 New online order #${payload.orderNumber}${mode}${where}`, 'success');
+        // Refetch orders + tables so the floor plan turns Occupied and the
+        // KDS shows the auto-KOT immediately (not on the next 30s poll).
+        orderCreatedRef.current?.();
       });
 
       socket.on('order:updated', (payload: any) => {
@@ -97,29 +121,38 @@ export function usePOSLiveEvents(
         if (payload?.adjusted && payload?.orderId) {
           adjustedRef.current?.(payload.orderId);
         }
-        if (payload?.status === 'Ready' && payload?.orderId && lastReadyOrderRef.current !== payload.orderId) {
+        if (payload?.status === 'Ready' && payload?.orderId && inBranchScope(payload?.branchId) && lastReadyOrderRef.current !== payload.orderId) {
           lastReadyOrderRef.current = payload.orderId;
           toastRef.current?.(`🔔 Order #${payload.orderNumber ?? payload.orderId.slice(-4)} is ready`, 'info');
         }
       });
 
       socket.on('waiter:call', (payload: any) => {
-        const labels: Record<string, string> = {
-          WATER: '💧 Water',
-          BILL: '🧾 Bill',
-          ASSISTANCE: '🙋 Assistance',
-          CLEANING: '🧻 Cleaning',
-          CALL_WAITER: '🛎️ Call waiter',
-        };
-        const what = labels[payload?.type] || '🛎️ Waiter call';
-        const where = payload?.parkingSlot
-          ? `Slot ${payload.parkingSlot}`
-          : payload?.carPlate
-            ? `Car ${payload.carPlate}`
-            : payload?.tableId
-              ? 'Table'
-              : '';
-        toastRef.current?.(`${what}${where ? ` · ${where}` : ''}`, 'info');
+        if (!inBranchScope(payload?.branchId)) return;
+        // An ONLINE_ORDER row is a Calls-panel copy of a new online order —
+        // the `order:created` toast above already announced it, so skip the
+        // toast here (but still bump the badge so nothing goes unseen).
+        if (payload?.type !== 'ONLINE_ORDER') {
+          const labels: Record<string, string> = {
+            WATER: '💧 Water',
+            BILL: '🧾 Bill',
+            ASSISTANCE: '🙋 Assistance',
+            CLEANING: '🧻 Cleaning',
+            CALL_WAITER: '🛎️ Call waiter',
+          };
+          const what = labels[payload?.type] || '🛎️ Waiter call';
+          const where = payload?.parkingSlot
+            ? `Slot ${payload.parkingSlot}`
+            : payload?.carPlate
+              ? `Car ${payload.carPlate}`
+              : payload?.tableId
+                ? 'Table'
+                : '';
+          toastRef.current?.(`${what}${where ? ` · ${where}` : ''}`, 'info');
+        }
+        // Bump the sidebar bell badge instantly (persistent notification that
+        // can't be missed even if the toast auto-dismisses).
+        waiterCallRef.current?.(payload);
       });
     };
 

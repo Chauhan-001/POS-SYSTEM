@@ -29,12 +29,34 @@
  */
 
 import dotenv from 'dotenv';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * First non-internal IPv4 address — the machine's current LAN IP. Prefers
+ * private-range addresses (home/office Wi-Fi & Ethernet) and skips VPN/VM
+ * virtual adapters when a private address is present. Falls back to
+ * 'localhost' when no suitable address exists.
+ */
+export function getLanIp(): string {
+  const nets = os.networkInterfaces();
+  const candidates: string[] = [];
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family !== 'IPv4' || net.internal) continue;
+      const addr = net.address;
+      // Private LAN ranges first — virtual adapters (VPN/VM) usually sit outside these.
+      if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(addr)) return addr;
+      candidates.push(addr);
+    }
+  }
+  return candidates[0] || 'localhost';
+}
 
 export const config = {
 
@@ -176,10 +198,17 @@ export const config = {
 
   /**
    * Public base URL of the customer QR ordering site. QR Studio bakes this
-   * into every printed QR sticker (dev default: the customer-site Vite dev
-   * server). Override with QR_BASE_URL when the site is hosted elsewhere.
+   * into every printed QR sticker. In development this auto-detects the
+   * machine's current LAN IP so phone-scanned stickers work on the local
+   * network — localhost would resolve to the phone itself. Override with
+   * QR_BASE_URL to force a specific address (e.g. a static LAN IP) or when
+   * the site is hosted elsewhere.
    */
-   qrBaseUrl: (process.env.QR_BASE_URL || 'http://localhost:5177').replace(/\/$/, ''),
+  qrBaseUrl: (() => {
+    const override = process.env.QR_BASE_URL;
+    if (override) return override.replace(/\/$/, '');
+    return `http://${getLanIp()}:5177`;
+  })(),
 
   // ===========================================================================
   // SECTION 6: RATE LIMITING

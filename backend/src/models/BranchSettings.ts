@@ -41,6 +41,8 @@ export interface ModuleSettings {
   autoMarkSoldOutFromOrder?: boolean;
   /** Master switch for the online Menu Availability controls. */
   enableMenuAvailability?: boolean;
+  /** Re-notify unacknowledged customer calls/online orders every N seconds. */
+  callReminderIntervalSec?: number;
 }
 
 export interface IBranchSettings extends Document {

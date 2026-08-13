@@ -41,10 +41,12 @@ export function initSocket(server: http.Server): Server {
 
   io.on('connection', (socket) => {
     // POS terminals: auth.token → restaurant room.
+    // Admin-dashboard (surface 'admin') tokens are rejected — an admin must
+    // never receive live POS/order/waiter-call events as a restaurant user.
     const authToken = socket.handshake.auth?.token;
     if (typeof authToken === 'string' && authToken) {
       const payload = verifyAccessToken(authToken);
-      if (payload?.restaurantId) {
+      if (payload?.restaurantId && payload.surface !== 'admin') {
         socket.join(`restaurant:${payload.restaurantId}`);
       }
     }

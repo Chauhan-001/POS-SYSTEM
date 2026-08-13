@@ -12,7 +12,7 @@
  * Car / pickup stickers are created via "New sticker". Every QR can be printed
  * independently — each card has its own Print button.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   ArrowLeft, Plus, Printer, Trash2, Loader2, RefreshCw, CheckCircle2, QrCode, Bell,
@@ -31,11 +31,12 @@ type TokenRow = {
   tableId?: string;
   tableNumber?: number | null;
   parkingSlot?: string | null;
+  branchId?: string | null;
   token: string;
   url: string;
 };
 
-type TableRow = { _id?: string; id?: string; number?: number | string; name?: string; status?: string; capacity?: number };
+type TableRow = { _id?: string; id?: string; number?: number | string; name?: string; status?: string; capacity?: number; branchId?: string | null };
 
 const TYPE_LABEL: Record<string, string> = { table: '🍽 Table', car: '🚗 Car', pickup: '🥡 Pickup' };
 const REQUEST_LABEL: Record<string, string> = {
@@ -43,7 +44,19 @@ const REQUEST_LABEL: Record<string, string> = {
   CLEANING: '🧻 Cleaning', CALL_WAITER: '🛎️ Call waiter', PLATE: '🍽 Plate', SPOON: '🥄 Spoon',
 };
 
-export default function QrStudioPage({ onBack }: { currencySymbol?: string; onBack: () => void }) {
+export default function QrStudioPage({
+  currentBranchId,
+  isMultiBranch,
+  branchName,
+  onBack,
+}: {
+  currencySymbol?: string;
+  /** Selected branch from the top bar — scopes table stickers like the floor plan. */
+  currentBranchId?: string | null;
+  isMultiBranch?: boolean;
+  branchName?: string;
+  onBack: () => void;
+}) {
   const [tokens, setTokens] = useState<TokenRow[]>([]);
   const [tables, setTables] = useState<TableRow[]>([]);
   const [qrData, setQrData] = useState<Record<string, string>>({});
@@ -85,6 +98,18 @@ export default function QrStudioPage({ onBack }: { currencySymbol?: string; onBa
     return () => clearInterval(t);
   }, [loadTokens, loadTables, loadRequests]);
 
+  // Branch switched (top-bar selector) — re-pull tables/tokens/requests from
+  // the backend instead of reusing the previous branch's state. fetchTables /
+  // fetchQrTokens always hit the API (no local cache), so this guarantees the
+  // new branch's stickers (and any table added/removed there) are fresh.
+  const loadedBranchRef = useRef<string | null>(currentBranchId ?? null);
+  useEffect(() => {
+    if (loadedBranchRef.current === (currentBranchId ?? null)) return;
+    loadedBranchRef.current = currentBranchId ?? null;
+    setLoading(true);
+    Promise.all([loadTokens(), loadTables(), loadRequests()]).catch(() => setLoading(false));
+  }, [currentBranchId, loadTokens, loadTables, loadRequests]);
+
   /* Render QR data URLs client-side (works offline, no server round-trip). */
   useEffect(() => {
     let cancelled = false;
@@ -103,17 +128,31 @@ export default function QrStudioPage({ onBack }: { currencySymbol?: string; onBa
     return 'Pickup';
   };
 
+  // Multi-branch: scope stickers to the selected branch exactly like the
+  // floor plan (pos.tables → branchTables[currentBranchId]) — otherwise every
+  // branch's tables (e.g. tables 1-16 twice) would appear here. Branchless
+  // rows are kept, matching the app-wide convention.
+  const scoping = isMultiBranch && !!currentBranchId;
+  const scopedTables = useMemo(() => {
+    if (!scoping) return tables;
+    return tables.filter((t) => !t.branchId || String(t.branchId) === currentBranchId);
+  }, [tables, scoping, currentBranchId]);
+  const scopedTokens = useMemo(() => {
+    if (!scoping) return tokens;
+    return tokens.filter((t) => !t.branchId || String(t.branchId) === currentBranchId);
+  }, [tokens, scoping, currentBranchId]);
+
   const sortedTables = useMemo(
-    () => [...tables].sort((a, b) => Number(a.number || 0) - Number(b.number || 0)),
-    [tables],
+    () => [...scopedTables].sort((a, b) => Number(a.number || 0) - Number(b.number || 0)),
+    [scopedTables],
   );
 
   // Map tableId → sticker so the Tables section shows each DB table's QR.
   const tokenByTableId = useMemo(() => {
     const m = new Map<string, TokenRow>();
-    for (const t of tokens) if (t.type === 'table' && t.tableId) m.set(String(t.tableId), t);
+    for (const t of scopedTokens) if (t.type === 'table' && t.tableId) m.set(String(t.tableId), t);
     return m;
-  }, [tokens]);
+  }, [scopedTokens]);
 
   const tableRows = useMemo(
     () =>
@@ -124,7 +163,7 @@ export default function QrStudioPage({ onBack }: { currencySymbol?: string; onBa
     [sortedTables, tokenByTableId],
   );
 
-  const otherTokens = useMemo(() => tokens.filter((t) => t.type !== 'table'), [tokens]);
+  const otherTokens = useMemo(() => scopedTokens.filter((t) => t.type !== 'table'), [scopedTokens]);
 
   const create = async () => {
     if (busy) return;
@@ -237,6 +276,7 @@ export default function QrStudioPage({ onBack }: { currencySymbol?: string; onBa
             <h3 className="text-sm font-bold text-[#191b23]">Table stickers</h3>
             <span className="text-[10px] text-gray-400">
               One QR per table from your database — {tableRows.filter((r) => r.token).length} of {tableRows.length} generated
+              {scoping && branchName ? ` · ${branchName}` : ''}
             </span>
           </div>
 

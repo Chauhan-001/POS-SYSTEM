@@ -8,7 +8,7 @@
  * must never decide table status — every state change is derived here from
  * authoritative data:
  *
- *   - A live Dine-In order  → Occupied / Preparing / Food Ready / Served / Waiting Payment
+ *   - A live Dine-In OR QR-online (Website) order → Occupied / Preparing / Food Ready / Served / Waiting Payment
  *   - An active reservation → Reserved
  *   - Nothing live          → Available (manual states Cleaning/Disabled/Merged are preserved)
  *
@@ -64,7 +64,11 @@ export class TableStateService {
     const [liveOrder, activeReservation] = await Promise.all([
       orderRepo.findOne({
         tableId,
-        type: 'Dine In',
+        // A table is occupied by ANY live order on it — a waiter-created
+        // Dine-In order OR a customer's QR/online (Website) order. Without
+        // this, a table whose guests ordered via the table QR stayed
+        // Available on the floor plan.
+        type: { $in: ['Dine In', 'Website'] },
         status: { $nin: TERMINAL_ORDER_STATUSES },
       } as any),
       reservationRepo.findOne({

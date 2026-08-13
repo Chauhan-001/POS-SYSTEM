@@ -155,7 +155,12 @@ export default function DashboardWorkspace({
   // getCached API client always hits the network first, so this never serves
   // a stale chart after a refresh.
   const loadBackendToday = useCallback(async () => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // "Today" must be the LOCAL calendar date (offset-adjusted), not the UTC
+    // date: in IST (UTC+5:30) the UTC date lags the local date between
+    // midnight and 5:29 AM, so the hourly chart / order types would show
+    // YESTERDAY's data every morning before sunrise.
+    const now = new Date();
+    const todayStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const [h, ot] = await Promise.all([
       fetchSalesPeakHours(todayStr, todayStr),
       fetchSalesOrderTypes(todayStr, todayStr),
@@ -257,8 +262,12 @@ export default function DashboardWorkspace({
   // Sparkline data from hourly revenue
   const sparklineData = useMemo(() => hourlyData.map(h => h.revenue), [hourlyData]);
 
-  // AI Daily Summary state
+  // AI Daily Summary state — the LLM call fires ONLY on dashboard mount
+  // (fresh login) or when the user presses the dedicated refresh button on
+  // the AI card. It deliberately does NOT follow the 60s auto-refresh or
+  // the data-dependency changes, so an idle dashboard never burns LLM tokens.
   const [aiSummary, setAiSummary] = useState<DailyAISummary | null>(null);
+  const [aiRefreshKey, setAiRefreshKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -302,12 +311,22 @@ export default function DashboardWorkspace({
         lowStockCount,
         openOrderCount,
         wasteToday,
-        todayCustomerCount
+        todayCustomerCount,
+        {
+          orderCount: dailySales.totalOrders,
+          itemCount: dailySales.totalItemsSold,
+          totalDiscount: dailySales.totalDiscount,
+          totalGst: dailySales.totalGst,
+          averageOrderValue: dailySales.averageOrderValue,
+          topItems: dailySales.topItems,
+          paymentMethods: dailySales.paymentBreakdown,
+          categoryBreakdown: dailySales.categoryBreakdown,
+        }
       );
       if (!cancelled) setAiSummary(summary);
     })();
     return () => { cancelled = true; };
-  }, [dailySales.totalRevenue, bills, orders, todayCustomerCount]);
+  }, [aiRefreshKey]); // mount + explicit refresh button only — never the 60s auto-refresh
 
   // Quick action buttons (plan-gated: Kitchen & Inventory only render when the
   // subscription plan + module toggles include them)
@@ -391,7 +410,16 @@ export default function DashboardWorkspace({
                 <p className="text-[10px] text-gray-400">AI Daily Summary · {aiSummary?.date || new Date().toLocaleDateString()}</p>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 sm:ml-auto">
+            <div className="flex flex-wrap gap-2 sm:ml-auto items-center">
+              <button
+                type="button"
+                onClick={() => setAiRefreshKey(k => k + 1)}
+                title="Refresh AI summary (calls the AI once)"
+                className="flex items-center gap-1 text-[10px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2.5 py-1 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Refresh AI
+              </button>
               {(aiSummary?.alerts || []).map((alert, i) => (
                 <span key={i} className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
                   alert.severity === 'critical' ? 'bg-red-50 text-red-700' :

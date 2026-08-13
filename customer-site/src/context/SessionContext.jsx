@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Outlet, useParams, useSearchParams } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api, errMsg, setToken } from '../api';
 import CarForm from '../pages/CarForm';
@@ -28,11 +28,20 @@ function loadJSON(key, fallback) {
 }
 
 export function SessionProvider({ token }) {
-  const [search] = useSearchParams();
-  const mode = (search.get('mode') || 'table').toUpperCase(); // TABLE | CAR | PICKUP
-  const ref = search.get('ref') || '';
-  const tableNo = search.get('t') || ''; // human-friendly table number (QR Studio bakes it in)
-  const branchId = search.get('b') || ''; // branch-scoped menu (QR Studio bakes it in)
+  // QR context is SNAPSHOTTED at mount: in-app navigation (cart/track) uses
+  // relative paths that drop the hash query string, so reading mode/ref live
+  // from useSearchParams would silently reset a pickup/car QR to TABLE mode
+  // and lose the table/slot/branch context by the time the order is placed.
+  const [ctx] = useState(() => {
+    const search = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    return {
+      mode: (search.get('mode') || 'table').toUpperCase(), // TABLE | CAR | PICKUP
+      ref: search.get('ref') || '',
+      tableNo: search.get('t') || '', // human-friendly table number (QR Studio bakes it in)
+      branchId: search.get('b') || '', // branch-scoped menu (QR Studio bakes it in)
+    };
+  });
+  const { mode, ref, tableNo, branchId } = ctx;
 
   const [qr, setQr] = useState(null);
   const [phase, setPhase] = useState('loading'); // loading | need-car | ready | error
@@ -175,6 +184,10 @@ export function SessionProvider({ token }) {
     async ({ type, message }) => {
       await api.post('/requests', {
         mode,
+        // Branch isolation: the QR URL's `b=` param (baked by QR Studio) is
+        // sent along so a multi-branch POS bell only sees calls for its own
+        // location — never another branch's or restaurant's calls.
+        branchId: branchId || qr?.branchId || undefined,
         tableId: mode === 'TABLE' ? qr?.tableId || undefined : undefined,
         parkingSlot: mode === 'CAR' ? qr?.parkingSlot || customer?.parkingSlot || undefined : undefined,
         carPlate: mode === 'CAR' ? customer?.carNumber || undefined : undefined,
@@ -184,7 +197,7 @@ export function SessionProvider({ token }) {
         message: message || undefined,
       });
     },
-    [customer, mode, qr]
+    [customer, mode, qr, branchId]
   );
 
   const value = useMemo(

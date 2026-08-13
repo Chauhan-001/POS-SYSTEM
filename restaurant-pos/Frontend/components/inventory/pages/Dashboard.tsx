@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Package, ShoppingCart, AlertTriangle, TrendingUp, ArrowRight, Sparkles, Brain, AlertCircle, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Package, ShoppingCart, AlertTriangle, TrendingUp, ArrowRight, Sparkles, Brain, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { daysUntilExpiry } from '../expiryUtils';
 import type { InventoryPage, InventoryAlert } from '../types';
@@ -7,11 +7,11 @@ import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction, 
 import { useInventory } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
 import AICard from '../../../src/ai/AICard';
-import { computeHealthScore, generatePurchaseRecs, predictLowStock } from '../../../src/ai/aiData';
+import { computeHealthScore, generatePurchaseRecs, predictLowStock, computeInventoryCardsLocal } from '../../../src/ai/aiData';
 import WeatherWidget from '../../../src/ai/WeatherWidget';
 
 export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: (page: InventoryPage) => void; moduleSettings?: Record<string, boolean> }) {
-  const { items } = useInventory();
+  const { items, synced: itemsSynced } = useInventory();
   const { purchases, synced } = usePurchases();
   const totalValue = items.reduce((s, i) => s + i.currentStock * i.averageCost, 0);
   const lowItems = items.filter(i => i.status === 'low' || i.status === 'critical');
@@ -68,14 +68,54 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
   const [lowStockSource, setLowStockSource] = useState<AiSource | null>(null);
   const [aiLoading, setAiLoading] = useState(true);
 
+  // Waste proxy for the health engine — same derivation the live AI endpoint
+  // receives. Hoisted so both the live fetch and the local delta reuse it.
+  const wasteEntries = useMemo(
+    () => items.filter(i => i.status === 'critical').length * 50 + items.filter(i => i.expiryDate).length * 30,
+    [items],
+  );
+
+  // AI cards fetch ONCE when the catalog is ready (fresh login / page open)
+  // and on the explicit refresh button — never on every `items` change.
+  // Stock edits elsewhere re-render this page with new items, which used to
+  // re-fire 3 LLM calls each time; the backend cache (5 min, tenant-scoped)
+  // absorbs repeats, but an idle page must not burn tokens. The refresh
+  // button below bumps aiRefreshKey. Catalog changes instead recompute the
+  // cards with the deterministic local engine (see the delta effect below).
+  const [aiRefreshKey, setAiRefreshKey] = useState(0);
+
+  // Signature of the catalog this render is showing. `catalogSigRef` tracks
+  // the CURRENT catalog (updated every render) so an in-flight live fetch can
+  // detect (and discard) a result computed against a catalog that has since
+  // changed — a stale LLM answer must never overwrite a fresher local
+  // recompute. `lastComputedSigRef` records the signature we last rendered
+  // card values for, so the delta effect ignores no-op re-fetches (same
+  // content, new array identity — e.g. StrictMode double-mount).
+  const catalogSigRef = useRef('');
+  const lastComputedSigRef = useRef('');
+  const catalogSig = items.map(i => `${i.id}:${i.currentStock}:${i.status}:${i.expiryDate || ''}`).join('|');
+  catalogSigRef.current = catalogSig;
+
   useEffect(() => {
+    // Wait for the real catalog: the mount-time fetch is still in flight, and
+    // computing against the pre-load empty array returned a fake "100 — Add
+    // inventory items" score even when 40+ items were present. Run only once
+    // the backend answered (or immediately for a confirmed-empty catalog).
+    if (!itemsSynced && items.length === 0) {
+      setAiLoading(false); // not loading — waiting on the catalog / offline
+      return;
+    }
+    const sigAtStart = catalogSigRef.current;
     setAiLoading(true);
-    const wasteEntries = items.filter(i => i.status === 'critical').length * 50 + items.filter(i => i.expiryDate).length * 30;
     Promise.all([
       computeHealthScore(items, wasteEntries),
       generatePurchaseRecs(items),
       predictLowStock(items),
     ]).then(([h, p, l]) => {
+      // Catalog changed while the LLM was answering — drop the stale result;
+      // the delta effect already recomputed (or will recompute) locally.
+      if (catalogSigRef.current !== sigAtStart) return;
+      lastComputedSigRef.current = sigAtStart;
       setHealthScore(h.data);
       setHealthSource(h.source);
       setPurchaseRecs(p.data);
@@ -83,14 +123,39 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
       setLowStockPreds(l.data);
       setLowStockSource(l.source);
       setAiLoading(false);
-    }).catch(() => setAiLoading(false));
-  }, [items]);
+    }).catch(() => { if (catalogSigRef.current === sigAtStart) setAiLoading(false); });
+  }, [aiRefreshKey, itemsSynced]); // catalog-ready + explicit refresh only
+
+  // Deterministic delta: whenever the catalog CONTENT changes while this
+  // page is open (stock edit, purchase, waste logged elsewhere), recompute
+  // the three cards with the local engines — zero LLM calls, instant refresh.
+  // The initial population is skipped (the live fetch above owns it), and
+  // no-op re-fetches (same signature) are ignored. 'delta' provenance tells
+  // the user the numbers are fresh but locally derived until they hit Refresh
+  // for a live re-analysis.
+  useEffect(() => {
+    if (!itemsSynced && items.length === 0) return;
+    if (catalogSig === lastComputedSigRef.current) return; // no real change
+    if (lastComputedSigRef.current === '') return; // initial population — live effect owns it
+    lastComputedSigRef.current = catalogSig;
+    const cards = computeInventoryCardsLocal(items, wasteEntries);
+    setHealthScore(cards.health);
+    setHealthSource('delta');
+    setPurchaseRecs(cards.purchaseRecs);
+    setRecsSource('delta');
+    setLowStockPreds(cards.lowStock);
+    setLowStockSource('delta');
+    setAiLoading(false);
+  }, [items, itemsSynced, catalogSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Small pill that tells the user whether an AI card is powered by the live
-  // AI backend or by an offline/local estimation. Rendered only after the
-  // fetch resolves (source is non-null) to avoid a misleading flash on load.
+  // AI backend, an auto-refreshed local recompute, or an offline estimation.
+  // Rendered only after the fetch resolves (source is non-null) to avoid a
+  // misleading flash on load.
   const AiSourceBadge = ({ source }: { source: AiSource }) => source === 'live' ? (
     <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">AI live</span>
+  ) : source === 'delta' ? (
+    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200" title="Catalog changed — updated instantly with local calculations (no AI call). Refresh for a live analysis.">Auto-refresh</span>
   ) : (
     <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200" title="AI unavailable — estimated locally on this device">Offline estimate</span>
   );
@@ -130,6 +195,15 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
               <Brain className="w-3.5 h-3.5 text-white" />
             </div>
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">AI Inventory Health</span>
+            <button
+              type="button"
+              onClick={() => setAiRefreshKey(k => k + 1)}
+              title="Refresh AI analysis (calls the AI once)"
+              className="flex items-center gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Refresh
+            </button>
             {healthSource && <AiSourceBadge source={healthSource} />}
             {healthScore && (
               <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
@@ -180,8 +254,10 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
           </div>
           ) : (
           <div className="flex-1 flex items-center justify-center">
-            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
-            <span className="text-xs text-gray-400 ml-2">Calculating…</span>
+            {itemsSynced && <Loader2 className="w-6 h-6 animate-spin text-purple-500" />}
+            <span className="text-xs text-gray-400 ml-2">
+              {itemsSynced ? 'Calculating…' : 'Offline — connect to calculate health'}
+            </span>
           </div>
           )}
           {healthScore && healthScore.recommendations.length > 0 && (

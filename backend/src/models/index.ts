@@ -75,9 +75,14 @@ export { default as CashLedger } from './CashLedger';
 export { default as FinanceSettings } from './FinanceSettings';
 export { default as RestaurantSettings } from '../modules/settings/models/RestaurantSettings';
 export { default as Printer } from '../modules/settings/models/Printer';
+export { default as CostSettings } from '../modules/recipes/models/CostSettings';
+export type { ICostSettings } from '../modules/recipes/models/CostSettings';
 export { default as SupportTicket } from './SupportTicket';
 export { default as TicketReply } from './TicketReply';
 export { default as TicketCounter } from './TicketCounter';
+export { default as Recipe } from '../modules/recipes/models/Recipe';
+export { default as RecipeVersion } from '../modules/recipes/models/RecipeVersion';
+export { default as RecipeConsumption } from '../modules/recipes/models/RecipeConsumption';
 
 // Phase 2.10 — Admin Reports
 export {
@@ -164,3 +169,6 @@ export type { ISupportTicket, TicketCategory, TicketPriority, TicketStatus, Tick
 export { TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_SOURCES } from './SupportTicket';
 export type { ITicketReply } from './TicketReply';
 export type { ITicketCounter } from './TicketCounter';
+export type { IRecipe, IRecipeComponent, RecipeStatus } from '../modules/recipes/models/Recipe';
+export type { IRecipeVersion, IRecipeVersionComponent } from '../modules/recipes/models/RecipeVersion';
+export type { IRecipeConsumption, IRecipeConsumptionLine, IRecipeConsumptionItem, ConsumptionStatus } from '../modules/recipes/models/RecipeConsumption';

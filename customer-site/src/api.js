@@ -12,10 +12,15 @@ import axios from 'axios';
  *   GET  {token}/orders/:clientRef  → live tracking
  *   POST {token}/requests           → call waiter / water / bill / assistance
  *
- * Dev default points at the POS backend on :3002. Production can build with
- * VITE_API_URL='/api/public-store' to serve from the same origin.
+ * Dev default points at the POS backend on :3002. When no VITE_API_URL is
+ * set, the backend origin is derived from the page's own hostname — so a QR
+ * sticker scanned from a phone on the LAN (http://<lan-ip>:5177) also reaches
+ * the backend at http://<lan-ip>:3002 instead of the phone's localhost.
+ * Production can build with VITE_API_URL='/api/public-store' for same-origin.
  */
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api/public-store';
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  `${window.location.protocol}//${window.location.hostname}:3002/api/public-store`;
 
 export const api = axios.create({
   baseURL: API_URL,

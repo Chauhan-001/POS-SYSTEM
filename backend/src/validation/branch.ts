@@ -37,6 +37,7 @@ const moduleSettingsSchema = z.object({
   enableDineInModule: z.boolean().optional(),
   enableExpenseManagement: z.boolean().optional(),
   enableDiscountOnBilling: z.boolean().optional(),
+  callReminderIntervalSec: z.number().int().min(0).max(3600).optional(),
 }).optional();
 
 export const updateBranchSettingsSchema = z.object({

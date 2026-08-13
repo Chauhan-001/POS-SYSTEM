@@ -49,6 +49,13 @@ function trackUsage(req: Request, feature: string, result: {
   });
 }
 
+/** Tenant scope for AI cache keys — always the JWT's restaurantId, never client input. */
+function tenantOf(req: Request): string | undefined {
+  return (req as AuthenticatedRequest).user?.restaurantId
+    ? String((req as AuthenticatedRequest).user!.restaurantId)
+    : undefined;
+}
+
 // ─── INVENTORY HEALTH ──────────────────────────────────────────────
 
 export async function inventoryHealth(req: Request, res: Response): Promise<void> {
@@ -57,7 +64,7 @@ export async function inventoryHealth(req: Request, res: Response): Promise<void
     const wasteTotal = req.body.wasteTotal || 0;
     const prompt = buildHealthPrompt(items, wasteTotal);
 
-    const result = await executeAiCall({ prompt, feature: 'inventory-health' });
+    const result = await executeAiCall({ prompt, feature: 'inventory-health', tenantId: tenantOf(req) });
     trackUsage(req, 'inventory-health', result);
     res.json(result);
   } catch (error: any) {
@@ -73,7 +80,7 @@ export async function purchaseRecommendations(req: Request, res: Response): Prom
     const items = sanitizeInventoryItems(req.body.items);
     const prompt = buildPurchaseRecPrompt(items);
 
-    const result = await executeAiCall({ prompt, feature: 'purchase-recs' });
+    const result = await executeAiCall({ prompt, feature: 'purchase-recs', tenantId: tenantOf(req) });
     trackUsage(req, 'purchase-recs', result);
     res.json(result);
   } catch (error: any) {
@@ -89,7 +96,7 @@ export async function lowStockPredictions(req: Request, res: Response): Promise<
     const items = sanitizeInventoryItems(req.body.items);
     const prompt = buildLowStockPrompt(items);
 
-    const result = await executeAiCall({ prompt, feature: 'low-stock' });
+    const result = await executeAiCall({ prompt, feature: 'low-stock', tenantId: tenantOf(req) });
     trackUsage(req, 'low-stock', result);
     res.json(result);
   } catch (error: any) {
@@ -111,7 +118,7 @@ export async function dailySummary(req: Request, res: Response): Promise<void> {
     };
     const prompt = buildDailySummaryPrompt(sales, extras);
 
-    const result = await executeAiCall({ prompt, feature: 'summary' });
+    const result = await executeAiCall({ prompt, feature: 'summary', tenantId: tenantOf(req) });
     trackUsage(req, 'summary', result);
     res.json(result);
   } catch (error: any) {
@@ -127,7 +134,7 @@ export async function wasteAnalysis(req: Request, res: Response): Promise<void> 
     const entries = sanitizeWasteEntries(req.body.wasteEntries);
     const prompt = buildWasteAnalysisPrompt(entries);
 
-    const result = await executeAiCall({ prompt, feature: 'waste' });
+    const result = await executeAiCall({ prompt, feature: 'waste', tenantId: tenantOf(req) });
     trackUsage(req, 'waste', result);
     res.json(result);
   } catch (error: any) {
@@ -144,7 +151,7 @@ export async function voiceParse(req: Request, res: Response): Promise<void> {
     const inventoryItems = req.body.items || [];
     const prompt = buildVoiceParsePrompt(text, inventoryItems);
 
-    const result = await executeAiCall({ prompt, feature: 'voice' });
+    const result = await executeAiCall({ prompt, feature: 'voice', tenantId: tenantOf(req) });
     trackUsage(req, 'voice', result);
     res.json(result);
   } catch (error: any) {
@@ -160,7 +167,7 @@ export async function closingAssistant(req: Request, res: Response): Promise<voi
     const { totalRevenue = 0, orderCount = 0, lowStockItems = 0, wasteCost = 0 } = req.body;
     const prompt = buildClosingPrompt(totalRevenue, orderCount, lowStockItems, wasteCost);
 
-    const result = await executeAiCall({ prompt, feature: 'closing' });
+    const result = await executeAiCall({ prompt, feature: 'closing', tenantId: tenantOf(req) });
     trackUsage(req, 'closing', result);
     res.json(result);
   } catch (error: any) {
@@ -184,7 +191,7 @@ export async function offerRecommendations(req: Request, res: Response): Promise
       weather: req.body.weather || undefined,
     };
     const prompt = buildOfferPrompt(input);
-    const result = await executeAiCall({ prompt, feature: 'offers' });
+    const result = await executeAiCall({ prompt, feature: 'offers', tenantId: tenantOf(req) });
     trackUsage(req, 'offers', result);
     res.json(result);
   } catch (error: any) {
@@ -284,7 +291,7 @@ export async function weatherRecommendation(req: Request, res: Response): Promis
 
     // Step 4: Let the LLM generate food recommendations based on real weather
     // cacheKeyVariant ensures different weather → different cache entry
-    const result = await executeAiCall({ prompt, feature: 'weather', cacheKeyVariant });
+    const result = await executeAiCall({ prompt, feature: 'weather', cacheKeyVariant, tenantId: tenantOf(req) });
 
     // Step 5: Override condition/temp/icon with authoritative real-time data
     if (result.success && weatherData) {

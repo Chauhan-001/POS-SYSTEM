@@ -99,6 +99,8 @@ import referralsRouter from './routes/referrals';
 import campaignsRouter from './routes/campaigns';
 import automationsRouter from './routes/automations';
 import customerReportsRouter from './routes/customerReports';
+import recipesRouter from './modules/recipes/routes/recipes';
+import mediaRouter from './routes/media';
 import purchasesRouter from './routes/purchases';
 import inventoryEventsRouter from './routes/inventoryEvents';
 import suppliersRouter from './routes/suppliers';
@@ -110,6 +112,8 @@ import financeRouter from './routes/finance';
 import reportsRouter from './modules/reports/routes/reports';
 import settingsRouter from './modules/settings/routes/settings';
 import publicStoreRouter from './modules/public-store/routes/publicStore';
+import legalRouter from './modules/legal/routes/legal';
+import { seedLegalDocuments } from './modules/legal/seed';
 import { renderPublicStorePage } from './modules/public-store/publicStorePage';
 import { initSocket } from './socket';
 import { startSubscriptionScheduler } from './modules/subscription/subscriptionScheduler';
@@ -260,6 +264,11 @@ app.use('/api', subscriptionRouter);
 // same LAN/NAT IP. publicLimiter is moderate and per-IP.
 app.use('/api/public-store', publicLimiter, publicStoreRouter);
 
+// Legal & Compliance — public document reads + authenticated acceptance/consent
+// + owner stats + admin document lifecycle. Public reads never consume the
+// business budget; admin endpoints self-gate on super_admin surface tokens.
+app.use('/api/legal', legalRouter);
+
 // ─── Group B: Apply global rate limiter ─────────────────────────
 app.use('/api', apiLimiter);
 
@@ -299,6 +308,8 @@ app.use('/api/referrals', referralsRouter);
 app.use('/api/campaigns', campaignsRouter);
 app.use('/api/automations', automationsRouter);
 app.use('/api/customer-reports', customerReportsRouter);
+app.use('/api', recipesRouter);
+app.use('/api', mediaRouter);
 
 // =============================================================================
 // ERROR HANDLING
@@ -352,6 +363,16 @@ async function start() {
 
   // ─── 1. Connect to MongoDB & run seed ─────────────────────────
   await connectDB();
+
+  // ─── 1.1. Seed draft legal documents (idempotent) ─────────────
+  try {
+    const seeded = await seedLegalDocuments();
+    if (seeded > 0) {
+      console.log(`[Legal] Seeded ${seeded} DRAFT legal documents (require review before publishing)`);
+    }
+  } catch (err) {
+    console.warn('[Legal] document seed failed:', (err as Error)?.message);
+  }
 
   // ─── 1.5. Warm the IP blocklist cache ────────────────────────
   await refreshIpBlocklist();

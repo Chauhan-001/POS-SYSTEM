@@ -38,6 +38,8 @@ import { setAiAuth, setAiToken } from './ai/aiClient';
 import { debugWarn } from './utils/debugLog';
 import { computeKOTDelta } from './utils/kotDelta';
 import { computeRunningBillTotals } from './utils/runningBill';
+import { printKOT } from './utils/printKOT';
+import { isKotAlertEnabled, playKotAlertSound } from './lib/alertSound';
 
 import { useAuth } from './hooks/useAuth';
 // Eagerly loaded workspace components (core POS flow — needed offline)
@@ -61,6 +63,7 @@ import CartPanel from '../components/CartPanel';
 import KitchenDisplay from '../components/KitchenDisplay';
 import MoreWorkspace from '../components/MoreWorkspace';
 import PlanSelectionPage from '../components/PlanSelectionPage';
+import ReceiptLoader from '../components/ReceiptLoader';
 // Type-only import for TourActions (used in tourActions object)
 import type { TourActions } from '../components/GuidedTour';
 
@@ -82,6 +85,8 @@ const safeLazy = (loader: () => Promise<{ default: React.ComponentType<any> }>) 
 const ProductManager = safeLazy(() => import('../components/ProductManager'));
 const MenuAvailabilityPage = safeLazy(() => import('../components/MenuAvailabilityPage'));
 const QrStudioPage = safeLazy(() => import('../components/QrStudioPage'));
+const CustomerCallsPanel = safeLazy(() => import('../components/CustomerCallsPanel'));
+const LegalAcceptanceGate = safeLazy(() => import('../components/LegalAcceptanceGate'));
 const CustomerManager = safeLazy(() => import('../components/CustomerManager'));
 const OffersManager = safeLazy(() => import('../components/OffersManager'));
 const ReportsManager = safeLazy(() => import('../components/ReportsManager'));
@@ -104,6 +109,8 @@ import { useOrders } from './hooks/useOrders';
 import { useLoyalty } from './hooks/useLoyalty';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { usePOSLiveEvents } from './hooks/usePOSLiveEvents';
+import { useKotAlertSound } from './hooks/useKotAlertSound';
+import type { PendingCall } from '../components/CustomerCallsPanel';
 // Modal components
 import ConfirmationDialog from './components/modals/ConfirmationDialog';
 import PaymentConfirmModal from './components/modals/PaymentConfirmModal';
@@ -126,6 +133,8 @@ export default function App() {
 
   // Core POS state — everything comes from here
   const pos = usePOSState();
+  // Quick Sound Alerts: beep on new KOTs from ANY workspace (not just KDS).
+  useKotAlertSound(pos.orders, pos.settings);
   // Live socket: refetch orders after an adjustment so this terminal's KDS
   // shows cancelled KOT lines immediately (not on the next 30s poll).
   const handleOrderAdjusted = useCallback(() => {
@@ -158,9 +167,203 @@ export default function App() {
       })
       .catch(() => undefined);
   }, [pos.setOrders]);
+  // A brand-new online/QR order: refetch orders AND tables so the floor plan
+  // turns Occupied (server-side reconcileTable) and the KDS shows the
+  // auto-KOT immediately — no 30s wait, on every terminal.
+  // Orders already auto-printed this session (per terminal) — the customer's
+  // KOT is created server-side, so the cashier never taps Send-KOT and the
+  // paper ticket must fire from here when Auto Print KOT is enabled.
+  const autoPrintedOnlineOrdersRef = React.useRef<Set<string>>(new Set());
+  const refreshOrdersAndTables = useCallback(() => {
+    if (!navigator.onLine) return;
+    api.fetchOrders()
+      .then((list: any) => {
+        if (!Array.isArray(list) || list.length === 0) return;
+        // Auto-print the paper KOT for NEW customer-placed (Website) orders —
+        // same gate as the cashier flow: Auto Print KOT on + output mode
+        // includes a printer (not KDS-only). One ticket per order per terminal.
+        const shouldAutoPrint =
+          (pos.moduleSettings?.enableAutoPrintKOT ?? false) &&
+          (pos.settings?.kotOutputMode ?? 'both') !== 'kds';
+        if (shouldAutoPrint) {
+          for (const fresh of list) {
+            const id = fresh._id || fresh.id;
+            if (!id || autoPrintedOnlineOrdersRef.current.has(id)) continue;
+            if (String(fresh.type || '').toLowerCase() !== 'website') continue;
+            const kots = Array.isArray(fresh.kotRecords) ? fresh.kotRecords : [];
+            if (kots.length === 0) continue;
+            autoPrintedOnlineOrdersRef.current.add(id);
+            printKOT({ ...fresh, id } as any, kots[0] as any, pos.settings);
+          }
+        }
+        pos.setOrders((prev: any[]) => {
+          const incoming = new Map(list.map((o: any) => [o._id || o.id, o]));
+          const next = prev.map((o: any) => {
+            const fresh = incoming.get(o._id || o.id);
+            if (!fresh) return o;
+            return {
+              ...o,
+              ...fresh,
+              items: fresh.items?.length ? fresh.items : o.items,
+              timeline: fresh.timeline?.length ? fresh.timeline : o.timeline,
+            };
+          });
+          for (const fresh of list) {
+            const id = fresh._id || fresh.id;
+            if (id && !next.some((o: any) => (o._id || o.id) === id)) next.push(fresh);
+          }
+          return next;
+        });
+      })
+      .catch(() => undefined);
+    pos.refreshTables().catch(() => undefined);
+  }, [pos.setOrders, pos.refreshTables, pos.moduleSettings?.enableAutoPrintKOT, pos.settings?.kotOutputMode, pos.settings]);
+
+  // ─── Customer service calls (bell) — live badge + Calls page ───
+  // The transient toast can be missed; the sidebar 'Calls' badge and the Calls
+  // page show every pending call (table / car / pickup) LIVE until each is
+  // acknowledged — socket push updates the list without any refresh.
+  const normalizeCall = useCallback((r: any): PendingCall => ({
+    id: String(r._id || r.id || ''),
+    type: r.type || 'CALL_WAITER',
+    orderType: r.orderType || 'TABLE',
+    tableId: r.tableId ? String(r.tableId) : undefined,
+    carId: r.carId || r.parkingSlot || r.carPlate || undefined,
+    message: r.message || undefined,
+    branchId: r.branchId ? String(r.branchId) : null,
+    createdAt: r.createdAt,
+    // Lifecycle — kept on acknowledged calls so the panel can show timestamps.
+    status: r.status || undefined,
+    completedAt: r.completedAt || undefined,
+    completedBy: r.completedBy || undefined,
+    // ONLINE_ORDER rows carry the order so staff can open it straight away.
+    orderId: r.orderId ? String(r.orderId) : undefined,
+    orderNumber: r.orderNumber ?? undefined,
+    tableNumber: r.tableNumber ?? undefined,
+    grandTotal: typeof r.grandTotal === 'number' ? r.grandTotal : undefined,
+    itemsCount: typeof r.itemsCount === 'number' ? r.itemsCount : undefined,
+  }), []);
+  const [pendingCalls, setPendingCalls] = React.useState<PendingCall[]>([]);
+  const [acknowledgedCalls, setAcknowledgedCalls] = React.useState<PendingCall[]>([]);
+  const refreshPendingCalls = useCallback(() => {
+    if (!pos.currentEmployee || !navigator.onLine) return;
+    // Branch isolation — pass the active branchId to the server (defense in
+    // depth) AND re-filter locally; branchless calls are kept, other branches'
+    // calls are hidden in multi-branch mode.
+    const scoped = (list: any[]) =>
+      (list.map(normalizeCall) as PendingCall[]).filter(
+        (c) => !pos.shouldFilterByBranch || !pos.currentBranchId || !c.branchId || c.branchId === pos.currentBranchId,
+      );
+    const params: { status: string; branchId?: string } = { status: 'PENDING' };
+    if (pos.shouldFilterByBranch && pos.currentBranchId) params.branchId = pos.currentBranchId;
+    api.fetchWaiterRequests(params)
+      .then((list: any) => {
+        if (Array.isArray(list)) setPendingCalls(scoped(list));
+      })
+      .catch(() => undefined);
+    // Acknowledged calls stay on screen as a record (last 50, newest first).
+    const doneParams: { status: string; branchId?: string; limit: number } = { status: 'COMPLETED', limit: 50 };
+    if (pos.shouldFilterByBranch && pos.currentBranchId) doneParams.branchId = pos.currentBranchId;
+    api.fetchWaiterRequests(doneParams as any)
+      .then((list: any) => {
+        if (Array.isArray(list)) setAcknowledgedCalls(scoped(list));
+      })
+      .catch(() => undefined);
+  }, [pos.currentEmployee, pos.shouldFilterByBranch, pos.currentBranchId, normalizeCall]);
+  React.useEffect(() => {
+    refreshPendingCalls();
+    const t = setInterval(refreshPendingCalls, 15000);
+    return () => clearInterval(t);
+  }, [refreshPendingCalls]);
+  // Socket push: a new bell lands in the list instantly (no refresh needed).
+  // Branch isolation mirrors refreshPendingCalls: the socket room is
+  // restaurant-wide, so a branch-scoped terminal filters out other branches'
+  // calls here too (otherwise they'd flash in the badge until the next poll).
+  const handleWaiterCall = useCallback((payload: any) => {
+    const call = normalizeCall(payload);
+    if (!call.id) return;
+    if (pos.shouldFilterByBranch && pos.currentBranchId && call.branchId && call.branchId !== pos.currentBranchId) return;
+    setPendingCalls((prev) => (prev.some((c) => c.id === call.id) ? prev : [call, ...prev]));
+  }, [normalizeCall, pos.shouldFilterByBranch, pos.currentBranchId]);
+  // Acknowledged calls are NOT removed from the panel — they move to the
+  // "Acknowledged" section (with completedAt + who did it) so the cashier
+  // still has the record. Only PENDING calls ring reminders / bump the badge.
+  const handleAcknowledgeCall = useCallback((id: string) => {
+    const who = pos.currentEmployee?.name || '';
+    const call = pendingCalls.find((c) => c.id === id);
+    if (call) {
+      setAcknowledgedCalls((prev) => [
+        { ...call, status: 'COMPLETED', completedAt: new Date().toISOString(), completedBy: who },
+        ...prev.filter((c) => c.id !== id),
+      ]);
+    }
+    setPendingCalls((prev) => prev.filter((c) => c.id !== id));
+    api.completeWaiterRequest(id, who).catch(() => {
+      showToast('Could not acknowledge — re-syncing', 'warning');
+      if (call) setAcknowledgedCalls((prev) => prev.filter((c) => c.id !== id));
+      refreshPendingCalls();
+    });
+  }, [pendingCalls, refreshPendingCalls, showToast, pos.currentEmployee?.name]);
+  const handleAcknowledgeAll = useCallback(() => {
+    const ids = pendingCalls.map((c) => c.id).filter(Boolean);
+    if (ids.length === 0) return;
+    const who = pos.currentEmployee?.name || '';
+    const now = new Date().toISOString();
+    setAcknowledgedCalls((prev) => [
+      ...pendingCalls.map((c) => ({ ...c, status: 'COMPLETED', completedAt: now, completedBy: who })),
+      ...prev,
+    ]);
+    setPendingCalls([]);
+    Promise.all(ids.map((id) => api.completeWaiterRequest(id, who).catch(() => null)))
+      .finally(() => refreshPendingCalls());
+  }, [pendingCalls, refreshPendingCalls, pos.currentEmployee?.name]);
+
+  // ─── Call reminder: re-notify unacknowledged calls ─────────────
+  // A pending call (waiter bell / online order) that isn't acknowledged
+  // within the configured interval rings again — toast + alert sound — so a
+  // missed bell is never silently forgotten. Interval comes from Settings →
+  // Modules → "Customer Call Reminders" (0 disables). Respects the Quick
+  // Sound Alerts toggle and the kitchen mute button like the KOT beep.
+  // (Read from the raw settings record — it is typed ModuleSettings; the
+  // merged pos.moduleSettings record is boolean-only by design.)
+  const callReminderIntervalSec = Number(pos.settings?.moduleSettings?.callReminderIntervalSec ?? 15);
+  const lastCallRemindRef = React.useRef<Record<string, number>>({});
+  React.useEffect(() => {
+    if (!(callReminderIntervalSec > 0) || pendingCalls.length === 0) return;
+    const intervalMs = callReminderIntervalSec * 1000;
+    const tick = () => {
+      const now = Date.now();
+      for (const c of pendingCalls) {
+        if (!c.id) continue;
+        const created = c.createdAt ? new Date(c.createdAt).getTime() : now;
+        const last = lastCallRemindRef.current[c.id] || 0;
+        // First reminder once the call is older than the interval; later
+        // reminders repeat every interval until it is acknowledged.
+        if (now - created >= intervalMs && now - last >= intervalMs) {
+          lastCallRemindRef.current[c.id] = now;
+          if (pos.moduleSettings?.enableQuickSoundAlerts !== false && isKotAlertEnabled()) {
+            playKotAlertSound();
+          }
+          const where =
+            c.type === 'ONLINE_ORDER'
+              ? `Order #${c.orderNumber ?? ''}`.trim()
+              : c.orderType === 'TABLE'
+                ? `Table ${c.tableNumber ?? ''}`.trim()
+                : c.orderType === 'CAR'
+                  ? `Car ${c.carId ?? ''}`.trim()
+                  : 'Pickup';
+          showToast(`⏰ Still pending — ${where}${c.message ? ` (${c.message})` : ''}`, 'warning');
+        }
+      }
+    };
+    tick();
+    const id = setInterval(tick, intervalMs);
+    return () => clearInterval(id);
+  }, [callReminderIntervalSec, pendingCalls, showToast, pos.moduleSettings?.enableQuickSoundAlerts]);
+
   // Live QR-ordering events (new online orders, ready alerts, waiter calls).
   // Best-effort socket — falls back to existing polling when unavailable.
-  usePOSLiveEvents(showToast, handleOrderAdjusted);
+  usePOSLiveEvents(showToast, handleOrderAdjusted, pos.currentBranchId, pos.shouldFilterByBranch, refreshOrdersAndTables, handleWaiterCall);
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = React.useState(false);
   // Position + PIN switch-user screen (opened from the Exit button)
   const [isPinSwitchOpen, setIsPinSwitchOpen] = React.useState(false);
@@ -363,6 +566,7 @@ export default function App() {
     Orders: {},
     Billing: {},
     Kitchen: {},
+    Calls: {},
     More: {},
     ReceiptHistory: {},
     // Manager + Cashier restricted (require the matching permission toggle)
@@ -382,7 +586,7 @@ export default function App() {
   };
 
   // Base operational modules every role can always use.
-  const BASE_WORKSPACES = ['Dashboard', 'Orders', 'Billing', 'Kitchen', 'More', 'ReceiptHistory'];
+  const BASE_WORKSPACES = ['Dashboard', 'Orders', 'Billing', 'Kitchen', 'Calls', 'More', 'ReceiptHistory'];
 
   const canAccessWorkspace = useCallback((ws: string): boolean => {
     const employee = pos.currentEmployee;
@@ -517,6 +721,43 @@ export default function App() {
     setIsKOTPreviewOpen: pos.setIsKOTPreviewOpen,
     setActiveWorkspace: pos.setActiveWorkspace as (ws: string) => void,
   });
+
+  // ─── Calls → table deep-link ───────────────────────────────────
+  // 'View' on a table call behaves exactly like tapping the table card in
+  // Orders: opens the running bill when the table already has an order,
+  // otherwise creates a fresh Dine-In order on that table (cart + products
+  // ready). Kept after orderMgmt so it can reuse the open/create handlers.
+  const handleViewCallTable = useCallback((tableId: string) => {
+    if (!tableId) return;
+    pos.setActiveWorkspace('Orders');
+    // Terminal order statuses mirror usePOSState's TERMINAL_ORDER_STATUSES
+    // (Paid/Closed/Cancelled/Refunded/Held) — a table whose order is finished
+    // gets a fresh Dine-In order instead of reopening a dead bill.
+    const terminal = ['Paid', 'Completed', 'Cancelled', 'Voided', 'Closed', 'Refunded', 'Held'];
+    const tableOrder = pos.orders.find(
+      (o: any) =>
+        String(o.tableId || '') === String(tableId) &&
+        !terminal.includes(o.status),
+    );
+    if (tableOrder) {
+      orderMgmt.handleOpenOrder(tableOrder);
+    } else {
+      orderMgmt.handleCreateOrder('Dine In', tableId);
+    }
+  }, [pos.setActiveWorkspace, pos.orders, orderMgmt.handleOpenOrder, orderMgmt.handleCreateOrder]);
+  // ─── Calls → online order deep-link ─────────────────────────────
+  // 'View' on an ONLINE_ORDER call opens that customer order in Billing so
+  // staff can see the bill, KOT status and take payment — nothing missed.
+  const handleViewOnlineOrder = useCallback((orderId: string) => {
+    if (!orderId) return;
+    const order = pos.orders.find((o: any) => String(o._id || o.id || '') === String(orderId));
+    if (order) {
+      pos.setActiveWorkspace('Orders');
+      orderMgmt.handleOpenOrder(order);
+    } else {
+      showToast('Order not loaded on this terminal yet — pull up Orders and search for it.', 'warning');
+    }
+  }, [pos.orders, pos.setActiveWorkspace, orderMgmt.handleOpenOrder, showToast]);
 
   // ============ LOYALTY HOOK ============
   const loyalty = useLoyalty({
@@ -1244,10 +1485,7 @@ export default function App() {
   if (auth.isLoading || setupState === 'loading') {
     return (
       <div className="h-full flex items-center justify-center bg-[#faf8ff]">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-gray-500">Initializing POS Terminal...</p>
-        </div>
+        <ReceiptLoader label="Initializing POS Terminal…" />
       </div>
     );
   }
@@ -1301,7 +1539,7 @@ export default function App() {
   if (needsPlanSelection === 'loading') {
     return (
       <div className="h-full flex items-center justify-center bg-[#faf8ff]">
-        <div className="w-8 h-8 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin" />
+        <ReceiptLoader label="Checking plan status…" />
       </div>
     );
   }
@@ -1359,13 +1597,14 @@ export default function App() {
                 onLogout={handleFullLogout}
                 onTour={() => { pos.setIsOnboardingOpen(true); localStorage.removeItem('pos_onboarding_done'); }}
                 onKeys={() => pos.setIsShortcutOpen(true)}
+                pendingCalls={pendingCalls.length}
+                showCalls={pos.moduleSettings.enableQROrdering !== false}
               />
             )}
             <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#faf8ff]">
               <React.Suspense fallback={
                 <div className="flex items-center justify-center h-full">
-                  <div className="w-6 h-6 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin" />
-                  <span className="ml-3 text-sm text-gray-500">Loading...</span>
+                  <ReceiptLoader label="Loading…" />
                 </div>
               }>
               <ErrorBoundary key={pos.activeWorkspace}>
@@ -1428,6 +1667,19 @@ export default function App() {
                   onOrderUpdated={handleOrderUpdated}
                 />
               )}
+              {pos.activeWorkspace === 'Calls' && pos.moduleSettings.enableQROrdering !== false && (
+                <CustomerCallsPanel
+                  calls={pendingCalls}
+                  acknowledgedCalls={acknowledgedCalls}
+                  tables={pos.tables}
+                  onBack={() => pos.setActiveWorkspace('Dashboard')}
+                  onRefresh={refreshPendingCalls}
+                  onAcknowledge={handleAcknowledgeCall}
+                  onAcknowledgeAll={handleAcknowledgeAll}
+                  onViewTable={handleViewCallTable}
+                  onViewOrder={handleViewOnlineOrder}
+                />
+              )}
               {pos.activeWorkspace === 'Billing' && (
                 <div className="flex flex-1 min-h-0 overflow-hidden w-full">
                   <BillingProductGrid
@@ -1454,6 +1706,7 @@ export default function App() {
                     heldOrders={pos.heldOrders}
                     onOpenHeldDrawer={() => pos.setIsHeldDrawerOpen(true)}
                     settings={pos.settings}
+                    appliedOffer={pos.appliedOffer}
                     onPaymentChange={(v) => pos.setPaymentMethod(v)}
                     onOrderTypeChange={(v) => pos.setOrderType(v)}
                     paymentMethod={pos.paymentMethod}
@@ -1557,6 +1810,9 @@ export default function App() {
               {pos.activeWorkspace === 'QrStudio' && pos.moduleSettings.enableQROrdering !== false && (
                 <QrStudioPage
                   currencySymbol={pos.settings.currencySymbol}
+                  currentBranchId={pos.currentBranchId}
+                  isMultiBranch={pos.isMultiBranchEnabled}
+                  branchName={pos.currentBranch?.name}
                   onBack={() => pos.setActiveWorkspace('More')}
                 />
               )}
@@ -1629,7 +1885,7 @@ export default function App() {
               {pos.activeWorkspace === 'Settings' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex-1 min-h-0 overflow-hidden">
-                    <SettingsManager settings={pos.settings} onUpdateSettings={pos.setSettings} currentBranchId={pos.currentBranchId} subscriptionFeatures={pos.subscriptionFeatures} />
+                    <SettingsManager settings={pos.settings} onUpdateSettings={pos.setSettings} currentBranchId={pos.currentBranchId} subscriptionFeatures={pos.subscriptionFeatures} isOwner={pos.currentEmployee?.role === 'Owner' || pos.currentEmployee?.role === 'Manager'} />
                   </div>
                 </div>
               )}
@@ -1754,6 +2010,9 @@ export default function App() {
       )}
 
       {/* ========== MODALS ========== */}
+      <React.Suspense fallback={null}>
+        <LegalAcceptanceGate />
+      </React.Suspense>
       {isPinSwitchOpen && (
         <PinLoginScreen
           employees={pos.allEmployees}
@@ -1919,7 +2178,7 @@ export default function App() {
         });
       }} />
 
-      <ZReportModal isOpen={pos.isZReportOpen} zReportData={pos.zReportData} settings={pos.settings} moduleSettings={pos.moduleSettings} onClose={() => pos.setIsZReportOpen(false)} />
+      <ZReportModal isOpen={pos.isZReportOpen} zReportData={pos.zReportData} settings={pos.settings} moduleSettings={pos.moduleSettings} products={pos.products} onClose={() => pos.setIsZReportOpen(false)} />
 
       <VoidReasonModal isOpen={pos.isVoidReasonOpen} voidReasons={pos.voidReasons} onSelect={(id) => {
         const reasonLabel = pos.voidReasons.find(r => r.id === id)?.label || 'Unknown';

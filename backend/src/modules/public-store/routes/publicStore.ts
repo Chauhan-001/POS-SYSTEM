@@ -56,6 +56,7 @@ const createOrderSchema = z.object({
 
 const requestSchema = z.object({
   mode: z.enum(['TABLE', 'CAR', 'PICKUP']).default('TABLE'),
+  branchId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
   tableId: z.string().max(64).optional(),
   parkingSlot: z.string().max(40).optional(),
   carPlate: z.string().max(20).optional(),

@@ -254,6 +254,18 @@ const REG: Record<string, ActionMeta> = {
   'expense.recurring_paused': { module: 'expense', category: 'business', severity: 'medium', label: 'Recurring expense paused' },
   'expense.recurring_resumed': { module: 'expense', category: 'business', severity: 'low', label: 'Recurring expense resumed' },
   'expense.recurring_deleted': { module: 'expense', category: 'business', severity: 'medium', label: 'Recurring expense deleted' },
+
+  // ── Legal & compliance ──────────────────────────────────────────
+  'legal.document_created': { module: 'legal', category: 'compliance', severity: 'medium', label: 'Legal document draft created' },
+  'legal.document_updated': { module: 'legal', category: 'compliance', severity: 'medium', label: 'Legal document draft updated' },
+  'legal.document_published': { module: 'legal', category: 'compliance', severity: 'high', label: 'Legal document published' },
+  'legal.document_archived': { module: 'legal', category: 'compliance', severity: 'medium', label: 'Legal document archived' },
+  'legal.accepted': { module: 'legal', category: 'compliance', severity: 'low', label: 'Legal document accepted' },
+  'consent.granted': { module: 'legal', category: 'compliance', severity: 'low', label: 'Consent granted' },
+  'consent.withdrawn': { module: 'legal', category: 'compliance', severity: 'low', label: 'Consent withdrawn' },
+  'privacy.export_requested': { module: 'legal', category: 'compliance', severity: 'medium', label: 'Data export requested' },
+  'privacy.account_close_requested': { module: 'legal', category: 'compliance', severity: 'high', label: 'Account closure requested' },
+  'privacy.request_received': { module: 'legal', category: 'compliance', severity: 'medium', label: 'Data subject request received' },
 };
 
 const LEGACY_TO_CANONICAL: Record<string, string> = {

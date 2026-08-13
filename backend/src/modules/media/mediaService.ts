@@ -130,7 +130,7 @@ export class MediaService {
   }
 
   /** Persist the buffer under the tenant namespace with a unique safe filename. */
-  private async writeFile(restaurantId: string, kind: RestaurantMediaKind, buffer: Buffer, ext: string): Promise<string> {
+  private async writeFile(restaurantId: string, kind: string, buffer: Buffer, ext: string): Promise<string> {
     const dir = path.join(this.uploadsDir, 'restaurants', restaurantId);
     await fs.mkdir(dir, { recursive: true });
     const fileName = `${kind}_${restaurantId}_${crypto.randomBytes(8).toString('hex')}${ext}`;
@@ -210,6 +210,20 @@ export class MediaService {
     }
 
     return { url: key, meta };
+  }
+
+  /**
+   * Upload a standalone image for POS use (product / offer / recipe photos).
+   * Kept deliberately decoupled from the Restaurant document — the returned
+   * relative public URL is what the caller stores on its own entity.
+   */
+  async saveStandalone(input: SaveImageInput): Promise<{ url: string }> {
+    if (input.buffer.length > config.uploads.maxFileSizeMB * MB) {
+      throw new AppError(400, `File exceeds the maximum size of ${config.uploads.maxFileSizeMB} MB`);
+    }
+    const ext = assertValidImage(input.buffer, input.mimetype);
+    const key = await this.writeFile(input.restaurantId, 'misc', input.buffer, ext);
+    return { url: key };
   }
 
   /** Remove a restaurant image: DB reference + physical file + audit entry. */

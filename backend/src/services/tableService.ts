@@ -20,6 +20,9 @@ import { AppError } from '../utils/AppError';
 
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
 
+/** Order types that physically occupy a table (waiter Dine-In + QR/online). */
+const LIVE_ORDER_TYPES = ['Dine In', 'Website'];
+
 export interface TableCtx extends ReconcileCtx {}
 
 export class TableService {
@@ -120,7 +123,7 @@ export class TableService {
   async delete(id: string, ctx: TableCtx = {}) {
     const liveOrder = await orderRepo.findOne({
       tableId: id,
-      type: 'Dine In',
+      type: { $in: LIVE_ORDER_TYPES },
       status: { $nin: TERMINAL_ORDER_STATUSES },
     } as any);
     if (liveOrder) {
@@ -145,7 +148,7 @@ export class TableService {
     // machine will release it automatically when the bill is closed.
     const liveOrder = await orderRepo.findOne({
       tableId: id,
-      type: 'Dine In',
+      type: { $in: LIVE_ORDER_TYPES },
       status: { $nin: TERMINAL_ORDER_STATUSES },
     } as any);
     if (liveOrder) {
@@ -160,7 +163,7 @@ export class TableService {
     if (!table) return null;
     const liveOrder = await orderRepo.findOne({
       tableId: id,
-      type: 'Dine In',
+      type: { $in: LIVE_ORDER_TYPES },
       status: { $nin: TERMINAL_ORDER_STATUSES },
     } as any);
     if (liveOrder) {
@@ -186,7 +189,7 @@ export class TableService {
     if (!table) return null;
     const liveOrder = await orderRepo.findOne({
       tableId: id,
-      type: 'Dine In',
+      type: { $in: LIVE_ORDER_TYPES },
       status: { $nin: TERMINAL_ORDER_STATUSES },
     } as any);
     if (liveOrder) {
@@ -233,7 +236,7 @@ export class TableService {
 
     const liveOrders = await orderRepo.findAll({
       tableId: id,
-      type: 'Dine In',
+      type: { $in: LIVE_ORDER_TYPES },
       status: { $nin: TERMINAL_ORDER_STATUSES },
     } as any);
 
@@ -272,7 +275,7 @@ export class TableService {
 
     const liveOrders = await orderRepo.findAll({
       tableId: fromTableId,
-      type: 'Dine In',
+      type: { $in: LIVE_ORDER_TYPES },
       status: { $nin: TERMINAL_ORDER_STATUSES },
     } as any);
 

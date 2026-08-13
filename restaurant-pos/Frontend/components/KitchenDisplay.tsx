@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Clock, ChefHat, UtensilsCrossed, Bell, AlertCircle, CheckCircle, ArrowRight, Table2, User, RefreshCw, Maximize2, Minimize2, Volume2, VolumeX, XCircle, Ban } from 'lucide-react';
 import type { Order, KOTRecord, KOTStatus } from '../src/types';
 import { getKOTElapsedMinutes, kotPrintedTimeMs } from '../src/utils/kotTime';
+import { setKotAlertEnabled } from '../src/lib/alertSound';
 
 const CANCEL_REASONS = [
   { id: 'out_of_stock', label: 'Out of Stock' },
@@ -77,12 +78,20 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
   const [soundEnabled, setSoundEnabled] = useState(
     () => settings?.moduleSettings?.enableQuickSoundAlerts !== false
   );
-  const [prevKotCount, setPrevKotCount] = useState(0);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [cancelTarget, setCancelTarget] = useState<{ orderId: string; itemKey: string; itemName: string } | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // The beep itself lives in the shared alertSound module (played app-wide by
+  // useKotAlertSound). This button only flips the shared runtime flag so the
+  // mute here silences alerts everywhere, not just on the kitchen screen.
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((v) => {
+      setKotAlertEnabled(!v);
+      return !v;
+    });
+  }, []);
 
   // Flatten all KOT records from kitchen-relevant orders into cards
   const kotCards = useMemo(() => {
@@ -116,54 +125,6 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
     return () => clearInterval(interval);
   }, [autoRefresh]);
 
-  useEffect(() => {
-    return () => {
-      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-        audioCtxRef.current.close().catch(() => {});
-      }
-    };
-  }, []);
-
-  // Play notification sound when new KOTs arrive
-  useEffect(() => {
-    const total = kotCards.length;
-    if (total > prevKotCount && prevKotCount > 0 && soundEnabled) {
-      playNotificationSound();
-    }
-    setPrevKotCount(total);
-  }, [kotCards.length]);
-
-  const playNotificationSound = useCallback(() => {
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(880, ctx.currentTime);
-      gain1.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      osc1.start(ctx.currentTime);
-      osc1.stop(ctx.currentTime + 0.3);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(1108, ctx.currentTime + 0.15);
-      gain2.gain.setValueAtTime(0.15, ctx.currentTime + 0.15);
-      gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.start(ctx.currentTime + 0.15);
-      osc2.stop(ctx.currentTime + 0.45);
-    } catch {}
-  }, []);
 
   // Group KOT cards by KOT status
   const columns = useMemo(() => {
@@ -234,7 +195,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSoundEnabled(!soundEnabled)} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title={soundEnabled ? 'Mute alerts' : 'Enable alerts'}>
+            <button onClick={toggleSound} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title={soundEnabled ? 'Mute alerts' : 'Enable alerts'}>
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
             <button onClick={handleRefresh} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title="Refresh">
@@ -287,7 +248,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
               );
             })}
           </div>
-          <button onClick={() => setSoundEnabled(!soundEnabled)} className={`p-2 rounded-lg transition-all cursor-pointer ${soundEnabled ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-red-400 bg-red-50'}`} title={soundEnabled ? 'Mute alerts' : 'Enable alerts'}>
+          <button onClick={toggleSound} className={`p-2 rounded-lg transition-all cursor-pointer ${soundEnabled ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-red-400 bg-red-50'}`} title={soundEnabled ? 'Mute alerts' : 'Enable alerts'}>
             {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </button>
           <button onClick={handleRefresh} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title="Refresh">

@@ -18,7 +18,7 @@ import { aiPost } from './aiClient';
 // ============================================================
 
 /** Whether a value came from the live AI backend or the local fallback. */
-export type AiSource = 'live' | 'local';
+export type AiSource = 'live' | 'local' | 'delta';
 
 /** Wraps AI-backed data with its provenance so UIs can label local fallbacks. */
 export interface AiResult<T> {
@@ -235,6 +235,31 @@ export async function predictLowStock(items: InventoryItem[]): Promise<AiResult<
   return { data: predictLowStockLocal(items), source: 'local' };
 }
 
+// ============================================================
+// DETERMINISTIC LOCAL CARDS (no LLM call)
+// ============================================================
+
+/** Result of computing all three inventory AI cards with the local engines. */
+export interface InventoryCardsLocal {
+  health: InventoryHealthScore;
+  purchaseRecs: PurchaseRecommendation[];
+  lowStock: LowStockPrediction[];
+}
+
+/**
+ * Deterministic local engines (no LLM call) — the inventory Overview
+ * recomputes its three AI cards with these when the catalog changes while the
+ * page is open, so stock edits / purchases / waste refresh instantly without
+ * burning tokens. Mirrors exactly what the LLM-backed functions fall back to.
+ */
+export function computeInventoryCardsLocal(items: InventoryItem[], wasteTotal: number): InventoryCardsLocal {
+  return {
+    health: computeHealthScoreLocal(items, wasteTotal),
+    purchaseRecs: dedupeRecs(generatePurchaseRecsLocal(items)),
+    lowStock: predictLowStockLocal(items),
+  };
+}
+
 function predictLowStockLocal(items: InventoryItem[]): LowStockPrediction[] {
   const predictions: LowStockPrediction[] = [];
   for (const item of items) {
@@ -286,9 +311,33 @@ export async function generateDailySummary(
   openOrderCount: number,
   wasteToday: number,
   customerCount: number,
+  salesContext?: Partial<{
+    orderCount: number;
+    itemCount: number;
+    totalDiscount: number;
+    totalGst: number;
+    averageOrderValue: number;
+    topItems: { name: string; qty: number; revenue?: number }[];
+    paymentMethods: { method: string; amount: number; count?: number }[];
+    categoryBreakdown: { category: string; qty: number; revenue?: number }[];
+  }>,
 ): Promise<DailyAISummary> {
   try {
-    const sales = { totalRevenue: todayRevenue, orderCount: 0, itemCount: 0, totalDiscount: 0, totalGst: 0, averageOrderValue: 0, topItems: [], paymentMethods: [], categoryBreakdown: [], date: new Date().toISOString().slice(0, 10) };
+    // Real sales context — the LLM must see the actual order/item/top-seller
+    // numbers, not zeros. Previously orderCount/itemCount were hardcoded 0,
+    // so the AI concluded "zero sales" even when revenue was ₹927.
+    const sales = {
+      totalRevenue: todayRevenue,
+      orderCount: salesContext?.orderCount ?? 0,
+      itemCount: salesContext?.itemCount ?? 0,
+      totalDiscount: salesContext?.totalDiscount ?? 0,
+      totalGst: salesContext?.totalGst ?? 0,
+      averageOrderValue: salesContext?.averageOrderValue ?? 0,
+      topItems: salesContext?.topItems ?? [],
+      paymentMethods: salesContext?.paymentMethods ?? [],
+      categoryBreakdown: salesContext?.categoryBreakdown ?? [],
+      date: new Date().toISOString().slice(0, 10),
+    };
     const result = await aiPost<DailyAISummary>('/summary', { sales, lowStockCount, openOrderCount, wasteToday, customerCount });
     // Guard: only trust a payload that has the full expected shape.
     if (result.success && result.data && typeof result.data.keyInsight === 'string' && Array.isArray(result.data.itemSuggestions) && Array.isArray(result.data.alerts)) {

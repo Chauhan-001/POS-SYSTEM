@@ -192,7 +192,7 @@ export async function generateMarketingPlan(
   const prompt = buildMarketingPrompt(input, ctx);
   // cacheKeyVariant = restaurantId: one restaurant can never receive another's
   // cached AI plan (Phase 25).
-  const result = await executeAiCall({ prompt, feature: 'marketing', cacheKeyVariant: restaurantId });
+  const result = await executeAiCall({ prompt, feature: 'marketing', cacheKeyVariant: restaurantId, tenantId: restaurantId });
 
   if (result.success && !result.fallback) {
     const parsed = marketingPlanSchema.safeParse(result.data);
@@ -375,7 +375,7 @@ export async function generateOfferCopy(restaurantId: string, input: OfferCopyIn
   const results = await Promise.all(
     builders.map(async ([key, builder]) => {
       const prompt = builder(inputWithDefaults);
-      const r = await executeAiText({ prompt, feature: 'offer-copy', cacheKeyVariant: restaurantId });
+      const r = await executeAiText({ prompt, feature: 'offer-copy', cacheKeyVariant: restaurantId, tenantId: restaurantId });
       return { key, text: String(r.text || '').trim(), fallback: r.fallback, cached: r.cached };
     }),
   );

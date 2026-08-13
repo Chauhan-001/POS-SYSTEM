@@ -6,7 +6,11 @@ import { io } from 'socket.io-client';
  * only the customer who placed the order knows — and hears `order:updated`
  * pushes instantly. Polling remains as a safety net.
  */
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api/public-store';
+// Mirrors api.js: without VITE_API_URL the backend origin follows the page's
+// own hostname, so LAN-scanned stickers reach the backend via the LAN IP.
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  `${window.location.protocol}//${window.location.hostname}:3002/api/public-store`;
 const BACKEND_ORIGIN = API_URL.startsWith('/')
   ? window.location.origin
   : new URL(API_URL).origin;

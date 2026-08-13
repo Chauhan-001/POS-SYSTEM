@@ -13,6 +13,7 @@
 import { Request, Response } from 'express';
 import type { AuthenticatedRequest } from '../../../middleware/authMiddleware';
 import mongoose from 'mongoose';
+import Branch from '../../../models/Branch';
 import QROrderingSession from '../models/QROrderingSession';
 import CustomerRequest from '../models/CustomerRequest';
 import type { IQRRequest, IQRSession } from '../types';
@@ -205,17 +206,24 @@ export async function createCustomerRequest(req: Request, res: Response): Promis
 export async function listCustomerRequests(req: Request, res: Response): Promise<void> {
   try {
     const auth = req as AuthenticatedRequest;
-    const { sessionId, restaurantId, status, type, priority, assignedTo } = req.query;
+    const { sessionId, restaurantId, status, type, priority, assignedTo, branchId, limit } = req.query;
 
     // Build filter — tenant isolation: the authenticated restaurant is the
     // default scope; a client-supplied restaurantId is only honored for
     // super_admin (platform console). Ordinary staff can never read another
-    // tenant's service requests.
+    // tenant's service requests. Optional branchId narrows to one location
+    // (multi-branch POS bell) — validated to belong to the tenant.
     const filter: any = {
       restaurantId: new mongoose.Types.ObjectId(
         String(auth.user?.role === 'super_admin' && restaurantId ? restaurantId : auth.user?.restaurantId || '')
       ),
     };
+    if (branchId && mongoose.Types.ObjectId.isValid(String(branchId))) {
+      // Never trust a client-supplied branchId across tenants: a branch that
+      // doesn't belong to the authenticated restaurant simply matches nothing.
+      const branch = await Branch.exists({ _id: new mongoose.Types.ObjectId(String(branchId)), restaurantId: filter.restaurantId, isDeleted: { $ne: true } });
+      if (branch) filter.branchId = new mongoose.Types.ObjectId(String(branchId));
+    }
     if (sessionId) filter.sessionId = sessionId as string;
     if (status) filter.status = status as string;
     if (type) filter.type = type as string;
@@ -224,6 +232,7 @@ export async function listCustomerRequests(req: Request, res: Response): Promise
     
     const requests = await CustomerRequest.find(filter)
       .sort({ createdAt: -1 })
+      .limit(Math.min(Math.max(parseInt(String(limit || '0'), 10) || 0, 0), 500))
       .populate('assignedTo', 'name role')
       .lean();
     
@@ -414,6 +423,7 @@ export async function completeRequest(req: Request, res: Response): Promise<void
         $set: {
           status: 'COMPLETED',
           completedAt: new Date(),
+          completedBy: typeof completedBy === 'string' && completedBy.trim() ? completedBy.trim() : undefined,
         },
       },
       { new: true }

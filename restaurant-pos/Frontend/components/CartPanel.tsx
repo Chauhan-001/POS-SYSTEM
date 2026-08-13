@@ -1,6 +1,7 @@
 import { ShoppingCart, RefreshCw, Phone, Award, X, DollarSign, ArrowLeftRight, ChevronLeft, ChevronRight, Search, Trash2, Printer, PauseCircle, MoreHorizontal, XCircle } from 'lucide-react';
 import { CartItem, Customer, HeldOrder, Product, ProductVariant, LoyaltyReward, SystemSettings } from '../src/types';
 import CartItemRow from './CartItemRow';
+import OfferProfitabilityStrip from './OfferProfitabilityStrip';
 
 interface CartPanelProps {
   cartWidth: number;
@@ -56,6 +57,8 @@ interface CartPanelProps {
   onManualDiscountChange?: (val: number) => void;
   /** Whether the current role may apply manual discounts (Owner always can). */
   canApplyDiscount?: boolean;
+  /** The server-validated offer applied to this bill (drives the profitability strip). */
+  appliedOffer?: any;
 }
 
 export default function CartPanel({
@@ -68,7 +71,7 @@ export default function CartPanel({
   searchedCustomer, customerPhone, onCustomerPhoneChange, onOpenOffers, onOpenCustomerSearch,
   loyaltyPhoneRef, quickFireRef, appliedReward, splitDetails, onOpenSplitPopup,
   currencySymbol, onUpdateItemNotes, moduleSettings = {} as Record<string, boolean>,
-  manualDiscount, onManualDiscountChange, canApplyDiscount,
+  manualDiscount, onManualDiscountChange, canApplyDiscount, appliedOffer,
 }: CartPanelProps) {
   const manualDiscountVal = manualDiscount ?? 0;
   const handleDiscountChange = onManualDiscountChange || ((val: number) => {});
@@ -145,6 +148,17 @@ export default function CartPanel({
             </button>
           )}
         </div>
+        {/* Live offer economics — cost vs contribution the moment an offer/combo is applied */}
+        {appliedOffer && cartItems.length > 0 && (
+          <div className="mt-2">
+            <OfferProfitabilityStrip
+              cartItems={cartItems}
+              appliedOffer={appliedOffer}
+              subtotal={calculateCartSubtotal()}
+              currencySymbol={currencySymbol}
+            />
+          </div>
+        )}
       </div>
 
       {/* Quick Fire Bar */}

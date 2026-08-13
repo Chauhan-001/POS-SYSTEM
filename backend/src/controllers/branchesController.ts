@@ -41,9 +41,10 @@ export async function getBranch(req: Request, res: Response): Promise<void> {
 /** POST /api/branches — Create a new branch */
 export async function createBranch(req: Request, res: Response): Promise<void> {
   try {
-    // Include restaurantId from auth context for subscription enforcement
+    // Tenant identity comes exclusively from the JWT — never from the client
+    // body (prevents cross-restaurant branch creation).
     const restaurantId = (req as any).user?.restaurantId;
-    const data = { ...req.body, restaurantId: restaurantId || req.body.restaurantId };
+    const data = { ...req.body, restaurantId };
     const branch = await branchService.create(data);
     res.status(201).json({ data: branch });
   } catch (error) {

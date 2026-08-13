@@ -181,6 +181,7 @@ export class AuthService {
       name: user.name,
       employeeId: user.employeeId?.toString() || null,
       branchIds: (user.branchIds || []).map((b: any) => b.toString()),
+      surface: 'pos', // POS surface — rejected on admin-dashboard routes
     };
 
     const accessToken = generateAccessToken(tokenPayload, data.rememberMe);
@@ -320,6 +321,7 @@ export class AuthService {
       name: isRestaurantLogin ? restaurant.name : user.name,
       employeeId: isRestaurantLogin ? null : (isEmployeeLogin ? user._id.toString() : user.employeeId?.toString() || null),
       branchIds: isRestaurantLogin ? [] : (isEmployeeLogin ? (user.branchId ? [user.branchId.toString()] : []) : (user.branchIds || []).map((b: any) => b.toString())),
+      surface: 'pos', // POS surface — rejected on admin-dashboard routes
     };
 
     const rememberMe = storedToken.expiresAt.getTime() - Date.now() > 14 * 24 * 60 * 60 * 1000;
@@ -511,6 +513,7 @@ export class AuthService {
       name: user.name,
       employeeId: employee._id.toString(),
       branchIds: [branch._id.toString()],
+      surface: 'pos', // POS surface — rejected on admin-dashboard routes
     });
 
     await auditLogRepo.create({

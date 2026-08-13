@@ -73,6 +73,11 @@ function normalizeRole(role: string): UserRole | null {
 /**
  * Validates JWT Bearer token. Injects req.user on success.
  * Returns 401 with descriptive error if token is missing or invalid.
+ *
+ * Surface guard: this is the POS-terminal gate — tokens minted for the admin
+ * dashboard (surface 'admin') are rejected here with 403, so an admin can never
+ * act as a restaurant user on the POS. Legacy tokens without a surface claim
+ * are treated as POS tokens.
  */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const token = extractBearerToken(req.headers.authorization);
@@ -84,6 +89,44 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   const payload = verifyAccessToken(token);
   if (!payload) {
     res.status(401).json({ error: 'Invalid or expired token' });
+    return;
+  }
+
+  if (payload.surface === 'admin') {
+    res.status(403).json({
+      error: 'Forbidden',
+      message: 'Admin dashboard tokens cannot be used on POS routes',
+    });
+    return;
+  }
+
+  (req as AuthenticatedRequest).user = payload;
+  next();
+}
+
+/**
+ * Admin-dashboard gate. Accepts ONLY tokens minted by the admin login
+ * (surface 'admin' — i.e. super_admin). POS tokens are rejected with 403,
+ * so a restaurant user can never act as the platform admin.
+ */
+export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token) {
+    res.status(401).json({ error: 'Authentication required. Provide a valid JWT token via Authorization: Bearer <token>' });
+    return;
+  }
+
+  const payload = verifyAccessToken(token);
+  if (!payload) {
+    res.status(401).json({ error: 'Invalid or expired token' });
+    return;
+  }
+
+  if (payload.surface !== 'admin' || payload.role !== 'super_admin') {
+    res.status(403).json({
+      error: 'Forbidden',
+      message: 'This endpoint requires an admin dashboard token',
+    });
     return;
   }
 
@@ -111,6 +154,14 @@ export function requireRole(...roles: (UserRole | 'Owner' | 'Manager' | 'Cashier
     const payload = verifyAccessToken(token);
     if (!payload) {
       res.status(401).json({ error: 'Invalid or expired token' });
+      return;
+    }
+
+    if (payload.surface === 'admin') {
+      res.status(403).json({
+        error: 'Forbidden',
+        message: 'Admin dashboard tokens cannot be used on POS routes',
+      });
       return;
     }
 

@@ -3,8 +3,11 @@ import { motion } from 'motion/react';
 import {
   LayoutDashboard, Package, ShoppingCart, Truck, Trash2, BarChart3,
   CalendarX, Settings as SettingsIcon, ArrowLeft, CheckCircle, AlertCircle, Info,
-  Mic, Activity,
+  Mic, Activity, ChefHat, IndianRupee,
 } from 'lucide-react';
+import RecipesPage from './pages/RecipesPage';
+import CostIntelligencePanel from './pages/CostIntelligencePanel';
+import CostSettingsPanel from './pages/CostSettingsPanel';
 import type { InventoryPage, InventoryItem, Purchase, TimelineEntry } from './types';
 import { daysUntilExpiry } from './expiryUtils';
 import {
@@ -216,6 +219,8 @@ const NAV_ITEMS: { id: InventoryPage; icon: typeof LayoutDashboard; label: strin
   { id: 'expiry', icon: CalendarX, label: 'Expiry' },
   { id: 'waste', icon: Trash2, label: 'Waste' },
   { id: 'analytics', icon: BarChart3, label: 'Reports' },
+  { id: 'recipes', icon: ChefHat, label: 'Recipes' },
+  { id: 'cost', icon: IndianRupee, label: 'Costs' },
   { id: 'voice', icon: Mic, label: 'Voice' },
   { id: 'timeline', icon: Activity, label: 'Activity' },
 ];
@@ -322,6 +327,11 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
       const key = (e as CustomEvent<string>).detail;
       if (key === 'pos_purchases') void loadPurchases();
       else if (key === 'pos_inventory_events') void loadEvents();
+      // Stock changed through any /products write (POS sale deduction,
+      // Products manager edit, stock adjustment, another device) — re-fetch
+      // the catalog so the Overview's health/recommendation cards recompute
+      // deterministically (no LLM) instead of showing stale numbers.
+      else if (key === 'pos_products') void loadItems();
     };
     window.addEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
     const interval = setInterval(() => { void loadPurchases(); void loadEvents(); }, 5 * 60 * 1000);
@@ -329,7 +339,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
       window.removeEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
       clearInterval(interval);
     };
-  }, [loadPurchases, loadEvents]);
+  }, [loadPurchases, loadEvents, loadItems]);
 
   const addPurchase = useCallback((p: Purchase) => {
     setPurchases(prev => (prev ? [p, ...prev] : prev));
@@ -590,6 +600,13 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
             {page === 'waste' && <WasteManagement moduleSettings={moduleSettings} />}
               {page === 'suppliers' && <SupplierManagement onNavigate={(p) => setPage(p as InventoryPage)} />}
               {page === 'analytics' && <InventoryAnalytics />}
+              {page === 'recipes' && <RecipesPage />}
+              {page === 'cost' && (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 p-4">
+                  <CostIntelligencePanel />
+                  <CostSettingsPanel />
+                </div>
+              )}
               {page === 'expiry' && <ExpiryManagement />}
               {page === 'settings' && <SettingsPage />}
               {page === 'voice' && <VoicePage />}

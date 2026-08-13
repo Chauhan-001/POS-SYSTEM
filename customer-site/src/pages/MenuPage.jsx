@@ -4,6 +4,66 @@ import MenuCard from '../components/MenuCard';
 import { Marquee, Squiggle } from '../components/bits';
 import { useSession } from '../context/session';
 
+const LEGAL_BASE = `${window.location.protocol}//${window.location.hostname}:3002/api/legal`;
+
+/** Footer links + modal that show the restaurant's published legal documents
+ *  (served from the backend — the POS is never the source of legal text). */
+function LegalLinks() {
+  const [open, setOpen] = useState(null); // 'privacy_policy' | 'customer_terms' | 'refund_policy' | null
+  const [doc, setDoc] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const openDoc = async (type) => {
+    setOpen(type);
+    setLoading(true);
+    setDoc(null);
+    try {
+      const res = await fetch(`${LEGAL_BASE}/current/${type}`);
+      const data = await res.json();
+      if (res.ok && data?.content) setDoc(data);
+    } catch {
+      /* backend unreachable — show nothing */
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const links = [
+    { type: 'privacy_policy', label: 'Privacy' },
+    { type: 'customer_terms', label: 'Terms' },
+    { type: 'refund_policy', label: 'Refunds' },
+  ];
+
+  return (
+    <>
+      <div className="legal-links">
+        {links.map((l) => (
+          <button key={l.type} className="legal-link" onClick={() => openDoc(l.type)}>
+            {l.label}
+          </button>
+        ))}
+      </div>
+      {open && (
+        <div className="legal-modal" onClick={() => setOpen(null)}>
+          <div className="legal-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="legal-modal-head">
+              <h3>{doc ? doc.title : 'Legal'}</h3>
+              <button className="legal-close" onClick={() => setOpen(null)}>✕</button>
+            </div>
+            <div className="legal-modal-body">
+              {loading && <p className="muted">Loading…</p>}
+              {!loading && !doc && <p className="muted">Document not available yet.</p>}
+              {!loading && doc && (
+                <pre className="legal-text">{doc.content}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Menu page: category chip rail, search, staggered item cards, SOLD OUT. */
 export default function MenuPage() {
   const { qr, ensureMenu, addToCart, showToast } = useSession();
@@ -110,6 +170,7 @@ export default function MenuPage() {
       <p className="muted center">
         {qr?.restaurant?.name} · GST added at checkout.
       </p>
+      <LegalLinks />
     </div>
   );
 }

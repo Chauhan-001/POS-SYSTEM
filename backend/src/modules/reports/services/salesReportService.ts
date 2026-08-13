@@ -18,10 +18,15 @@ function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
 }
 
-/** Inclusive date range, defaulting to today. */
+/** Inclusive date range, defaulting to today (LOCAL calendar date). */
 export function dateRange(startDate?: string, endDate?: string): { start: string; end: string } {
-  const now = new Date().toISOString().slice(0, 10);
-  return { start: startDate || now, end: endDate || now };
+  // Offset-adjusted local date, NOT the UTC date: bills are stamped with the
+  // store's local date/time, so in timezones east of UTC (e.g. India, +5:30)
+  // a UTC "today" is yesterday's date before 5:30 AM local and every report
+  // would silently cover the wrong day.
+  const now = new Date();
+  const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return { start: startDate || today, end: endDate || today };
 }
 
 /** Shift a date backwards by N days (YYYY-MM-DD). */

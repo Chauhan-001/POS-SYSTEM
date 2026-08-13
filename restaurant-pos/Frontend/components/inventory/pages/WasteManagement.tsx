@@ -1,4 +1,4 @@
-import { Trash2, Plus, X, Lightbulb } from 'lucide-react';
+import { Trash2, Plus, X, Lightbulb, RefreshCw } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNotify, useInventory, useInventoryEventsCtx } from '../InventoryManager';
@@ -62,9 +62,13 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
 
   const totalWaste = wasteLog.reduce((s, w) => s + w.cost, 0);
   const [wasteAnalysis, setWasteAnalysis] = useState<AiResult<WasteAnalysis> | null>(null);
+  // AI analysis fires ONCE on mount (fresh login) and on the explicit Refresh
+  // button — never on the 5-minute events poll (which re-creates wasteLog and
+  // used to re-fire an LLM call each time). The backend cache absorbs repeats.
+  const [wasteAiRefreshKey, setWasteAiRefreshKey] = useState(0);
   useEffect(() => {
     analyzeWaste(wasteLog).then(setWasteAnalysis).catch(() => setWasteAnalysis(null));
-  }, [wasteLog]);
+  }, [wasteAiRefreshKey]); // mount + explicit refresh only
 
   const handleSubmit = async () => {
     const item = items.find(i => i.name === formItem);
@@ -164,7 +168,16 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
               <Lightbulb className="w-4 h-4 text-white" />
             </div>
             <span className="text-sm font-bold text-gray-800">AI Waste Analysis</span>
-            <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
+            <button
+              type="button"
+              onClick={() => setWasteAiRefreshKey(k => k + 1)}
+              title="Refresh AI analysis (calls the AI once)"
+              className="ml-auto flex items-center gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              Refresh
+            </button>
+            <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
               wasteAnalysis.source === 'live'
                 ? 'bg-emerald-50 text-emerald-600'
                 : 'bg-amber-50 text-amber-600'

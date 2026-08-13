@@ -115,4 +115,6 @@ export type InventoryPage =
   | 'settings'
   | 'voice'
   | 'stock-adjustment'
-  | 'timeline';
+  | 'timeline'
+  | 'recipes'
+  | 'cost';

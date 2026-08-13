@@ -1116,6 +1116,24 @@ export function usePOSState() {
     hydrateFromApi(true);
   }, [hydrateFromApi]);
 
+  // Branch switch = force a full backend re-pull (bypass the localStorage
+  // cache). State is hydrated from the cache at boot, so switching branches
+  // without this would render the new branch's views from stale cached rows
+  // until a TTL/poll refresh. Firing refreshAllFromApi on an ACTUAL branch
+  // change pulls the new branch's live orders, tables/floor plan, products
+  // and prices from the backend immediately. Idempotent + offline-safe
+  // (every fetcher keeps the local copy on failure).
+  const currentBranchIdRef = useRef<string | null>(currentBranchId);
+  const handleSetCurrentBranch = useCallback(
+    (id: string | null) => {
+      const prev = currentBranchIdRef.current;
+      currentBranchIdRef.current = id;
+      setCurrentBranchId(id);
+      if (id !== prev) refreshAllFromApi();
+    },
+    [setCurrentBranchId, refreshAllFromApi],
+  );
+
   // Hydrate on mount (covers warm reloads — token restored from localStorage
   // before these effects run, so the fetches succeed).
   useEffect(() => {
@@ -1266,9 +1284,9 @@ export function usePOSState() {
     // overrides the default either way (ON or OFF).
     const userSettings: Record<string, boolean> = {
       enableTableService: true, enableWaiterManagement: true, enableReservations: true,
-      enableQROrdering: false, enableDeliveryModule: true, enableOnlineOrders: true,
+      enableQROrdering: true, enableDeliveryModule: true, enableOnlineOrders: true,
       enableKitchenDisplay: true, enableLoyalty: true, showImagesInBilling: true,
-      enableOffersPopup: true, enableAutoPrintKOT: false, enableQuickSoundAlerts: false,
+      enableOffersPopup: true, enableAutoPrintKOT: false, enableQuickSoundAlerts: true,
       showItemCodeOnCard: false, enableGuestCheckout: true, enableOrderNotes: true,
       enableTakeawayModule: true, enableDineInModule: true, enableExpenseManagement: true,
       enableDiscountOnBilling: false, enableMultiBranch: true,
@@ -1337,8 +1355,8 @@ export function usePOSState() {
     if (branches.length === 0) return;
     if (branches.some((b) => b.id === currentBranchId)) return;
     const head = branches.find((b) => b.isHeadBranch) || branches[0];
-    if (head) setCurrentBranchId(head.id);
-  }, [branches, currentBranchId, setCurrentBranchId]);
+    if (head) handleSetCurrentBranch(head.id);
+  }, [branches, currentBranchId, handleSetCurrentBranch]);
 
   // ============ PER-BRANCH SETTINGS MERGE ============
   const effectiveSettings = useMemo<SystemSettings>(() => {
@@ -1653,10 +1671,11 @@ export function usePOSState() {
     // Core data
     currentEmployee, setCurrentEmployee,
     branches, setBranches,
-    currentBranchId, setCurrentBranchId,
+    currentBranchId, setCurrentBranchId: handleSetCurrentBranch,
     currentBranch,
     isHeadBranch,
     isMultiBranchEnabled,
+    shouldFilterByBranch,
     branchSettings, setBranchSettings,
     branchProductPrices, setBranchProductPrices,
     branchVariantPrices, setBranchVariantPrices,
@@ -1759,10 +1778,10 @@ export function usePOSState() {
     startResizeCart,
 
     // Sync
-    runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors,
+    runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors, refreshTables,
   }), [
     // Core data
-    currentEmployee, branches, currentBranchId, currentBranch, isHeadBranch, isMultiBranchEnabled,
+    currentEmployee, branches, currentBranchId, currentBranch, isHeadBranch, isMultiBranchEnabled, shouldFilterByBranch,
     branchSettings, branchProductPrices, branchVariantPrices, branchTables,
     effectiveSettings, effectiveProducts, setProducts,
     customers, setCustomers,
@@ -1842,6 +1861,6 @@ export function usePOSState() {
     dailySales, activityFeed, zReportData, refreshDailyStats, refreshAllFromApi, startResizeCart,
 
     // Sync
-    runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors,
+    runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors, refreshTables,
   ]);
 }

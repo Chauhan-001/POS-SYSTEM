@@ -129,12 +129,43 @@ export async function getAuditExportStatus(id: string): Promise<{ data: AuditExp
   return data
 }
 
-export async function getAuditExportUrl(id: string): Promise<string> {
-  const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
-  const params = new URLSearchParams()
-  if (token) params.set('token', token)
-  const qs = params.toString()
-  return `/api/admin/audit-logs/exports/${id}/download${qs ? `?${qs}` : ''}`
+/**
+ * Download a completed export as a file.
+ *
+ * The file is fetched as a blob through `apiClient` so the JWT travels in the
+ * `Authorization` header only — never in the URL (query-string tokens leak into
+ * browser history and server logs). A temporary object URL is used to trigger
+ * the browser download and is revoked immediately after.
+ */
+export async function downloadAuditExport(id: string, format: string = 'csv'): Promise<void> {
+  const res = await apiClient.get(`/api/admin/audit-logs/exports/${id}/download`, {
+    responseType: 'blob',
+  })
+  const blob = res.data as Blob
+
+  // Prefer the server-provided filename; fall back to a stable default.
+  const disposition = res.headers?.['content-disposition'] as string | undefined
+  const match = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
+  // Only percent-decode the RFC 5987 `filename*=UTF-8''...` form — a plain
+  // `filename="..."` value is a literal name and could contain a stray `%`
+  // that would make decodeURIComponent throw and kill a valid download.
+  const filename = match
+    ? /filename\*=/.test(match[0])
+      ? decodeURIComponent(match[1])
+      : match[1]
+    : `audit-export-${id}.${format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : format === 'json' ? 'json' : 'csv'}`
+
+  const url = window.URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    window.URL.revokeObjectURL(url)
+  }
 }
 
 // ─── Retention / archive ──────────────────────────────────────────

@@ -36,6 +36,14 @@ export interface AccessTokenPayload {
   name?: string;
   employeeId?: string | null;
   branchIds?: string[];
+  /**
+   * Which product surface this token was minted for.
+   *   - 'pos'   → POS terminal / restaurant staff tokens (owner/manager/cashier/...)
+   *   - 'admin' → Admin dashboard (super_admin) tokens
+   * Middleware rejects tokens presented on the wrong surface, so an admin token
+   * can never act as a POS user (or vice versa). Missing = legacy POS token.
+   */
+  surface?: 'pos' | 'admin';
 }
 
 export interface RefreshTokenPayload {

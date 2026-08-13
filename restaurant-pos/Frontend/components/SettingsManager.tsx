@@ -23,6 +23,7 @@ import {
   AlertTriangle, CreditCard, Palette, Settings2, TestTube2,
   Image as ImageIcon, Award, Coins, Clock, ListFilter, SlidersHorizontal,
   ArrowDownUp, BadgePercent, ReceiptText, Combine, KeyRound,
+  ShieldCheck, LifeBuoy,
 } from 'lucide-react';
 import type { SystemSettings, VisitMilestone, RolePermissions, ModuleSettings, Bill, Order, KOTRecord } from '../src/types';
 import ThermalReceipt from './ThermalReceipt';
@@ -33,6 +34,8 @@ import { DEFAULT_ROLE_PERMISSIONS } from '../src/types';
 import RolePermissionsTab from './RolePermissionsTab';
 import LoyaltyQrPanel from './LoyaltyQrPanel';
 import SubscriptionSettings from './SubscriptionSettings';
+import LegalComplianceTab from './LegalComplianceTab';
+import HelpFaqTab from './HelpFaqTab';
 import {
   fetchPrinters, createPrinter, updatePrinter, deletePrinter, testPrinter,
   fetchSettingsAudit, type PrinterRecord,
@@ -45,23 +48,26 @@ interface SettingsManagerProps {
   currentBranchId?: string | null;
   /** Subscription plan feature keys — forwarded to the Role Permissions live preview. */
   subscriptionFeatures?: string[];
+  /** Whether the signed-in employee can view owner-level legal acceptance stats. */
+  isOwner?: boolean;
 }
 
 type TabId =
   | 'billing' | 'kitchen' | 'modules' | 'roles' | 'printers'
   | 'qr' | 'theme' | 'notifications' | 'security' | 'backup'
-  | 'history' | 'subscription';
+  | 'history' | 'subscription' | 'legal' | 'help';
 
 const DEFAULT_MODULES: ModuleSettings = {
   enableTableService: true, enableWaiterManagement: true, enableReservations: true,
-  enableQROrdering: false, enableDeliveryModule: true, enableOnlineOrders: true,
+  enableQROrdering: true, enableDeliveryModule: true, enableOnlineOrders: true,
   enableKitchenDisplay: true, enableLoyalty: true, showImagesInBilling: true,
   showCashierPerformance: true, enableMultiBranch: true, enableOffersPopup: true,
-  enableAutoPrintKOT: false, enableQuickSoundAlerts: false, showItemCodeOnCard: false,
+  enableAutoPrintKOT: false, enableQuickSoundAlerts: true, showItemCodeOnCard: false,
   enableGuestCheckout: true, enableOrderNotes: true, enableTakeawayModule: true,
   enableDineInModule: true, enableExpenseManagement: true, enableDiscountOnBilling: false,
   enableProducts: true, enableStaff: true, enableOffers: true,
   autoMarkSoldOutFromOrder: false, enableMenuAvailability: true,
+  callReminderIntervalSec: 15,
   enableAISummary: true, enableAIInventoryHealth: true, enableAIPurchaseRecs: true,
   enableAILowStock: true, enableAIWasteAnalysis: true, enableAIVoiceEntry: true,
   enableAIWeather: true, enableAIClosingAssistant: true,
@@ -80,7 +86,7 @@ const NOTIFICATION_EVENTS: Array<{ key: keyof NonNullable<SystemSettings['notifi
 const CHANNELS: Array<'email' | 'sms' | 'whatsapp' | 'push' | 'webhook' | 'desktop'> =
   ['email', 'sms', 'whatsapp', 'push', 'webhook', 'desktop'];
 
-export default function SettingsManager({ settings, onUpdateSettings, currentBranchId, subscriptionFeatures }: SettingsManagerProps) {
+export default function SettingsManager({ settings, onUpdateSettings, currentBranchId, subscriptionFeatures, isOwner }: SettingsManagerProps) {
   const [activeTab, setActiveTab] = useState<TabId>('billing');
   const [localToast, setLocalToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -608,6 +614,8 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
     { id: 'backup', label: 'BACKUP & RESTORE', icon: Database },
     { id: 'history', label: 'HISTORY & AUDIT', icon: History },
     { id: 'subscription', label: 'SUBSCRIPTION', icon: CreditCard },
+    { id: 'legal', label: 'LEGAL & COMPLIANCE', icon: ShieldCheck },
+    { id: 'help', label: 'HELP & FAQ', icon: LifeBuoy },
   ];
 
   // Compact online/offline indicator pinned to the right of the tab row
@@ -673,11 +681,14 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
       )}
 
       <form onSubmit={handleSaveSettings} className="flex-1 p-6 flex flex-col gap-4 h-full overflow-hidden">
-        <div className="flex-1 overflow-y-auto space-y-6">
+        {/* Billing/Kitchen: the grid owns the height on desktop so the settings
+            column and the live preview scroll independently. Other tabs keep
+            the single outer scroll. */}
+        <div className={`flex-1 space-y-6 min-h-0 overflow-y-auto ${activeTab === 'billing' || activeTab === 'kitchen' ? 'lg:overflow-hidden' : ''}`}>
           {/* ── BILLING ── */}
           {activeTab === 'billing' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start min-h-0">
-              <div className="lg:col-span-7 space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start lg:h-full lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch">
+              <div className="lg:col-span-7 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                 <div className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs space-y-4">
                   <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">
                     <div className="w-2.5 h-2.5 rounded-full bg-[var(--brand-color)]" />
@@ -826,14 +837,14 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
               </div>
 
               {/* Live receipt preview — exact copy of the billing-time receipt (ThermalReceipt) */}
-              <div className="lg:col-span-5 bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs h-full flex flex-col overflow-hidden">
+              <div className="lg:col-span-5 bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs flex flex-col overflow-hidden lg:h-full lg:min-h-0">
                 <div className="flex items-center justify-between mb-4 shrink-0">
                   <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Live Receipt Preview</h3>
                   <div className="flex gap-2">
                     <button type="button" onClick={handlePrintTestReceipt} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--brand-color)] text-white text-[10px] font-bold hover:bg-[#003a9c] transition-colors cursor-pointer"><Printer className="w-3 h-3" />Print</button>
                   </div>
                 </div>
-                <div className="bg-gray-100 rounded-xl p-4 flex justify-center shadow-inner overflow-y-auto flex-1">
+                <div className="bg-gray-100 rounded-xl p-4 flex justify-center shadow-inner overflow-y-auto flex-1 min-h-0">
                   <ThermalReceipt bill={previewBill} settings={previewSettings} />
                 </div>
                 <p className="text-[9px] text-gray-400 mt-3 text-center shrink-0">This is the exact receipt used at billing time — the toggles above update it live.</p>
@@ -843,8 +854,8 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
 
           {/* ── KITCHEN ── */}
           {activeTab === 'kitchen' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              <div className="lg:col-span-7 space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start lg:h-full lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch">
+              <div className="lg:col-span-7 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                 <div className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs space-y-4">
                   <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">
                     <div className="w-2.5 h-2.5 rounded-full bg-[var(--brand-color)]" />
@@ -858,6 +869,7 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
                       { icon: <Clock className="w-3.5 h-3.5" />, label: 'Show Order Time', value: showOrderTime, set: setShowOrderTime, hint: 'Print time on ticket' },
                       { icon: <Layers className="w-3.5 h-3.5" />, label: 'Show Table Number', value: showTableNumber, set: setShowTableNumber, hint: 'Table on order line' },
                       { icon: <Combine className="w-3.5 h-3.5" />, label: 'Group Items in KOT', value: groupItemsInKOT, set: setGroupItemsInKOT, hint: 'Group same-category items' },
+                      { icon: <Bell className="w-3.5 h-3.5" />, label: 'Quick Sound Alerts', value: moduleSettings.enableQuickSoundAlerts ?? false, set: () => toggleModule('enableQuickSoundAlerts'), hint: 'Beep when a new kitchen ticket arrives' },
                     ].map((t) => (
                       <div key={t.label} className="flex items-center justify-between gap-2 py-2 px-2.5 rounded-xl hover:bg-gray-50">
                         <div className="flex items-center gap-2 min-w-0">
@@ -930,12 +942,12 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
               </div>
 
               {/* Live KOT preview — exact copy of the printed kitchen ticket (ThermalKOT) */}
-              <div className="lg:col-span-5 bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs">
-                <div className="flex items-center justify-between mb-4">
+              <div className="lg:col-span-5 bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs flex flex-col overflow-hidden lg:h-full lg:min-h-0">
+                <div className="flex items-center justify-between mb-4 shrink-0">
                   <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Live KOT Preview</h3>
                   <button type="button" onClick={handlePrintTestKOT} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--brand-color)] text-white text-[10px] font-bold hover:bg-[#003a9c] transition-colors cursor-pointer"><Printer className="w-3 h-3" />Print KOT</button>
                 </div>
-                <div className="bg-gray-100 rounded-xl p-4 flex justify-center shadow-inner overflow-x-auto">
+                <div className="bg-gray-100 rounded-xl p-4 flex justify-center shadow-inner overflow-auto flex-1 min-h-0">
                   <ThermalKOT
                     order={previewKotOrder}
                     kot={previewKot}
@@ -943,7 +955,7 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
                     className="bg-white border-2 border-dashed border-gray-300 rounded-lg p-4 shadow-sm"
                   />
                 </div>
-                <p className="text-[9px] text-gray-400 mt-3 text-center">This is the exact KOT sent to the kitchen — the toggles update it live.</p>
+                <p className="text-[9px] text-gray-400 mt-3 text-center shrink-0">This is the exact KOT sent to the kitchen — the toggles update it live.</p>
               </div>
             </div>
           )}
@@ -956,7 +968,9 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
                 <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Modules & Features</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {Object.entries(moduleSettings).map(([key, value]) => {
+                {Object.entries(moduleSettings)
+                  .filter(([, value]) => typeof value === 'boolean')
+                  .map(([key, value]) => {
                   const locked = planLockedModules.has(key);
                   const effValue = locked ? false : value;
                   return (
@@ -975,6 +989,35 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
               {planFeatures.length > 0 && (
                 <p className="text-[9px] text-gray-400 pt-1">Modules marked <span className="text-amber-600 font-bold">Locked</span> are excluded from your subscription plan and cannot be enabled.</p>
               )}
+
+              {/* Customer call reminder interval (number setting, not a toggle). */}
+              <div className="border-t border-gray-100 pt-4 mt-1">
+                <div className="flex items-center gap-2 pb-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                  <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Customer Call Reminders</h3>
+                </div>
+                <label className="block text-[10px] font-bold text-gray-600 mb-1.5">
+                  Re-notify unacknowledged calls / online orders every
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min={0}
+                    max={3600}
+                    value={moduleSettings.callReminderIntervalSec ?? 15}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.min(3600, Math.round(Number(e.target.value) || 0)));
+                      setModuleSettings((p) => ({ ...p, callReminderIntervalSec: v }));
+                    }}
+                    className="w-24 px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold"
+                  />
+                  <span className="text-xs font-bold text-gray-500">seconds</span>
+                </div>
+                <p className="text-[9px] text-gray-400 mt-1.5">
+                  When a customer call or online order stays unacknowledged, the POS rings again after this
+                  interval (sound + toast). Set to 0 to disable reminders. Applies to the Calls panel.
+                </p>
+              </div>
             </div>
           )}
 
@@ -1317,9 +1360,24 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
               <SubscriptionSettings />
             </div>
           )}
+
+          {/* ── LEGAL & COMPLIANCE ── */}
+          {activeTab === 'legal' && (
+            <div className="max-w-3xl">
+              <LegalComplianceTab isOwner={isOwner} />
+            </div>
+          )}
+
+          {/* ── HELP & FAQ ── */}
+          {activeTab === 'help' && (
+            <div className="max-w-3xl">
+              <HelpFaqTab />
+            </div>
+          )}
         </div>
 
-        {/* Footer actions */}
+        {/* Footer actions — hidden for legal/help tabs (they save directly to the backend) */}
+        {activeTab !== 'legal' && activeTab !== 'help' && (
         <div className="flex items-center justify-between gap-3 bg-white border border-[#e1e2ed] rounded-2xl p-4">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Info className="w-4 h-4 text-gray-300 shrink-0" />
@@ -1341,6 +1399,7 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
             </button>
           </div>
         </div>
+        )}
       </form>
 
       {localToast && (

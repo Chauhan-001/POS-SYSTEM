@@ -11,7 +11,8 @@
  */
 
 import { Router } from 'express';
-import { requireAuth } from '../middleware/authMiddleware';
+// Admin-dashboard gate: accepts ONLY admin-surface (super_admin) tokens.
+import { requireAdminAuth as requireAuth } from '../middleware/authMiddleware';
 import { requireCollectionAccess } from '../middleware/authorizationMiddleware';
 import type { AuthorizationAction } from '../models/Authorization';
 import { cached } from '../utils/ResponseCache';

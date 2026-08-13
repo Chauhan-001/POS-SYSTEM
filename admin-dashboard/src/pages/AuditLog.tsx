@@ -30,7 +30,7 @@ import { Modal } from '../components/ui/Modal'
 import { ErrorPage } from '../components/ui/ErrorPage'
 import {
   getAuditLogs, getAuditLogStats, getAuditLogDetail, verifyAuditIntegrity,
-  createAuditExport, getAuditExportStatus, getAuditExportUrl,
+  createAuditExport, getAuditExportStatus, downloadAuditExport,
   getAuditRetention, runAuditRetention,
   getSavedSearches, createSavedSearch, deleteSavedSearch,
   getAuditAlerts, getAuditAlertSummary, resolveAuditAlert,
@@ -72,6 +72,19 @@ function prettyJson(value: unknown): string {
     return JSON.stringify(value, null, 2)
   } catch {
     return String(value)
+  }
+}
+
+/** Extract the server error message from a failed blob download response. */
+async function extractErrorText(e: any): Promise<string | null> {
+  const data = e?.response?.data
+  if (!data || typeof data.text !== 'function') return null
+  const text = await data.text().catch(() => null)
+  if (!text) return null
+  try {
+    return JSON.parse(text)?.error || null
+  } catch {
+    return null
   }
 }
 
@@ -247,8 +260,13 @@ export default function AuditLog() {
 
   const downloadExport = async () => {
     if (!exportJobId) return
-    const url = await getAuditExportUrl(exportJobId)
-    window.open(url, '_blank')
+    try {
+      await downloadAuditExport(exportJobId, exportFormat)
+      toast.success('Download started')
+    } catch (e: any) {
+      const msg = await extractErrorText(e).catch(() => null)
+      toast.error(msg || 'Download failed')
+    }
   }
 
   const columns: Column<AuditLogEntry>[] = [

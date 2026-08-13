@@ -1206,12 +1206,14 @@ export async function deleteQrToken(id: string) {
   return del<any>(`/qr-tokens/${id}`);
 }
 
-/** GET /api/qr-ordering/requests?restaurantId=&status= — service requests. */
-export async function fetchWaiterRequests(params?: { restaurantId?: string; status?: string }) {
+/** GET /api/qr-ordering/requests?restaurantId=&status=&limit= — service requests. */
+export async function fetchWaiterRequests(params?: { restaurantId?: string; status?: string; branchId?: string; limit?: number }) {
   // BACKEND CALLED — load customer service requests (waiter bell)
   const qs = new URLSearchParams();
   if (params?.restaurantId) qs.set('restaurantId', params.restaurantId);
   if (params?.status) qs.set('status', params.status);
+  if (params?.branchId) qs.set('branchId', params.branchId);
+  if (params?.limit) qs.set('limit', String(params.limit));
   const query = qs.toString();
   // get() already unwraps json.data — the endpoint returns { success, data: [...] },
   // so `res` IS the request array here (never re-unwrap it).
@@ -1221,9 +1223,9 @@ export async function fetchWaiterRequests(params?: { restaurantId?: string; stat
 }
 
 /** POST /api/qr-ordering/requests/:id/complete — mark a request done. */
-export async function completeWaiterRequest(id: string) {
+export async function completeWaiterRequest(id: string, completedBy?: string) {
   // BACKEND CALLED — resolve a service request
-  return post<any>(`/qr-ordering/requests/${id}/complete`, {});
+  return post<any>(`/qr-ordering/requests/${id}/complete`, completedBy ? { completedBy } : {});
 }
 
 // ─── Bills ─────────────────────────────────────────────────────────
@@ -2564,6 +2566,173 @@ export async function fetchOfferRecommendations() {
   return result;
 }
 
+// ─── Recipe Manager (Cost Intelligence) ───────────────────────────
+
+/** GET /api/recipes — List recipes (search/status filter). */
+export async function fetchRecipes(params?: { search?: string; status?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set('search', params.search);
+  if (params?.status) qs.set('status', params.status);
+  const query = qs.toString();
+  return get<any[]>(`/recipes${query ? '?' + query : ''}`);
+}
+
+/** GET /api/recipes/:id/versions — Recipe version history. */
+export async function fetchRecipeVersions(id: string) {
+  return get<any[]>(`/recipes/${id}/versions`);
+}
+
+/**
+ * Recipe writes behave like writeOfflineAware (offline writes are queued and
+ * replayed), but a REJECTED save THROWS with the server's message so callers
+ * can show a specific reason (e.g. "Ingredient X not found in your inventory")
+ * in their error UI instead of a generic failure.
+ */
+async function writeRecipe<T>(method: WriteMethod, path: string, body: unknown): Promise<T | null> {
+  if (isBrowserOffline()) {
+    enqueueOffline(method, path, body);
+    return null;
+  }
+  const result = await request(method, path, body);
+  if (!result) {
+    enqueueOffline(method, path, body);
+    return null;
+  }
+  if (!result.ok) {
+    const serverMsg = result.json?.error || result.json?.message || result.json?.msg;
+    throw new Error(serverMsg || 'The server rejected the save — check the fields and try again.');
+  }
+  invalidateWriteCache(path);
+  return result.json?.data ?? result.json;
+}
+
+/** POST /api/recipes — Create a recipe (draft or active). */
+export async function createRecipe(body: any) {
+  return writeRecipe<any>('POST', '/recipes', body);
+}
+
+/** PUT /api/recipes/:id — Update a recipe. */
+export async function updateRecipe(id: string, body: any) {
+  return writeRecipe<any>('PUT', `/recipes/${id}`, body);
+}
+
+/** POST /api/recipes/:id/activate — Activate a recipe (archives siblings). */
+export async function activateRecipe(id: string) {
+  return post<any>(`/recipes/${id}/activate`, {});
+}
+
+/** POST /api/recipes/:id/archive — Archive a recipe. */
+export async function archiveRecipe(id: string) {
+  return post<any>(`/recipes/${id}/archive`, {});
+}
+
+/** POST /api/recipes/:id/duplicate — Copy as a draft. */
+export async function duplicateRecipe(id: string) {
+  return post<any>(`/recipes/${id}/duplicate`, {});
+}
+
+/** DELETE /api/recipes/:id — Hard-delete a draft (archive first for actives). */
+export async function deleteRecipe(id: string) {
+  return del<any>(`/recipes/${id}`);
+}
+
+/** POST /api/recipes/ai/quick-create — AI parses "how is this dish made" into a reviewable draft. Saves nothing. */
+export async function recipeAiQuickCreate(productId: string, text: string) {
+  return post<any>('/recipes/ai/quick-create', { productId, text });
+}
+
+/** POST /api/recipes/ai/search — Tenant-scoped inventory search for ingredient matching. */
+export async function recipeAiSearchInventory(query: string) {
+  return post<any>('/recipes/ai/search', { query });
+}
+
+// ─── Cost settings + intelligence ─────────────────────────────────
+
+/** GET /api/cost-settings — Restaurant-level layered cost model settings. */
+export async function fetchCostSettings() {
+  return get<any>('/cost-settings');
+}
+
+/** PUT /api/cost-settings — Update layered cost model settings. */
+export async function updateCostSettings(body: any) {
+  return put<any>('/cost-settings', body);
+}
+
+/** GET /api/cost-settings/calibrate?days= — Suggest allowances from recent data (no mutation). */
+export async function calibrateCostSettings(days?: number) {
+  return get<any>(`/cost-settings/calibrate${days ? '?days=' + days : ''}`);
+}
+
+/** GET /api/cost-intelligence?days= — Deterministic cost intelligence metrics. */
+export async function fetchCostIntelligence(params?: { days?: number }) {
+  return get<any>(`/cost-intelligence${params?.days ? '?days=' + params.days : ''}`);
+}
+
+/** POST /api/cost-intelligence/insights — On-demand AI insights over deterministic metrics. */
+export async function fetchCostInsights(params?: { days?: number }) {
+  return post<any>('/cost-intelligence/insights', { days: params?.days ?? 60 });
+}
+
+// ─── Profitability (offer / combo / bill economics) ──────────────
+
+/** GET /api/profitability/products — Product-level contribution/margin. */
+export async function fetchProductProfitability(params?: { startDate?: string; endDate?: string; branchId?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.startDate) qs.set('startDate', params.startDate);
+  if (params?.endDate) qs.set('endDate', params.endDate);
+  if (params?.branchId) qs.set('branchId', params.branchId);
+  const query = qs.toString();
+  return get<any>(`/profitability/products${query ? '?' + query : ''}`);
+}
+
+/** GET /api/recipe-consumption/reconcile — Theoretical vs actual consumption variance. */
+export async function fetchConsumptionVariance(params?: { startDate?: string; endDate?: string; branchId?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.startDate) qs.set('startDate', params.startDate);
+  if (params?.endDate) qs.set('endDate', params.endDate);
+  if (params?.branchId) qs.set('branchId', params.branchId);
+  const query = qs.toString();
+  return get<any>(`/recipe-consumption/reconcile${query ? '?' + query : ''}`);
+}
+
+/** POST /api/profitability/offers/preview — Deterministic offer economics preview. */
+export async function fetchOfferPreview(body: any) {
+  return post<any>('/profitability/offers/preview', body);
+}
+
+/** POST /api/profitability/offers/assistant — AI offer proposal (advisory only). */
+export async function fetchOfferAssistant(text: string) {
+  return post<any>('/profitability/offers/assistant', { text });
+}
+
+/** POST /api/profitability/combos/assistant — AI combo proposal (advisory only). */
+export async function fetchComboAssistant(text: string) {
+  return post<any>('/profitability/combos/assistant', { text });
+}
+
+/** POST /api/profitability/bill-preview — Bill-level economics for the order screen. */
+export async function fetchBillProfitability(body: any) {
+  return post<any>('/profitability/bill-preview', body);
+}
+
+// ─── Media ────────────────────────────────────────────────────────
+
+/** POST /api/media/upload — Upload an image; returns the absolute URL. */
+export async function uploadImage(file: File): Promise<string | null> {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const headers: Record<string, string> = { 'X-Device-Id': getOrCreateDeviceId() };
+    if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+    const res = await fetch(`${BASE}/media/upload`, { method: 'POST', headers, body: fd });
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    return json?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** GET /api/offers/segments — Fetch customer segments */
 export async function fetchOfferSegments() {
   // BACKEND CALLED — load loyalty segments from cloud
@@ -2718,4 +2887,127 @@ export async function checkHealth() {
     debugWarn('API', 'Health check failed:', err);
     return false;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// LEGAL & COMPLIANCE (Phase: production legal/compliance layer)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface LegalDocumentInfo {
+  documentType: string;
+  version: string;
+  title: string;
+  content: string;
+  effectiveAt?: string;
+  publishedAt?: string | null;
+  jurisdiction: string;
+  language: string;
+  status?: string;
+  requireAcceptance?: boolean;
+  reAcceptanceRequired?: boolean;
+  adminNotes?: string;
+  updatedAt?: string;
+  createdAt?: string;
+}
+
+export interface LegalAcceptanceInfo {
+  _id: string;
+  userId: string;
+  restaurantId?: string | null;
+  documentType: string;
+  documentVersion: string;
+  documentTitle?: string;
+  acceptedAt: string;
+  context?: string;
+  platform?: string;
+}
+
+export interface LegalConsentInfo {
+  _id: string;
+  consentType: string;
+  granted: boolean;
+  grantedAt?: string | null;
+  withdrawnAt?: string | null;
+  updatedAt?: string;
+}
+
+/** GET /api/legal/current/:type — current published document (public) */
+export async function fetchCurrentLegalDocument(type: string): Promise<LegalDocumentInfo | null> {
+  // BACKEND CALLED — current published legal document
+  return get<LegalDocumentInfo>(`/legal/current/${encodeURIComponent(type)}`);
+}
+
+/** GET /api/legal/documents — all published documents (public) */
+export async function fetchPublishedLegalDocuments(): Promise<LegalDocumentInfo[]> {
+  // BACKEND CALLED — published legal documents for display
+  const result = await get<any>(`/legal/documents`);
+  return result?.documents || [];
+}
+
+/** GET /api/legal/my-required — documents requiring this user's acceptance */
+export async function fetchMyRequiredLegal(): Promise<Array<{ documentType: string; version: string; title: string; effectiveAt?: string; previouslyAcceptedVersion?: string | null }>> {
+  // BACKEND CALLED — required legal acceptances for the signed-in user
+  const result = await get<any>(`/legal/my-required`);
+  return result?.required || [];
+}
+
+/** POST /api/legal/accept — record acceptance (server resolves the version) */
+export async function acceptLegalDocument(documentType: string, context = 'pos', platform = 'pos'): Promise<any> {
+  // BACKEND CALLED — record contractual acceptance
+  const res = await fetch(`${BASE}/legal/accept`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ documentType, context, platform }),
+  });
+  const json = await res.json().catch(() => null);
+  return { ok: res.ok, ...(json || {}) };
+}
+
+/** GET /api/legal/my-acceptances — the user's acceptance records */
+export async function fetchMyAcceptances(): Promise<LegalAcceptanceInfo[]> {
+  // BACKEND CALLED — user's legal acceptance history
+  const result = await get<any>(`/legal/my-acceptances`);
+  return result?.acceptances || [];
+}
+
+/** GET /api/legal/consents — the user's consent records */
+export async function fetchMyConsents(): Promise<LegalConsentInfo[]> {
+  // BACKEND CALLED — user's consent records
+  const result = await get<any>(`/legal/consents`);
+  return result?.consents || [];
+}
+
+/** POST /api/legal/consents — grant or withdraw an optional consent */
+export async function setLegalConsent(consentType: string, granted: boolean, context = 'settings'): Promise<any> {
+  // BACKEND CALLED — grant/withdraw optional privacy consent
+  const res = await fetch(`${BASE}/legal/consents`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ consentType, granted, context, platform: 'pos' }),
+  });
+  const json = await res.json().catch(() => null);
+  return { ok: res.ok, ...(json || {}) };
+}
+
+/** POST /api/legal/export-request — request a copy of personal data */
+export async function requestDataExport(): Promise<any> {
+  // BACKEND CALLED — data-subject export request
+  const res = await fetch(`${BASE}/legal/export-request`, { method: 'POST', headers: buildHeaders(), body: JSON.stringify({}) });
+  const json = await res.json().catch(() => null);
+  return { ok: res.ok, ...(json || {}) };
+}
+
+/** POST /api/legal/close-request — request account closure */
+export async function requestAccountClose(): Promise<any> {
+  // BACKEND CALLED — data-subject account-closure request
+  const res = await fetch(`${BASE}/legal/close-request`, { method: 'POST', headers: buildHeaders(), body: JSON.stringify({}) });
+  const json = await res.json().catch(() => null);
+  return { ok: res.ok, ...(json || {}) };
+}
+
+/** GET /api/legal/acceptance-stats — owner-level acceptance statistics */
+export async function fetchLegalAcceptanceStats(): Promise<any> {
+  // BACKEND CALLED — acceptance/consent stats for this restaurant (owner/manager)
+  const result = await get<any>(`/legal/acceptance-stats`);
+  return result || null;
 }

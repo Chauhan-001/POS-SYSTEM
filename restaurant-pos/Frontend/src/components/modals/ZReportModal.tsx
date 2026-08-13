@@ -4,7 +4,9 @@
  */
 
 import { FileText, X } from 'lucide-react';
-import type { SystemSettings } from '../../types';
+import { useEffect, useState } from 'react';
+import type { Product, SystemSettings } from '../../types';
+import { fetchInventoryEvents } from '../../api/client';
 import ClosingAssistant from '../../ai/ClosingAssistant';
 
 interface ZReportData {
@@ -23,10 +25,36 @@ interface ZReportModalProps {
   zReportData: ZReportData;
   settings: SystemSettings;
   moduleSettings?: Record<string, boolean>;
+  products?: Product[];
   onClose: () => void;
 }
 
-export default function ZReportModal({ isOpen, zReportData, settings, moduleSettings = {} as Record<string, boolean>, onClose }: ZReportModalProps) {
+export default function ZReportModal({ isOpen, zReportData, settings, moduleSettings = {} as Record<string, boolean>, products = [], onClose }: ZReportModalProps) {
+  // REAL low-stock count — products at/below their minimum threshold, same
+  // calculation the inventory dashboard uses. Previously the AI closing
+  // assistant was hardcoded lowStockItems={0} so it always said stock was fine.
+  const lowStockItems = products.filter((p: any) =>
+    Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
+  ).length;
+
+  // REAL waste cost today — fetch waste events from the backend. Previously
+  // hardcoded wasteCost={0}, so the assistant always reported "waste under
+  // control" even when the restaurant logged waste.
+  const [wasteCost, setWasteCost] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    fetchInventoryEvents({ type: 'waste', limit: 200 })
+      .then((events) => {
+        if (cancelled || !events) return;
+        setWasteCost(events
+          .filter((e: any) => String(e.timestamp || '').slice(0, 10) === todayStr)
+          .reduce((s: number, e: any) => s + Math.abs(Number(e.quantity) || 0) * (Number((products as any[]).find((p: any) => p.name === e.item)?.averageCost) || 0), 0));
+      })
+      .catch(() => { /* offline — keep 0 */ });
+    return () => { cancelled = true; };
+  }, [products, isOpen]);
+
   if (!isOpen) return null;
 
   return (
@@ -68,8 +96,8 @@ export default function ZReportModal({ isOpen, zReportData, settings, moduleSett
             <ClosingAssistant
               totalRevenue={zReportData.totalSales}
               orderCount={zReportData.orderCount}
-              lowStockItems={0}
-              wasteCost={0}
+              lowStockItems={lowStockItems}
+              wasteCost={wasteCost}
             />
           </div>
           )}

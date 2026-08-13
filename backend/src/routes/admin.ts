@@ -24,7 +24,10 @@
  */
 
 import { Router } from 'express';
-import { requireAuth } from '../middleware/authMiddleware';
+// Admin-dashboard gate: accepts ONLY admin-surface (super_admin) tokens, so
+// POS/restaurant tokens can never reach the admin API. Aliased to keep the
+// existing route wiring unchanged.
+import { requireAdminAuth as requireAuth } from '../middleware/authMiddleware';
 import { requireCollectionAccess } from '../middleware/authorizationMiddleware';
 import { authIpLimiter, accountBackoff } from '../middleware/rateLimiter';
 import { adminLogin, adminProfile, adminUpdateProfile, adminChangePassword } from '../controllers/adminAuthController';

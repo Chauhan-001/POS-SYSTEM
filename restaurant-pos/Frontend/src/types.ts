@@ -677,6 +677,9 @@ export interface ModuleSettings {
   autoMarkSoldOutFromOrder?: boolean;
   /** Master switch for the online Menu Availability controls. */
   enableMenuAvailability?: boolean;
+  /** Re-notify unacknowledged customer calls/online orders every N seconds
+   *  (0 disables reminders). Persisted under moduleSettings. */
+  callReminderIntervalSec?: number;
 }
 
 export interface SystemSettings {

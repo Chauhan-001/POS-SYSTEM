@@ -11,6 +11,7 @@ export type WorkspaceName =
   | 'Dashboard'
   | 'Orders'
   | 'Billing'
+  | 'Calls'
   | 'Products'
   | 'Customers'
   | 'Offers'
@@ -37,6 +38,7 @@ export const WORKSPACE_PATHS: Record<WorkspaceName, string> = {
   Dashboard: '/dashboard',
   Orders: '/orders',
   Billing: '/billing',
+  Calls: '/calls',
   Products: '/products',
   Customers: '/customers',
   Offers: '/offers',

@@ -6,10 +6,11 @@
  * (real OfferAnalytics from the backend), and what you can do with it.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, Eye, Pause, Play, Copy, Megaphone, Trash2, Award, TrendingUp, ShoppingBag, DollarSign, Target, Loader2 } from 'lucide-react';
 import * as api from '../../src/api/client';
 import { offerValueLabel, OFFER_TYPE_LABELS, fmtNumber } from './shared';
+import OfferEconomics from './OfferEconomics';
 
 interface OfferDetailModalProps {
   offer: any;
@@ -42,6 +43,15 @@ export default function OfferDetailModal({ offer, currencySymbol, onClose, onEdi
   const conversion = targeted > 0 ? Math.round((redeemed / targeted) * 100) : null;
   const aov = redeemed > 0 ? revenue / redeemed : null;
   const isLive = offer.status === 'active';
+  // Deterministic economics for THIS offer (cost vs contribution per dish).
+  const economicsDraft = useMemo(() => ({
+    title: offer.title,
+    type: offer.type,
+    value: offer.value || 0,
+    scope: 'products',
+    productIds: offer.applicableProductIds || [],
+    categories: offer.applicableCategories || [],
+  }), [offer]);
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
@@ -92,6 +102,16 @@ export default function OfferDetailModal({ offer, currencySymbol, onClose, onEdi
                 <MetricCard icon={<TrendingUp className="w-4 h-4" />} label="Avg order" value={aov ? `${currencySymbol}${fmtNumber(Math.round(aov))}` : '—'} tone="bg-purple-100 text-purple-700" />
               </div>
             )}
+          </section>
+
+          {/* Economics — how this offer affects your money (deterministic, read-only) */}
+          <section>
+            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">How this offer makes money</p>
+            <OfferEconomics
+              currencySymbol={currencySymbol}
+              draft={economicsDraft}
+              onApplyAssistant={() => { /* read-only view — no form to prefill */ }}
+            />
           </section>
 
           {/* Actions */}
