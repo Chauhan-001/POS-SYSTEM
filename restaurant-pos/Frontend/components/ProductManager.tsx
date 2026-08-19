@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Copy, Settings2, CheckCheck } from 'lucide-react';
+import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Copy, Settings2, CheckCheck, ChefHat } from 'lucide-react';
 import { Product, ProductVariant, Branch, ProductMenuConfig, ProductConfigRef } from '../src/types';
 import * as api from '../src/api/client';
 import { debugWarn } from '../src/utils/debugLog';
@@ -12,6 +12,7 @@ import ImageInput from './common/ImageInput';
 import AddItemModal from './menu/AddItemModal';
 import ProductConfigEditor from './menu/ProductConfigEditor';
 import ProductRegistrationWizard from './menu/ProductRegistrationWizard';
+import EasyRecipeMaker from './inventory/pages/EasyRecipeMaker';
 import { useProductConfigSummary } from './menu/useProductConfig';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -120,6 +121,10 @@ export default function ProductManager({
   const [pIsCombo, setPIsCombo] = useState(false);
   const [pComboComponentIds, setPComboComponentIds] = useState<string[]>([]);
   const [pComboPrice, setPComboPrice] = useState(0);
+
+  // ── Recipe editor state ──
+  const [recipeProduct, setRecipeProduct] = useState<any | null>(null);
+  const [showRecipeMaker, setShowRecipeMaker] = useState(false);
 
   // DND setup
   const sensors = useSensors(
@@ -437,6 +442,9 @@ export default function ProductManager({
   };
 
   const filtered = products.filter(p => {
+    // Menu items only — inventory items (availability=false) belong in
+    // the Inventory module, never in the Product & Catalog manager.
+    if (!p.availability) return false;
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.code.includes(search);
     const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
     return matchesSearch && matchesCategory;
@@ -1016,14 +1024,20 @@ export default function ProductManager({
                       )}
                       {availabilityMap[product.id]?.visibleOnSite === false ? 'Hidden' : 'On Site'}
                     </span>
-                  </button>
-
-                  <button
+                  </button>                   <button
                     onClick={() => setConfigEditorProduct(product)}
                     className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[var(--color-bg-page)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
                     title="Configure variants, customizations & add-ons"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={() => { setRecipeProduct(product); setShowRecipeMaker(true); }}
+                    className="p-1.5 text-gray-500 hover:text-orange-600 bg-[var(--color-bg-page)] hover:bg-orange-50 border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
+                    title="Create or edit recipe"
+                  >
+                    <ChefHat className="w-3.5 h-3.5" />
                   </button>
 
                   <button
@@ -1679,6 +1693,15 @@ export default function ProductManager({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Easy Recipe Maker overlay */}
+      {showRecipeMaker && (
+        <EasyRecipeMaker
+          initialProduct={recipeProduct}
+          onClose={() => { setShowRecipeMaker(false); setRecipeProduct(null); }}
+          onSaved={() => { setShowRecipeMaker(false); setRecipeProduct(null); }}
+        />
       )}
 
     </div>

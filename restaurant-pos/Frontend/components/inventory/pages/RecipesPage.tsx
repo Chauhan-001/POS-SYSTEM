@@ -32,6 +32,7 @@ import {
 } from '../../../src/api/client';
 import EasyRecipeMaker from './EasyRecipeMaker';
 import RecipeInputStep, { type RecipeRow, type RecipeMode } from '../../menu/RecipeInputStep';
+import apiClient from '../../../src/api/axios';
 
 // ─── Client-side unit mirror (kg↔g↔mg, L↔ml, pcs) ────────────────
 const UNIT_FAMILY: Record<string, { family: string; factor: number }> = {
@@ -614,6 +615,11 @@ function RecipeEditor({
   const [describeText, setDescribeText] = useState('');
   const [describeLoading, setDescribeLoading] = useState(false);
   const [recipeError, setRecipeError] = useState('');
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recorderRef = useRef<any>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const [costSettings, setCostSettings] = useState<any | null>(null);
   useEffect(() => {
@@ -816,6 +822,75 @@ function RecipeEditor({
     setComponents(converted);
   };
 
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+  const stopMic = () => {
+    try { recorderRef.current?.stop?.(); } catch { /* ignore */ }
+    try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+    setRecording(false);
+  };
+
+  const handleStartRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setRecipeError('Microphone not available — type the ingredients instead.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+        .find((t) => MediaRecorder.isTypeSupported(t)) || '';
+      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        setRecording(false);
+        if (blob.size < 8000) { setRecipeError('No speech heard — try again or type it.'); return; }
+        setTranscribing(true);
+        setRecipeError('');
+        try {
+          const { data } = await apiClient.post('/voice-inventory/transcribe', {
+            audio: await blobToBase64(blob),
+            audioMimeType: blob.type || 'audio/webm',
+            language: 'hi-en',
+          });
+          const transcript = data?.transcript;
+          if (!data?.success || !transcript) throw new Error(data?.error || 'No speech detected');
+          setDescribeText(transcript);
+          await handleDescribeParse(transcript);
+        } catch (e: any) {
+          setRecipeError(e?.response?.data?.error || e?.message || 'Could not hear you — type the ingredients instead.');
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      recorder.onerror = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        setRecipeError('Recording failed — type the ingredients instead.');
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+      setRecipeError('');
+    } catch (e: any) {
+      setRecording(false);
+      setRecipeError(`Microphone blocked (${e?.name || 'error'}) — type the ingredients instead.`);
+    }
+  };
+
+  const handleStopRecording = () => {
+    try { recorderRef.current?.stop?.(); } catch { /* ignore */ }
+  };
+
   const recipeRowsForStep: RecipeRow[] = components.map((c) => ({
     key: c.key,
     inventoryItemId: c.inventoryItemId,
@@ -991,6 +1066,10 @@ function RecipeEditor({
               onDescribeTextChange={setDescribeText}
               onParseText={handleDescribeParse}
               describeLoading={describeLoading}
+              recording={recording}
+              transcribing={transcribing}
+              onStartRecording={handleStartRecording}
+              onStopRecording={handleStopRecording}
               error={recipeError}
               onRowQuantityChange={(key, qty) => updateRow(key, { quantity: qty })}
               onRowRemove={removeRow}
