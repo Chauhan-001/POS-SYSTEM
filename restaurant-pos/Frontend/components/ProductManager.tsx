@@ -1718,17 +1718,7 @@ export default function ProductManager({
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Image</label>
-                <input
-                  type="text"
-                  value={quickEditImage}
-                  onChange={(e) => setQuickEditImage(e.target.value)}
-                  placeholder="Paste image URL..."
-                  className="w-full px-3 py-2.5 bg-gray-50 border border-[var(--color-border-default)] rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
-                />
-                <p className="text-[10px] text-gray-400 mt-1">Or upload below</p>
-                <div className="mt-2">
-                  <ImageInput value={quickEditImage} onChange={setQuickEditImage} previewClass="w-16 h-16 rounded-xl" hint="Upload a photo" />
-                </div>
+                <ImageInput value={quickEditImage} onChange={setQuickEditImage} previewClass="w-16 h-16 rounded-xl" hint="Upload or paste a link" />
               </div>
             </div>
             <div className="px-5 py-3 border-t border-[var(--color-border-default)] flex justify-end gap-2">
