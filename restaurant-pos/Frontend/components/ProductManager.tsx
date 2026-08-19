@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Copy, Settings2, CheckCheck, ChefHat } from 'lucide-react';
+import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Settings2, CheckCheck, ChefHat } from 'lucide-react';
 import { Product, ProductVariant, Branch, ProductMenuConfig, ProductConfigRef } from '../src/types';
 import * as api from '../src/api/client';
 import { debugWarn } from '../src/utils/debugLog';
@@ -1024,7 +1024,9 @@ export default function ProductManager({
                       )}
                       {availabilityMap[product.id]?.visibleOnSite === false ? 'Hidden' : 'On Site'}
                     </span>
-                  </button>                   <button
+                  </button>
+
+                  <button
                     onClick={() => setConfigEditorProduct(product)}
                     className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[var(--color-bg-page)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
                     title="Configure variants, customizations & add-ons"
@@ -1038,14 +1040,6 @@ export default function ProductManager({
                     title="Create or edit recipe"
                   >
                     <ChefHat className="w-3.5 h-3.5" />
-                  </button>
-
-                  <button
-                    onClick={() => handleDuplicateProduct(product)}
-                    className="p-1.5 text-gray-500 hover:text-violet-600 bg-[var(--color-bg-page)] hover:bg-violet-50 border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
-                    title="Duplicate item (config comes along)"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
                   </button>
 
                   <button
