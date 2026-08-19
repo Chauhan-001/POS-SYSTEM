@@ -31,6 +31,7 @@ import {
   recipeAiQuickCreate, recipeAiSearchInventory, createProduct,
 } from '../../../src/api/client';
 import EasyRecipeMaker from './EasyRecipeMaker';
+import RecipeInputStep, { type RecipeRow, type RecipeMode } from '../../menu/RecipeInputStep';
 
 // ─── Client-side unit mirror (kg↔g↔mg, L↔ml, pcs) ────────────────
 const UNIT_FAMILY: Record<string, { family: string; factor: number }> = {
@@ -605,6 +606,15 @@ function RecipeEditor({
   });
   const [saving, setSaving] = useState(false);
 
+  // ── RecipeInputStep state ──
+  const [recipeMode, setRecipeMode] = useState<RecipeMode>(existing && existing.components?.length > 0 ? 'manual' : 'skip');
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualSearchResults, setManualSearchResults] = useState<any[] | null>(null);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [describeText, setDescribeText] = useState('');
+  const [describeLoading, setDescribeLoading] = useState(false);
+  const [recipeError, setRecipeError] = useState('');
+
   const [costSettings, setCostSettings] = useState<any | null>(null);
   useEffect(() => {
     let alive = true;
@@ -703,6 +713,119 @@ function RecipeEditor({
     setSaveError(null);
     setComponents((prev) => prev.filter((c) => c.key !== key));
   };
+
+  // ── RecipeInputStep handlers ──
+  const handleManualSearch = async (q: string) => {
+    const trimmed = q.trim();
+    if (trimmed.length < 2) { setManualSearchResults(null); return; }
+    setManualLoading(true);
+    setRecipeError('');
+    try {
+      const res = await recipeAiSearchInventory(trimmed);
+      setManualSearchResults(Array.isArray(res) ? res : []);
+    } catch {
+      setRecipeError('Inventory search failed — try again.');
+      setManualSearchResults([]);
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const handleManualAddItem = (item: any) => {
+    const unit = item.unit || 'g';
+    const avgCost = Number(item.averageCost) || 0;
+    const key = `${item._id}_${Date.now().toString(36)}`;
+    setComponents((prev) => [...prev, {
+      key,
+      inventoryItemId: item._id,
+      itemName: item.name,
+      quantity: 1,
+      unit,
+      componentType: 'ingredient' as const,
+      wastagePercent: 0,
+      optional: false,
+      itemUnit: unit,
+      averageCost: avgCost,
+      custom: false,
+    }]);
+    setManualSearch('');
+    setManualSearchResults(null);
+  };
+
+  const handleDescribeParse = async (text: string) => {
+    const trimmed = (text || '').trim();
+    if (trimmed.length < 3) { setRecipeError('Say or type at least one ingredient, like "200g paneer, 100g tomato".'); return; }
+    setDescribeLoading(true);
+    setRecipeError('');
+    try {
+      const pid = productId || initialProduct?._id;
+      if (!pid) { setRecipeError('Select a product first.'); return; }
+      const draft = await recipeAiQuickCreate(pid, trimmed);
+      if (!draft) { setRecipeError('Could not reach the AI — add the ingredients one by one instead.'); return; }
+      const newRows: ComponentRow[] = [];
+      const withPricing = (m: any) => {
+        const itemUnit = m.itemUnit || 'g';
+        return {
+          itemUnit,
+          averageCost: m.costPreview !== undefined && Number(m.quantity) > 0
+            ? money((m.costPreview || 0) / Number(m.quantity))
+            : undefined,
+        };
+      };
+      for (const m of [...(draft.matched || []), ...(draft.needsAttention || [])]) {
+        newRows.push({
+          key: `k${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+          inventoryItemId: m.inventoryItemId,
+          itemName: m.itemName || m.ingredientText,
+          quantity: Number(m.quantity) || 0,
+          unit: m.unit || 'g',
+          componentType: 'ingredient',
+          wastagePercent: 0,
+          optional: false,
+          ...withPricing(m),
+          custom: false,
+        });
+      }
+      if (newRows.length === 0) {
+        setRecipeError('Could not parse any ingredients — try typing them differently.');
+        return;
+      }
+      setComponents((prev) => [...prev, ...newRows]);
+    } catch (e: any) {
+      setRecipeError(e?.response?.data?.error || e?.message || 'AI failed — add ingredients one by one instead.');
+    } finally {
+      setDescribeLoading(false);
+    }
+  };
+
+  const handleRecipeStepRowsChange = (rows: RecipeRow[]) => {
+    // Convert RecipeInputStep rows back to ComponentRow format
+    const converted: ComponentRow[] = rows.map((r) => ({
+      key: r.key,
+      inventoryItemId: r.inventoryItemId,
+      itemName: r.itemName,
+      quantity: r.quantity,
+      unit: r.unit,
+      componentType: 'ingredient' as const,
+      wastagePercent: 0,
+      optional: false,
+      itemUnit: r.itemUnit,
+      averageCost: r.averageCost,
+      custom: false,
+    }));
+    setComponents(converted);
+  };
+
+  const recipeRowsForStep: RecipeRow[] = components.map((c) => ({
+    key: c.key,
+    inventoryItemId: c.inventoryItemId,
+    itemName: c.itemName,
+    unit: c.unit,
+    quantity: c.quantity,
+    averageCost: c.averageCost,
+    costPreview: live.lines.find((l: any) => l.key === c.key)?.cost,
+    needsReview: false,
+  }));
 
   const payloadFrom = (rows: ComponentRow[]) => ({
     productId,
@@ -848,89 +971,30 @@ function RecipeEditor({
               </div>
             </div>
 
-            {/* Ingredients */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Ingredients</label>
-                <div className="flex gap-1.5">
-                  <button onClick={addIngredient} className="px-2.5 py-1.5 bg-blue-50 text-[var(--brand-color)] rounded-lg text-[10px] font-bold hover:bg-blue-100 transition-all cursor-pointer flex items-center gap-1">
-                    <Package className="w-3 h-3" /> Add ingredient
-                  </button>
-                  <button onClick={addSubRecipe} className="px-2.5 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-[10px] font-bold hover:bg-purple-100 transition-all cursor-pointer flex items-center gap-1">
-                    <Sparkles className="w-3 h-3" /> Sub-recipe
-                  </button>
-                </div>
-              </div>
-
-              {components.length === 0 && (
-                <div className="p-6 text-center border-2 border-dashed border-[var(--color-border-default)] rounded-2xl">
-                  <Package className="w-8 h-8 text-gray-500 mx-auto mb-1.5" />
-                  <p className="text-xs text-gray-400">Add ingredients — e.g. Bun 1, Patty 1, Cheese 20g.</p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                {components.map((c) => {
-                  const isSub = c.componentType === 'sub_recipe';
-                  const sub = isSub ? recipes.find((r) => r._id === c.subRecipeId) : null;
-                  const item = !isSub && !c.custom ? inventoryItems.find((i) => i.id === c.inventoryItemId) : null;
-                  return (
-                    <div key={c.key} className={`border rounded-xl p-3 ${isSub ? 'border-purple-200 bg-purple-50/30' : 'border-[var(--color-border-default)] bg-gray-50/40'}`}>
-                      {isSub ? (
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                          <select value={c.subRecipeId || ''} onChange={(e) => {
-                            const r = recipes.find((x) => x._id === e.target.value);
-                            updateRow(c.key, { subRecipeId: e.target.value, itemName: r?.name || '', unit: r?.yieldUnit || 'unit' });
-                          }} className="flex-1 px-2.5 py-2 bg-[var(--color-bg-white)] border border-purple-200 rounded-lg text-xs font-semibold focus:outline-none cursor-pointer">
-                            <option value="">Select sub-recipe…</option>
-                            {recipes.map((r) => <option key={r._id} value={r._id}>{r.name} ({r.yieldQuantity} {r.yieldUnit})</option>)}
-                          </select>
-                          <input type="number" min="0" step="any" value={c.quantity} onChange={(e) => updateRow(c.key, { quantity: Number(e.target.value) })} placeholder="Qty"
-                            className="w-20 px-2.5 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none text-right" />
-                          <span className="w-16 px-2 py-2 text-xs font-mono text-gray-500 text-center">{c.unit}</span>
-                          <button onClick={() => removeRow(c.key)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition-all cursor-pointer"><X className="w-3.5 h-3.5" /></button>
-                        </div>
-                      ) : c.custom ? (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            <input value={c.itemName} onChange={(e) => updateRow(c.key, { itemName: e.target.value })} placeholder="Ingredient name" className="flex-1 px-2.5 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-xs font-semibold focus:outline-none" />
-                            <input type="number" min="0" step="any" value={c.quantity} onChange={(e) => updateRow(c.key, { quantity: Number(e.target.value) })} placeholder="Qty"
-                              className="w-20 px-2.5 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none text-right" />
-                            <select value={c.unit} onChange={(e) => updateRow(c.key, { unit: e.target.value })} className="w-20 px-2 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none cursor-pointer">
-                              {ALL_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                            <button onClick={() => updateRow(c.key, { custom: false })} className="text-[10px] text-[var(--brand-color)] font-bold cursor-pointer px-2 py-1 hover:bg-blue-50 rounded">Use inventory</button>
-                            <button onClick={() => removeRow(c.key)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition-all cursor-pointer"><X className="w-3.5 h-3.5" /></button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <IngredientPicker
-                            value={c.inventoryItemId}
-                            items={inventoryItems}
-                            fallback={c.inventoryItemId && !item ? { id: c.inventoryItemId, name: c.itemName || '(deleted)', unit: c.unit } : null}
-                            onSelect={(id) => {
-                              const it = inventoryItems.find((i) => i.id === id);
-                              updateRow(c.key, { inventoryItemId: id, itemName: it?.name || '', unit: it?.unit || 'g', itemUnit: it?.unit, averageCost: it?.averageCost });
-                            }}
-                            placeholder="Search ingredient…"
-                          />
-                          <input type="number" min="0" step="any" value={c.quantity} onChange={(e) => updateRow(c.key, { quantity: Number(e.target.value) })} placeholder="Qty"
-                            className="w-20 px-2.5 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none text-right" />
-                          <select value={c.unit} onChange={(e) => updateRow(c.key, { unit: e.target.value })}
-                            className="w-20 px-2 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none cursor-pointer">
-                            {(() => { const opts = unitOptionsFor(item?.unit); if (c.unit && !opts.includes(c.unit)) opts.unshift(c.unit); return opts; })().map((u) => <option key={u} value={u}>{u}</option>)}
-                          </select>
-                          <button onClick={() => updateRow(c.key, { custom: true })} className="text-[10px] text-gray-400 font-bold cursor-pointer px-2 py-1 hover:bg-gray-100 rounded" title="Not in inventory?">Custom</button>
-                          <button onClick={() => removeRow(c.key)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg transition-all cursor-pointer"><X className="w-3.5 h-3.5" /></button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            {/* Ingredients — RecipeInputStep (matches registration wizard design) */}
+            <RecipeInputStep
+              mode={recipeMode}
+              onModeChange={setRecipeMode}
+              rows={recipeRowsForStep}
+              onRowsChange={handleRecipeStepRowsChange}
+              currencySymbol="₹"
+              recipeCost={live.direct}
+              referencePrice={sellingPrice}
+              marginPct={sellingPrice > 0 ? Math.round(((sellingPrice - live.variable) / sellingPrice) * 100) : null}
+              manualSearch={manualSearch}
+              onManualSearchChange={setManualSearch}
+              manualSearchResults={manualSearchResults}
+              onManualSearch={handleManualSearch}
+              onManualAddItem={handleManualAddItem}
+              manualLoading={manualLoading}
+              describeText={describeText}
+              onDescribeTextChange={setDescribeText}
+              onParseText={handleDescribeParse}
+              describeLoading={describeLoading}
+              error={recipeError}
+              onRowQuantityChange={(key, qty) => updateRow(key, { quantity: qty })}
+              onRowRemove={removeRow}
+            />
           </div>
 
           {/* Right: live cost panel */}
