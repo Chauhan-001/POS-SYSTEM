@@ -108,9 +108,10 @@ function ProductCard({
           </div>
           <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-gray-100">
             <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
-              {currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}
-              {product.variants && product.variants.length > 0 && (
-                <span className="text-[10px] text-gray-500 font-normal ml-1">+variants</span>
+              {product.variants && product.variants.length > 0 ? (
+                <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants.length} variant{product.variants.length === 1 ? '' : 's'}</span>
+              ) : (
+                <>{currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}</>
               )}
               {product.isCombo && (
                 <span className="text-[9px] font-bold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full ml-1 uppercase tracking-wide">Combo</span>
@@ -174,7 +175,11 @@ function ProductCard({
         </div>
         <div className="flex items-center justify-between gap-1 mt-1 pt-2 border-t border-gray-100">
           <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
-            {currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}
+            {product.variants && product.variants.length > 0 ? (
+              <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants.length} variant{product.variants.length === 1 ? '' : 's'}</span>
+            ) : (
+              <>{currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}</>
+            )}
             {product.isCombo && (
               <span className="text-[9px] font-bold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full ml-1 uppercase tracking-wide">Combo</span>
             )}
