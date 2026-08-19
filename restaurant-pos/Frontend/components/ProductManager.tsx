@@ -942,7 +942,11 @@ export default function ProductManager({
                   {/* Pricing and GST */}
                   <div className="flex justify-between items-center text-xs text-gray-500 mb-3">
                     <span className="font-bold text-sm text-[var(--color-text-primary)]">
-                      {currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}
+                      {product.variants && product.variants.length > 0 ? (
+                        <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants.length} variant{product.variants.length === 1 ? '' : 's'}</span>
+                      ) : (
+                        <>{currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}</>
+                      )}
                     </span>
                     <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-mono">
                       GST: {product.gstPercent}%
