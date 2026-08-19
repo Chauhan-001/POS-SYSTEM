@@ -108,8 +108,8 @@ function ProductCard({
           </div>
           <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-gray-100">
             <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
-              {product.variants && product.variants.length > 0 ? (
-                <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants.length} variant{product.variants.length === 1 ? '' : 's'}</span>
+              {((product.variants && product.variants.length > 0) || (product.menuConfig?.variantConfigurations && product.menuConfig.variantConfigurations.length > 0)) ? (
+                <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants?.length || product.menuConfig?.variantConfigurations?.length || 0} variant{((product.variants?.length || product.menuConfig?.variantConfigurations?.length || 0) === 1) ? '' : 's'}</span>
               ) : (
                 <>{currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}</>
               )}
@@ -175,8 +175,8 @@ function ProductCard({
         </div>
         <div className="flex items-center justify-between gap-1 mt-1 pt-2 border-t border-gray-100">
           <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
-            {product.variants && product.variants.length > 0 ? (
-              <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants.length} variant{product.variants.length === 1 ? '' : 's'}</span>
+            {((product.variants && product.variants.length > 0) || (product.menuConfig?.variantConfigurations && product.menuConfig.variantConfigurations.length > 0)) ? (
+              <span className="text-[11px] font-bold text-gray-500 font-sans">{product.variants?.length || product.menuConfig?.variantConfigurations?.length || 0} variant{((product.variants?.length || product.menuConfig?.variantConfigurations?.length || 0) === 1) ? '' : 's'}</span>
             ) : (
               <>{currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}</>
             )}
