@@ -1643,6 +1643,16 @@ export function usePOSState() {
   useEffect(() => { setDBData(CK.WAITING, waitingList); }, [waitingList]);
   useEffect(() => { setDBData(CK.FLOORS, floors); }, [floors]);
   useEffect(() => { setDBData('pos_current_employee', currentEmployee); }, [currentEmployee]);
+  // Auto-derive categories from products — ensures every product's category
+  // appears as a billing chip even if it was never manually added via ProductManager.
+  useEffect(() => {
+    const fromProducts = new Set(products.map((p) => p.category).filter(Boolean));
+    setCategories((prev) => {
+      const merged = [...new Set([...prev, ...fromProducts])];
+      if (merged.length === prev.length && merged.every((c, i) => c === prev[i])) return prev;
+      return merged;
+    });
+  }, [products]);
   useEffect(() => { setDBData('pos_categories', categories); }, [categories]);
   useEffect(() => { setDBData('pos_category_colors', categoryColors); }, [categoryColors]);
   useEffect(() => { setDBData('pos_held_orders', heldOrders); }, [heldOrders]);
