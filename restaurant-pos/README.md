@@ -180,11 +180,11 @@ cd restaurant-pos/Frontend
 npm run dev
 ```
 
-The frontend starts on **http://localhost:5173**.
+The frontend starts on **http://localhost:5175**.
 
 ### 5. First-Time Setup
 
-1. Open your browser to `http://localhost:5173`
+1. Open your browser to `http://localhost:5175`
 2. The **First Time Setup** wizard will appear
 3. Create an **Owner account** with your restaurant details
 4. Log in with the Owner credentials
@@ -381,7 +381,7 @@ After first-time setup, the Owner creates their own credentials. For development
 | `JWT_SECRET` | Yes | (dev default) | JWT signing secret |
 | `REFRESH_SECRET` | Yes | (dev default) | Refresh token secret |
 | `PORT` | No | `3002` | HTTP server port |
-| `CORS_ORIGIN` | No | `http://localhost:5173` | Allowed CORS origin |
+| `CORS_ORIGIN` | No | `http://localhost:5173,http://localhost:5175` | Allowed CORS origins |
 | `NODE_ENV` | No | `development` | Environment mode |
 | `AI_API_KEY` | For AI | — | Google/OpenAI API key |
 | `AI_PROVIDER` | For AI | `openai` | AI provider |
@@ -546,7 +546,7 @@ npm run lint  # tsc --noEmit
 
 1. **Ensure MongoDB is running**: `mongod --dbname pos`
 2. **Ensure backend is running**: `cd ../backend && npm run dev`
-3. **Check CORS**: Backend default CORS origin is `http://localhost:5173`
+3. **Check CORS**: Backend default CORS origins include `http://localhost:5173` and `http://localhost:5175`
 4. **Check port**: Backend defaults to `3002`, frontend proxies `/api` to it
 
 ### "Blank screen on startup"

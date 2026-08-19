@@ -117,16 +117,18 @@ export async function updateAllSegments(restaurantId: string): Promise<void> {
     restaurantId: oid,
     isDeleted: { $ne: true },
   })
-    .select('phone lastVisit visits points birthday isNewCustomer tier orderType')
+    .select('phone lastVisit visits points birthday isNewCustomer tier orderType totalSpend visitFrequency')
     .lean();
 
   // Group customers by segment
   const segmentCustomers: Record<string, string[]> = {};
   const segmentSpends: Record<string, number[]> = {};
+  const segmentFrequencies: Record<string, number[]> = {};
 
   for (const def of SEGMENT_DEFINITIONS) {
     segmentCustomers[def.type] = [];
     segmentSpends[def.type] = [];
+    segmentFrequencies[def.type] = [];
   }
 
   for (const c of customers) {
@@ -134,48 +136,65 @@ export async function updateAllSegments(restaurantId: string): Promise<void> {
     const daysSinceLastVisit = lastVisit
       ? Math.floor((today.getTime() - lastVisit.getTime()) / (1000 * 60 * 60 * 24))
       : 999;
+    const spend = Number(c.totalSpend) || 0;
+    const freq = Number(c.visitFrequency) || 0;
+
+    // Helper: add customer to segment with spend + frequency tracking
+    const addTo = (type: string) => {
+      segmentCustomers[type].push(c.phone);
+      segmentSpends[type].push(spend);
+      segmentFrequencies[type].push(freq);
+    };
 
     // Visit-based
     if (lastVisit && lastVisit.toISOString().split('T')[0] === todayStr) {
-      segmentCustomers['visit_today'].push(c.phone);
+      addTo('visit_today');
     }
     if (lastVisit && daysSinceLastVisit <= 7) {
-      segmentCustomers['visit_this_week'].push(c.phone);
+      addTo('visit_this_week');
     }
     if (lastVisit && daysSinceLastVisit <= 30) {
-      segmentCustomers['visit_this_month'].push(c.phone);
+      addTo('visit_this_month');
     }
 
     // Lifecycle
     if (c.isNewCustomer && c.visits <= 1) {
-      segmentCustomers['new_customer'].push(c.phone);
+      addTo('new_customer');
     }
     if (c.visits > 1) {
-      segmentCustomers['returning_customer'].push(c.phone);
+      addTo('returning_customer');
     }
     if (c.visits >= 10) {
-      segmentCustomers['frequent_customer'].push(c.phone);
+      addTo('frequent_customer');
     }
     if (c.visits >= 20 && c.points >= 500) {
-      segmentCustomers['vip_customer'].push(c.phone);
+      addTo('vip_customer');
+    }
+    // Spend-based segments (average bill = totalSpend / visits)
+    const avgBill = c.visits > 0 ? spend / c.visits : 0;
+    if (avgBill >= 1000) {
+      addTo('high_spending');
+    }
+    if (avgBill > 0 && avgBill < 200) {
+      addTo('low_spending');
     }
 
     // Dormant
-    if (daysSinceLastVisit >= 7 && daysSinceLastVisit < 15) segmentCustomers['dormant_7d'].push(c.phone);
-    if (daysSinceLastVisit >= 15 && daysSinceLastVisit < 30) segmentCustomers['dormant_15d'].push(c.phone);
-    if (daysSinceLastVisit >= 30 && daysSinceLastVisit < 45) segmentCustomers['dormant_30d'].push(c.phone);
-    if (daysSinceLastVisit >= 45 && daysSinceLastVisit < 60) segmentCustomers['dormant_45d'].push(c.phone);
-    if (daysSinceLastVisit >= 60 && daysSinceLastVisit < 90) segmentCustomers['dormant_60d'].push(c.phone);
-    if (daysSinceLastVisit >= 90) segmentCustomers['dormant_90d'].push(c.phone);
+    if (daysSinceLastVisit >= 7 && daysSinceLastVisit < 15) addTo('dormant_7d');
+    if (daysSinceLastVisit >= 15 && daysSinceLastVisit < 30) addTo('dormant_15d');
+    if (daysSinceLastVisit >= 30 && daysSinceLastVisit < 45) addTo('dormant_30d');
+    if (daysSinceLastVisit >= 45 && daysSinceLastVisit < 60) addTo('dormant_45d');
+    if (daysSinceLastVisit >= 60 && daysSinceLastVisit < 90) addTo('dormant_60d');
+    if (daysSinceLastVisit >= 90) addTo('dormant_90d');
 
     // Birthday
     if (c.birthday) {
       const bd = c.birthday.trim();
       if (bd.length >= 5) {
         const bdMMDD = bd.length === 10 ? bd.substring(5) : bd;
-        if (bdMMDD === todayMonthDay) segmentCustomers['birthday_today'].push(c.phone);
-        if (bdMMDD === tomorrowMonthDay) segmentCustomers['birthday_tomorrow'].push(c.phone);
-        if (weekMonthDays.includes(bdMMDD)) segmentCustomers['birthday_this_week'].push(c.phone);
+        if (bdMMDD === todayMonthDay) addTo('birthday_today');
+        if (bdMMDD === tomorrowMonthDay) addTo('birthday_tomorrow');
+        if (weekMonthDays.includes(bdMMDD)) addTo('birthday_this_week');
       }
     }
 
@@ -183,34 +202,48 @@ export async function updateAllSegments(restaurantId: string): Promise<void> {
     if (lastVisit) {
       const hour = new Date(lastVisit).getHours();
       const dow = new Date(lastVisit).getDay();
-      if (dow === 5 || dow === 6 || dow === 0) segmentCustomers['weekend_customer'].push(c.phone);
-      if (hour >= 11 && hour < 15) segmentCustomers['lunch_customer'].push(c.phone);
-      if (hour >= 18 && hour < 23) segmentCustomers['dinner_customer'].push(c.phone);
+      if (dow === 5 || dow === 6 || dow === 0) addTo('weekend_customer');
+      if (hour >= 11 && hour < 15) addTo('lunch_customer');
+      if (hour >= 18 && hour < 23) addTo('dinner_customer');
     }
 
     // Large orders / online orders (best-effort flags where present)
     if ((c as any).orderType && String((c as any).orderType).toLowerCase() !== 'dine in') {
-      segmentCustomers['online_orders'].push(c.phone);
+      addTo('online_orders');
     }
 
     // Loyalty
-    if (c.points > 0) segmentCustomers['loyalty_member'].push(c.phone);
+    if (c.points > 0) addTo('loyalty_member');
   }
 
   // Bulk-update all segments in a single round-trip
-  const bulkOps = SEGMENT_DEFINITIONS.map(def => ({
-    updateOne: {
-      filter: { restaurantId: oid, type: def.type },
-      update: {
-        $set: {
-          customerPhones: segmentCustomers[def.type] || [],
-          customerCount: (segmentCustomers[def.type] || []).length,
-          lastCampaignDate: undefined,
+  const bulkOps = SEGMENT_DEFINITIONS.map(def => {
+    const phones = segmentCustomers[def.type] || [];
+    const spends = segmentSpends[def.type] || [];
+    const freqs = segmentFrequencies[def.type] || [];
+    const count = phones.length;
+    const avgSpend = count > 0 && spends.length > 0
+      ? Math.round((spends.reduce((s, v) => s + v, 0) / count) * 100) / 100
+      : 0;
+    const avgFreq = count > 0 && freqs.length > 0
+      ? Math.round((freqs.reduce((s, v) => s + v, 0) / count) * 10) / 10
+      : 0;
+    return {
+      updateOne: {
+        filter: { restaurantId: oid, type: def.type },
+        update: {
+          $set: {
+            customerPhones: phones,
+            customerCount: count,
+            averageSpend: avgSpend,
+            averageVisitFrequency: avgFreq,
+            lastCampaignDate: undefined,
+          },
         },
+        upsert: true,
       },
-      upsert: true,
-    },
-  }));
+    };
+  });
 
   await CustomerSegmentModel.bulkWrite(bulkOps);
 }

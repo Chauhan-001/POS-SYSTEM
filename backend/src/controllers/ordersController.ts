@@ -117,7 +117,13 @@ export async function createOrder(req: Request, res: Response): Promise<void> {
   try {
     const order = await orderService.create(req.body, authCtx(req));
     res.status(201).json({ data: order });
-  } catch (error) {
+  } catch (error: any) {
+    // Known business errors (e.g. the table already has a live order) keep
+    // their status/code; unexpected errors stay 500.
+    if (error instanceof AppError || error?.statusCode) {
+      res.status(error.statusCode || error.status || 400).json({ error: error.message, code: error.code });
+      return;
+    }
     console.error('[OrdersController] create error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

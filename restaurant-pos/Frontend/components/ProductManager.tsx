@@ -4,10 +4,15 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2 } from 'lucide-react';
-import { Product, ProductVariant, Branch } from '../src/types';
+import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Copy, Settings2, CheckCheck } from 'lucide-react';
+import { Product, ProductVariant, Branch, ProductMenuConfig, ProductConfigRef } from '../src/types';
 import * as api from '../src/api/client';
 import { debugWarn } from '../src/utils/debugLog';
+import ImageInput from './common/ImageInput';
+import AddItemModal from './menu/AddItemModal';
+import ProductConfigEditor from './menu/ProductConfigEditor';
+import ProductRegistrationWizard from './menu/ProductRegistrationWizard';
+import { useProductConfigSummary } from './menu/useProductConfig';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -27,6 +32,9 @@ interface ProductManagerProps {
   categoryColors: Record<string, string>;
   onUpdateCategoryColors: (colors: Record<string, string>) => void;
   branches?: Branch[];
+  /** Restaurant-level tax config — powers automatic tax recommendation in registration. */
+  defaultTaxRate?: number;
+  taxRules?: Record<'prepared_food' | 'beverage' | 'packaged' | 'other', number | null>;
   branchProductPrices?: Record<string, Record<string, number>>;
   onSetBranchProductPrices?: (prices: Record<string, Record<string, number>>) => void;
   branchVariantPrices?: Record<string, Record<string, Record<string, number>>>;
@@ -38,7 +46,7 @@ function SortableCategory({ id, onRemove, onEdit, color, onColorChange }: { id: 
   const style = { transform: CSS.Transform.toString(transform), transition };
   const [showPicker, setShowPicker] = useState(false);
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-2 bg-white p-2 rounded-lg border shadow-sm">
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2 bg-[var(--color-bg-white)] p-2 rounded-lg border shadow-sm">
       <div {...attributes} {...listeners} className="cursor-grab text-gray-400">
         <GripVertical className="w-4 h-4" />
       </div>
@@ -50,7 +58,7 @@ function SortableCategory({ id, onRemove, onEdit, color, onColorChange }: { id: 
           title="Change color"
         />
         {showPicker && (
-          <div className="absolute top-7 left-0 z-10 bg-white border border-gray-200 rounded-xl p-2 shadow-xl flex gap-1 flex-wrap w-40">
+          <div className="absolute top-7 left-0 z-10 bg-[var(--color-bg-white)] border border-gray-200 rounded-xl p-2 shadow-xl flex gap-1 flex-wrap w-40">
             {CATEGORY_PALETTE.map(c => (
               <div
                 key={c}
@@ -77,6 +85,8 @@ export default function ProductManager({
   categoryColors,
   onUpdateCategoryColors,
   branches = [],
+  defaultTaxRate = 0,
+  taxRules,
   branchProductPrices = {},
   onSetBranchProductPrices,
   branchVariantPrices = {},
@@ -87,8 +97,14 @@ export default function ProductManager({
   
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAddChoiceOpen, setIsAddChoiceOpen] = useState(false);
+  const [isRegistrationOpen, setIsRegistrationOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [configEditorProduct, setConfigEditorProduct] = useState<Product | null>(null);
+  const [lastCreatedProduct, setLastCreatedProduct] = useState<Product | null>(null);
+  // Configuration summary (card badges) — resolved server-side, no local logic.
+  const { summary: configSummary, loaded: summaryLoaded, refresh: refreshConfigSummary } = useProductConfigSummary(products);
 
   // Form states
   const [pCode, setPCode] = useState('');
@@ -100,6 +116,10 @@ export default function ProductManager({
   const [pAvailability, setPAvailability] = useState(true);
   const [pFavorite, setPFavorite] = useState(false);
   const [pVariants, setPVariants] = useState<ProductVariant[]>([]);
+  // ── Meal combo builder state ──
+  const [pIsCombo, setPIsCombo] = useState(false);
+  const [pComboComponentIds, setPComboComponentIds] = useState<string[]>([]);
+  const [pComboPrice, setPComboPrice] = useState(0);
 
   // DND setup
   const sensors = useSensors(
@@ -131,6 +151,8 @@ export default function ProductManager({
   // Per-branch pricing state
   const [pricingModalProduct, setPricingModalProduct] = useState<Product | null>(null);
   const [pricingForm, setPricingForm] = useState<Record<string, string>>({});
+  // Meal-combo per-branch price: branchId → combo price (only for isCombo)
+  const [comboPricingForm, setComboPricingForm] = useState<Record<string, string>>({});
   // Variant pricing: branchId → { variantName: price }
   const [variantPricingForm, setVariantPricingForm] = useState<Record<string, Record<string, string>>>({});
 
@@ -195,7 +217,15 @@ export default function ProductManager({
       existing[b.id] = override !== undefined ? String(override) : '';
     });
     setPricingForm(existing);
-    
+
+    // Initialize per-branch combo pricing (meal combos only)
+    const comboExisting: Record<string, string> = {};
+    branches.filter(b => b.isActive).forEach(b => {
+      const override = (product as any).comboBranchPrice?.[b.id];
+      comboExisting[b.id] = override !== undefined ? String(override) : '';
+    });
+    setComboPricingForm(comboExisting);
+
     // Initialize variant pricing form
     const vExisting: Record<string, Record<string, string>> = {};
     if (product.variants && product.variants.length > 0) {
@@ -229,6 +259,21 @@ export default function ProductManager({
     });
     onSetBranchProductPrices?.(updated);
 
+    // Per-branch COMBO price (meal combos only): patch the product in state so
+    // the billing tile and the auto-applied backing offer use the branch price,
+    // then persist to the backend (the offer carries comboBranchPrices too).
+    let comboBranchPriceMap: Record<string, number> | undefined;
+    if (pricingModalProduct.isCombo) {
+      comboBranchPriceMap = {};
+      branches.filter(b => b.isActive).forEach(b => {
+        const val = comboPricingForm[b.id]?.trim();
+        if (val && !isNaN(Number(val))) comboBranchPriceMap![b.id] = Number(val);
+      });
+      onUpdateProducts(products.map(p =>
+        p.id === pricingModalProduct.id ? { ...p, comboBranchPrice: comboBranchPriceMap } : p
+      ));
+    }
+
     // BACKEND CALLED — persist the branch-price map to /api/products so the
     // customer site (and other terminals) price this item the same way. Only
     // products that exist server-side (Mongo id) can be updated.
@@ -239,7 +284,10 @@ export default function ProductManager({
         const val = pricingForm[b.id]?.trim();
         if (val && !isNaN(Number(val))) branchPriceMap[b.id] = Number(val);
       });
-      api.updateProduct(pid, { branchPrice: branchPriceMap })
+      api.updateProduct(pid, {
+        branchPrice: branchPriceMap,
+        ...(comboBranchPriceMap ? { comboBranchPrice: comboBranchPriceMap } : {}),
+      })
         .then(() => debugWarn('ProductManager', 'branch prices synced to backend'))
         .catch(err => debugWarn('ProductManager', 'updateProduct branchPrice failed:', err));
     }
@@ -425,6 +473,9 @@ export default function ProductManager({
     setPAvailability(true);
     setPFavorite(false);
     setPVariants([]);
+    setPIsCombo(false);
+    setPComboComponentIds([]);
+    setPComboPrice(0);
     setEditingProduct(null);
     setNewCatInput('');
     setIsAddModalOpen(true);
@@ -434,15 +485,76 @@ export default function ProductManager({
     setEditingProduct(product);
     setPCode(product.code);
     setPName(product.name);
-    setPPrice(product.price);
+    // For combos the sell price is the combo price — never show a stale base.
+    setPPrice(product.isCombo ? (product.comboPrice ?? product.price) : product.price);
     setPCategory(product.category);
     setPGst(product.gstPercent);
     setPImage(product.image);
     setPAvailability(product.availability);
     setPFavorite(!!product.favorite);
     setPVariants(product.variants || []);
+    setPIsCombo(!!product.isCombo);
+    setPComboComponentIds(product.comboComponentIds || []);
+    setPComboPrice(product.comboPrice ?? 0);
     setNewCatInput('');
     setIsAddModalOpen(true);
+  };
+
+  /**
+   * Duplicate an existing (possibly configured) item and open its config
+   * editor. Reuses the item's reusable configuration references so variants,
+   * customizations and add-ons come along automatically.
+   */
+  const handleDuplicateProduct = (source: Product) => {
+    const newCode = `${source.code}-${Math.floor(100 + Math.random() * 900)}`;
+    const newProduct: Product = {
+      ...source,
+      id: `p_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      code: newCode,
+      name: `${source.name} (copy)`,
+      favorite: false,
+      menuConfig: source.menuConfig ? JSON.parse(JSON.stringify(source.menuConfig)) : undefined,
+    };
+    const next = [newProduct, ...products];
+    onUpdateProducts(next);
+
+    api.createProduct({
+      name: newProduct.name,
+      code: newCode,
+      price: newProduct.isCombo ? (newProduct.comboPrice ?? newProduct.price) : newProduct.price,
+      category: newProduct.category,
+      gstPercent: newProduct.gstPercent,
+      image: newProduct.image,
+      availability: newProduct.availability,
+      favorite: false,
+      ...(newProduct.isCombo && newProduct.comboComponentIds?.length ? { isCombo: true, comboComponentIds: newProduct.comboComponentIds, comboPrice: newProduct.comboPrice } : {}),
+      ...(newProduct.variants && newProduct.variants.length > 0 ? { variants: newProduct.variants } : {}),
+    }).then((created: any) => {
+      const serverId = created?._id || created?.id;
+      if (serverId) {
+        const synced = { ...newProduct, id: serverId };
+        onUpdateProducts(next.map((p) => p.id === newProduct.id ? synced : p));
+        // Re-attach the reusable configuration references to the new item.
+        const cfg = synced.menuConfig;
+        if (cfg) {
+          const refs: Array<{ type: 'VARIANT_GROUP' | 'MODIFIER_GROUP' | 'ADD_ON_GROUP'; ref: ProductConfigRef }> = [
+            ...cfg.variantConfigurations.map((r) => ({ type: 'VARIANT_GROUP' as const, ref: r })),
+            ...cfg.modifierConfigurations.map((r) => ({ type: 'MODIFIER_GROUP' as const, ref: r })),
+            ...cfg.addOnConfigurations.map((r) => ({ type: 'ADD_ON_GROUP' as const, ref: r })),
+          ];
+          Promise.all(refs.map(({ type, ref }) =>
+            api.attachProductConfig(serverId, {
+              type,
+              templateId: ref.templateId,
+              mode: ref.mode,
+              overrides: ref.overrides,
+            }).catch((err: any) => debugWarn('ProductManager', 'duplicate: attach config failed', err))
+          )).finally(() => refreshConfigSummary());
+        }
+        setConfigEditorProduct(synced);
+        setIsAddChoiceOpen(false);
+      }
+    }).catch((err: any) => debugWarn('ProductManager', 'duplicate: createProduct failed:', err));
   };
 
   const handleSaveProduct = (e: React.FormEvent) => {
@@ -471,6 +583,30 @@ export default function ProductManager({
       }
     }
 
+    // ── Meal combo client-side sanity check (server remains authoritative) ──
+    if (pIsCombo) {
+      if (pComboComponentIds.length < 2) {
+        alert('A meal combo needs at least 2 items. Pick the items that are bundled.');
+        return;
+      }
+      if (!(Number(pComboPrice) > 0)) {
+        alert('Enter a combo price greater than zero.');
+        return;
+      }
+      const sum = pComboComponentIds.reduce((s, id) => {
+        const comp = products.find(x => x.id === id);
+        return s + (comp ? Number(comp.price) || 0 : 0);
+      }, 0);
+      if (!(Number(pComboPrice) < sum)) {
+        alert(`Combo price must be less than the items' total (${currencySymbol}${sum.toFixed(2)}).`);
+        return;
+      }
+    }
+
+    const comboFields = pIsCombo
+      ? { isCombo: true, comboComponentIds: pComboComponentIds, comboPrice: Number(pComboPrice) }
+      : { isCombo: false };
+
     if (editingProduct) {
       // Editing Mode
       const updated = products.map(p => {
@@ -479,13 +615,14 @@ export default function ProductManager({
             ...p,
             code: pCode,
             name: pName.trim(),
-            price: Number(pPrice),
+            price: pIsCombo ? Number(pComboPrice) : Number(pPrice),
             category: finalCategory,
             gstPercent: Number(pGst),
             image: pImage || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80',
             availability: pAvailability,
             favorite: pFavorite,
-            variants: pVariants.length > 0 ? pVariants : undefined
+            variants: pVariants.length > 0 ? pVariants : undefined,
+            ...comboFields,
           };
         }
         return p;
@@ -499,14 +636,22 @@ export default function ProductManager({
         api.updateProduct(pid, {
           name: pName.trim(),
           code: pCode,
-          price: Number(pPrice),
+          price: pIsCombo ? Number(pComboPrice) : Number(pPrice),
           category: finalCategory,
           gstPercent: Number(pGst),
           image: pImage || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80',
           availability: pAvailability,
           favorite: pFavorite,
+          ...comboFields,
           ...(pVariants.length > 0 ? { variants: pVariants } : {}),
-        }).catch(err => debugWarn('ProductManager', 'updateProduct failed:', err));
+        }).then((updated: any) => {
+          if (pIsCombo && !updated && navigator.onLine !== false) {
+            // Server-authoritative combo validation (components must exist
+            // server-side, same tenant, price < total). The offer sync failed
+            // server-side — the combo won't work at billing until it's fixed.
+            alert('Combo saved locally, but the server rejected it. Make sure all bundled items are synced to the server, then save again.');
+          }
+        }).catch((err: any) => debugWarn('ProductManager', 'updateProduct failed:', err));
       }
     } else {
       // Create Mode
@@ -514,35 +659,42 @@ export default function ProductManager({
         id: `p_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         code: pCode,
         name: pName.trim(),
-        price: Number(pPrice),
+        price: pIsCombo ? Number(pComboPrice) : Number(pPrice),
         category: finalCategory,
         gstPercent: Number(pGst),
         image: pImage || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80',
         availability: pAvailability,
         favorite: pFavorite,
-        variants: pVariants.length > 0 ? pVariants : undefined
+        variants: pVariants.length > 0 ? pVariants : undefined,
+        ...comboFields,
       };
       const next = [newProduct, ...products];
       onUpdateProducts(next);
+      setLastCreatedProduct(newProduct);
       // BACKEND CALLED — push the new menu item to /api/products. On success the
       // local temp id is swapped for the server _id so later edits/deletes/merges
       // line up instead of duplicating the product on the next fetch.
       api.createProduct({
         name: newProduct.name,
         code: newProduct.code,
-        price: newProduct.price,
+        price: pIsCombo ? Number(pComboPrice) : newProduct.price,
         category: newProduct.category,
         gstPercent: newProduct.gstPercent,
         image: newProduct.image,
         availability: newProduct.availability,
         favorite: newProduct.favorite,
+        ...comboFields,
         ...(newProduct.variants && newProduct.variants.length > 0 ? { variants: newProduct.variants } : {}),
       }).then((created: any) => {
         const serverId = created?._id || created?.id;
+        if (pIsCombo && !serverId && navigator.onLine !== false) {
+          alert('Combo saved locally, but the server rejected it. Make sure all bundled items are synced to the server, then save again.');
+        }
         if (serverId) {
           onUpdateProducts(next.map((p) => p.id === newProduct.id ? { ...p, id: serverId } : p));
+          setLastCreatedProduct((cur) => cur?.id === newProduct.id ? { ...cur, id: serverId } : cur);
         }
-      }).catch(err => debugWarn('ProductManager', 'createProduct failed:', err));
+      }).catch((err: any) => debugWarn('ProductManager', 'createProduct failed:', err));
     }
     setNewCatInput('');
     setIsAddModalOpen(false);
@@ -570,9 +722,9 @@ export default function ProductManager({
     <div id="product_manager_workspace" className="p-6 h-full flex flex-col font-sans">
       
       {/* Search and Category Nav Row */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-white p-4 rounded-xl border border-[#e1e2ed] shadow-sm">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm">
         <div className="flex flex-col gap-1">
-          <h2 className="text-xl font-bold tracking-tight text-[#191b23]">Product & Catalog Management</h2>
+          <h2 className="text-xl font-bold tracking-tight text-[var(--color-text-primary)]">Product & Catalog Management</h2>
           <p className="text-xs text-gray-500">Configure item tags, pricing models, specific GST tax rates, and online availability.</p>
         </div>
 
@@ -585,16 +737,16 @@ export default function ProductManager({
               placeholder="Search by name or code..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
             />
           </div>
 
           <button
-            onClick={openAddModal}
-            className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer shrink-0"
+            onClick={() => setIsAddChoiceOpen(true)}
+            className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
-            Add New Product
+            Add Item
           </button>
           <button
             onClick={() => setIsCategoryModalOpen(true)}
@@ -615,6 +767,25 @@ export default function ProductManager({
         </div>
       </div>
 
+      {/* “Added — configure more?” prompt */}
+      {lastCreatedProduct && (
+        <div className="mb-4 flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 animate-fade-in">
+          <p className="text-xs font-semibold text-emerald-800 flex items-center gap-2 min-w-0">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="truncate">“{lastCreatedProduct.name}” was added{lastCreatedProduct.menuConfig ? ' with its configuration' : ''}.</span>
+          </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => { setConfigEditorProduct(lastCreatedProduct); setLastCreatedProduct(null); }}
+              className="flex items-center gap-1 px-3 py-1.5 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white rounded-lg text-[10px] font-bold cursor-pointer transition-colors"
+            >
+              <SlidersHorizontal className="w-3 h-3" /> Configure more
+            </button>
+            <button onClick={() => setLastCreatedProduct(null)} className="px-2 py-1.5 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 cursor-pointer">Dismiss</button>
+          </div>
+        </div>
+      )}
+
       {/* Category Tabs & Quick Add */}
       <div className="flex flex-wrap items-center gap-2 pb-3 mb-4 select-none border-b border-gray-100">
         {['All', ...categories].map((cat) => (
@@ -624,7 +795,7 @@ export default function ProductManager({
             className={`px-4 py-1.5 rounded-full font-semibold text-xs transition-all whitespace-nowrap cursor-pointer ${
               selectedCategory === cat
                 ? 'bg-[var(--brand-color)] text-white shadow-sm'
-                : 'bg-white text-gray-600 border border-[#e1e2ed] hover:bg-[#f3f3fe]'
+                : 'bg-[var(--color-bg-white)] text-gray-600 border border-[var(--color-border-default)] hover:bg-[var(--color-primary-light)]'
             }`}
           >
             {cat}
@@ -650,7 +821,7 @@ export default function ProductManager({
               input.value = '';
             }
           }}
-          className="flex items-center gap-1.5 border border-dashed border-gray-300 rounded-full pl-3 pr-1 py-0.5 bg-gray-50/50 hover:bg-gray-50 focus-within:border-[var(--brand-color)] focus-within:bg-white transition-all shrink-0 ml-1"
+          className="flex items-center gap-1.5 border border-dashed border-gray-300 rounded-full pl-3 pr-1 py-0.5 bg-gray-50/50 hover:bg-gray-50 focus-within:border-[var(--brand-color)] focus-within:bg-[var(--color-bg-white)] transition-all shrink-0 ml-1"
         >
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Add Cat:</span>
           <input 
@@ -662,7 +833,7 @@ export default function ProductManager({
           />
           <button 
             type="submit" 
-            className="p-1 rounded-full bg-[var(--brand-color)] hover:bg-[#003ea8] text-white cursor-pointer transition-colors"
+            className="p-1 rounded-full bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white cursor-pointer transition-colors"
             title="Create Category"
           >
             <Plus className="w-2.5 h-2.5" />
@@ -673,9 +844,9 @@ export default function ProductManager({
       {/* Grid Layout of products */}
       <div className="flex-1 overflow-y-auto min-h-[400px]">
         {filtered.length === 0 ? (
-          <div className="bg-white rounded-xl border border-[#e1e2ed] p-12 text-center text-gray-500 flex flex-col items-center justify-center">
+          <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-12 text-center text-gray-500 flex flex-col items-center justify-center">
             <XCircle className="w-12 h-12 text-gray-300 mb-3" />
-            <p className="font-semibold text-md text-[#191b23]">No products match search criteria</p>
+            <p className="font-semibold text-md text-[var(--color-text-primary)]">No products match search criteria</p>
             <p className="text-xs text-gray-400 mt-1">Clear filters or register a new product to populate the catalog grid.</p>
           </div>
         ) : (
@@ -683,8 +854,8 @@ export default function ProductManager({
             {filtered.map((product) => (
               <div 
                 key={product.id}
-                className={`bg-white rounded-xl border p-4 shadow-sm relative flex flex-col justify-between transition-all ${
-                  product.availability ? 'border-[#e1e2ed] hover:shadow-md' : 'border-gray-200 bg-gray-50/50 opacity-75'
+                className={`bg-[var(--color-bg-white)] rounded-xl border p-4 shadow-sm relative flex flex-col justify-between transition-all ${
+                  product.availability ? 'border-[var(--color-border-default)] hover:shadow-md' : 'border-gray-200 bg-gray-50/50 opacity-75'
                 }`}
               >
                 {/* Image and Meta row */}
@@ -716,7 +887,7 @@ export default function ProductManager({
                       <button
                         onClick={() => handleToggleFavorite(product.id)}
                         className={`p-1.5 rounded-full shadow-md transition-all cursor-pointer ${
-                          product.favorite ? 'bg-amber-400 text-white' : 'bg-white text-gray-400 hover:text-amber-500'
+                          product.favorite ? 'bg-amber-400 text-white' : 'bg-[var(--color-bg-white)] text-gray-400 hover:text-amber-500'
                         }`}
                         title="Toggle Favorite"
                       >
@@ -737,16 +908,28 @@ export default function ProductManager({
 
                   {/* Header Title & Cat */}
                   <div className="flex justify-between items-start mb-1">
-                    <h3 className="font-bold text-xs text-[#191b23] line-clamp-1">{product.name}</h3>
-                    <span className="text-[9px] font-bold bg-[#f3f3fe] text-[var(--brand-color)] px-2 py-0.5 rounded-full uppercase">
+                    <h3 className="font-bold text-xs text-[var(--color-text-primary)] line-clamp-1">{product.name}</h3>
+                    <span className="text-[9px] font-bold bg-[var(--color-primary-light)] text-[var(--brand-color)] px-2 py-0.5 rounded-full uppercase">
                       {product.category}
                     </span>
                   </div>
 
+                  {/* Meal combo badge */}
+                  {product.isCombo && (
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                        Meal Combo
+                      </span>
+                      <span className="text-[9px] font-semibold text-gray-500">
+                        {product.comboComponentIds?.length || 0} items · {currencySymbol}{(product.comboPrice ?? 0).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Pricing and GST */}
                   <div className="flex justify-between items-center text-xs text-gray-500 mb-3">
-                    <span className="font-bold text-sm text-[#191b23]">
-                      {currencySymbol}{product.price.toFixed(2)}
+                    <span className="font-bold text-sm text-[var(--color-text-primary)]">
+                      {currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}
                     </span>
                     <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-mono">
                       GST: {product.gstPercent}%
@@ -766,6 +949,32 @@ export default function ProductManager({
                       </div>
                     </div>
                   )}
+
+                  {/* Reusable configuration status (server-resolved counts) */}
+                  {summaryLoaded && (() => {
+                    const cs = configSummary[product.id];
+                    const has = !!cs?.hasConfiguration;
+                    const v = cs?.variantCount ?? 0;
+                    const m = cs?.modifierCount ?? 0;
+                    const a = cs?.addOnCount ?? 0;
+                    return (
+                      <div className="mb-3 flex items-center gap-1.5">
+                        {has ? (
+                          <CheckCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <Settings2 className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                        )}
+                        <span className={`text-[10px] font-bold ${has ? 'text-emerald-700' : 'text-gray-500'}`}>
+                          {has ? 'Configured' : 'Not configured'}
+                        </span>
+                        {has && (
+                          <span className="text-[10px] text-gray-400 truncate">
+                            · {v} variant{v === 1 ? '' : 's'} · {m} customization{m === 1 ? '' : 's'}{a ? ` · ${a} add-on${a === 1 ? '' : 's'}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Operations footer */}
@@ -810,8 +1019,24 @@ export default function ProductManager({
                   </button>
 
                   <button
+                    onClick={() => setConfigEditorProduct(product)}
+                    className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[var(--color-bg-page)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
+                    title="Configure variants, customizations & add-ons"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={() => handleDuplicateProduct(product)}
+                    className="p-1.5 text-gray-500 hover:text-violet-600 bg-[var(--color-bg-page)] hover:bg-violet-50 border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
+                    title="Duplicate item (config comes along)"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
                     onClick={() => openEditModal(product)}
-                    className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[#faf8ff] hover:bg-[#e7e7f3] border border-[#e1e2ed] rounded-lg transition-all cursor-pointer"
+                    className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[var(--color-bg-page)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
                     title="Edit Item details"
                   >
                     <Edit2 className="w-3.5 h-3.5" />
@@ -823,7 +1048,8 @@ export default function ProductManager({
                       onClick={() => openPricingModal(product)}
                       className={`p-1.5 rounded-lg transition-all cursor-pointer border ${
                         (branchProductPrices && Object.values(branchProductPrices).some(p => p[product.id] !== undefined)) ||
-                        (branchVariantPrices && Object.values(branchVariantPrices).some(b => b[product.id] && Object.keys(b[product.id]).length > 0))
+                        (branchVariantPrices && Object.values(branchVariantPrices).some(b => b[product.id] && Object.keys(b[product.id]).length > 0)) ||
+                        (product.isCombo && product.comboBranchPrice && Object.keys(product.comboBranchPrice).length > 0)
                           ? 'bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-200'
                           : 'text-gray-400 hover:text-purple-600 bg-gray-50/50 hover:bg-purple-50 border-gray-200'
                       }`}
@@ -837,7 +1063,7 @@ export default function ProductManager({
                     onClick={() => handleDeleteProduct(product.id)}
                     className={`p-1.5 border rounded-lg transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
                       deleteConfirmId === product.id
-                        ? 'bg-red-600 border-red-600 text-white animate-pulse'
+                        ? 'bg-[var(--color-red-600-solid)] border-red-600 text-white animate-pulse'
                         : 'text-gray-400 hover:text-red-600 bg-red-50/50 hover:bg-red-50 border-red-100'
                     }`}
                     title={deleteConfirmId === product.id ? "Click again to confirm delete" : "Delete item"}
@@ -855,10 +1081,10 @@ export default function ProductManager({
 
       {/* Manage Categories Modal */}
       {isCategoryModalOpen && (
-        <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full border border-[#e1e2ed]">
-            <div className="bg-[#f3f3fe] px-6 py-4 border-b border-[#e1e2ed] flex justify-between items-center">
-              <h3 className="font-bold text-[#191b23] text-sm">Manage Categories</h3>
+        <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--color-border-default)]">
+            <div className="bg-[var(--color-primary-light)] px-6 py-4 border-b border-[var(--color-border-default)] flex justify-between items-center">
+              <h3 className="font-bold text-[var(--color-text-primary)] text-sm">Manage Categories</h3>
               <button 
                 onClick={() => setIsCategoryModalOpen(false)}
                 className="text-gray-400 hover:text-gray-600 cursor-pointer"
@@ -907,13 +1133,59 @@ export default function ProductManager({
       )}
 
       {/* Add / Edit Product Modal */}
+      {/* Add Item choice — start from scratch or use an existing item */}
+      {isAddChoiceOpen && (
+        <AddItemModal
+          products={products}
+          currencySymbol={currencySymbol}
+          onStartFromScratch={() => { setIsAddChoiceOpen(false); setIsRegistrationOpen(true); }}
+          onUseExisting={handleDuplicateProduct}
+          onClose={() => setIsAddChoiceOpen(false)}
+        />
+      )}
+
+      {/* Guided dish registration — Start from scratch */}
+      {isRegistrationOpen && (
+        <ProductRegistrationWizard
+          products={products}
+          currencySymbol={currencySymbol}
+          categories={categories}
+          onUpdateCategories={onUpdateCategories}
+          categoryColors={categoryColors}
+          onUpdateCategoryColors={onUpdateCategoryColors}
+          defaultTaxRate={defaultTaxRate}
+          taxRules={taxRules}
+          onUpdateProducts={onUpdateProducts}
+          onRegistered={(product) => {
+            setLastCreatedProduct(product);
+            refreshConfigSummary();
+            setIsRegistrationOpen(false);
+          }}
+          onClose={() => setIsRegistrationOpen(false)}
+        />
+      )}
+
+      {/* Configuration editor (variants / customizations / add-ons) */}
+      {configEditorProduct && (
+        <ProductConfigEditor
+          product={configEditorProduct}
+          currencySymbol={currencySymbol}
+          onUpdateProduct={(updated) => {
+            onUpdateProducts(products.map((p) => p.id === updated.id ? updated : p));
+            setConfigEditorProduct(updated);
+          }}
+          onConfigChanged={refreshConfigSummary}
+          onClose={() => setConfigEditorProduct(null)}
+        />
+      )}
+
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-[#e1e2ed]">
+        <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-[var(--color-border-default)]">
             
             {/* Header */}
-            <div className="bg-[#f3f3fe] px-6 py-4 border-b border-[#e1e2ed] flex justify-between items-center">
-              <h3 className="font-bold text-[#191b23] text-sm flex items-center gap-2">
+            <div className="bg-[var(--color-primary-light)] px-6 py-4 border-b border-[var(--color-border-default)] flex justify-between items-center">
+              <h3 className="font-bold text-[var(--color-text-primary)] text-sm flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-[var(--brand-color)]" />
                 {editingProduct ? `Edit ${editingProduct.name}` : 'Register New Dish/Combo'}
               </h3>
@@ -935,7 +1207,7 @@ export default function ProductManager({
                     type="text"
                     value={pCode}
                     onChange={(e) => setPCode(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -946,7 +1218,7 @@ export default function ProductManager({
                   <select
                     value={pCategory}
                     onChange={(e) => setPCategory(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   >
                     {categories.filter(c => c !== 'All').map(c => (
                       <option key={c} value={c}>{c}</option>
@@ -961,7 +1233,7 @@ export default function ProductManager({
                         placeholder="New category name..."
                         value={newCatInput}
                         onChange={(e) => setNewCatInput(e.target.value)}
-                        className="flex-1 px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
+                        className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                         required
                       />
                       <button
@@ -979,7 +1251,7 @@ export default function ProductManager({
                             setPCategory(categories[0] || 'Pizzas');
                           }
                         }}
-                        className="px-3 py-1.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white text-xs font-bold rounded-lg cursor-pointer shrink-0 transition-colors"
+                        className="px-3 py-1.5 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-bold rounded-lg cursor-pointer shrink-0 transition-colors"
                       >
                         Add
                       </button>
@@ -996,25 +1268,37 @@ export default function ProductManager({
                   placeholder="e.g., Spicy Paneer Tikka Pizza"
                   value={pName}
                   onChange={(e) => setPName(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                  className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {/* Price */}
+                {/* Price — for meal combos the combo price IS the sell price */}
                 <div>
-                  <label className="block text-[10px] font-semibold uppercase text-gray-500 tracking-wider mb-1">Base Price ({currencySymbol})</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="e.g., 14.50"
-                    value={pPrice || ''}
-                    onChange={(e) => setPPrice(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-bold font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
-                    required
-                  />
+                  {pIsCombo ? (
+                    <>
+                      <label className="block text-[10px] font-semibold uppercase text-gray-500 tracking-wider mb-1">Sell Price ({currencySymbol})</label>
+                      <div className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] bg-gray-50 text-xs font-bold font-mono flex items-center justify-between">
+                        <span>{currencySymbol}{(pComboPrice ? Number(pComboPrice) : 0).toFixed(2)}</span>
+                        <span className="text-[8px] font-semibold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">= Combo price</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <label className="block text-[10px] font-semibold uppercase text-gray-500 tracking-wider mb-1">Base Price ({currencySymbol})</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="e.g., 14.50"
+                        value={pPrice || ''}
+                        onChange={(e) => setPPrice(Number(e.target.value))}
+                        className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-bold font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                        required
+                      />
+                    </>
+                  )}
                 </div>
 
                 {/* GST */}
@@ -1023,7 +1307,7 @@ export default function ProductManager({
                   <select
                     value={pGst}
                     onChange={(e) => setPGst(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   >
                     <option value={0}>0% Tax Exempt</option>
                     <option value={5}>5% Food Services GST</option>
@@ -1033,28 +1317,120 @@ export default function ProductManager({
                 </div>
               </div>
 
-              {/* Image URL */}
-              <div>
-                <label className="block text-[10px] font-semibold uppercase text-gray-500 tracking-wider mb-1">Product Image URL</label>
-                <input
-                  type="url"
-                  placeholder="Paste Unsplash culinary hotlink..."
-                  value={pImage}
-                  onChange={(e) => setPImage(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
-                />
+              {/* Product image — upload a photo or paste an image link */}
+              <ImageInput
+                value={pImage}
+                onChange={setPImage}
+                label="Product Image"
+                hint="Upload a photo or paste an image link"
+              />
+
+              {/* ── Meal Combo Builder ── */}
+              <div className="border border-[var(--color-border-default)] p-3 rounded-lg bg-gray-50 space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={pIsCombo}
+                    onChange={(e) => {
+                      setPIsCombo(e.target.checked);
+                      if (e.target.checked) {
+                        // The combo price becomes the sell price.
+                        setPPrice(Number(pComboPrice) || 0);
+                      } else {
+                        setPComboComponentIds([]); setPComboPrice(0);
+                      }
+                    }}
+                    className="rounded text-[var(--brand-color)] focus:ring-[var(--brand-color)]"
+                  />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                    This is a Meal Combo (bundle items at one price)
+                  </span>
+                </label>
+
+                {pIsCombo && (
+                  <div className="space-y-2 animate-fade-in">
+                    <p className="text-[9px] text-gray-400">
+                      Pick the items this combo bundles. Tapping the combo at billing adds the items and applies the combo discount automatically. The combo is saved server-side as an Offer so analytics and the customer site track it like any other combo.
+                    </p>
+
+                    {/* Component chips */}
+                    <div className="flex flex-wrap gap-1.5 p-1.5 bg-[var(--color-bg-white)] border border-gray-200 rounded min-h-8">
+                      {products
+                        .filter(x => x.id !== editingProduct?.id && !x.isCombo)
+                        .map((x) => {
+                          const selected = pComboComponentIds.includes(x.id);
+                          return (
+                            <button
+                              key={x.id}
+                              type="button"
+                              onClick={() => {
+                                setPComboComponentIds(prev =>
+                                  selected ? prev.filter(id => id !== x.id) : [...prev, x.id]
+                                );
+                              }}
+                              className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors cursor-pointer ${
+                                selected
+                                  ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]'
+                                  : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-[var(--brand-color)]'
+                              }`}
+                            >
+                              {x.name} · {currencySymbol}{(Number(x.price) || 0).toFixed(2)}
+                            </button>
+                          );
+                        })}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[9px] font-semibold uppercase text-gray-500 tracking-wider mb-0.5">Combo Price ({currencySymbol})</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="e.g., 249"
+                          value={pComboPrice || ''}
+                          onChange={(e) => {
+                            setPComboPrice(Number(e.target.value));
+                            // Keep the sell price in lockstep with the combo price.
+                            setPPrice(Number(e.target.value));
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-bold font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                        />
+                      </div>
+                      <div className="flex items-end pb-1">
+                        <span className="text-[10px] font-semibold text-gray-600">
+                          Items total:{' '}
+                          <span className="font-mono font-bold">
+                            {currencySymbol}{pComboComponentIds.reduce((s, id) => {
+                              const comp = products.find(x => x.id === id);
+                              return s + (comp ? Number(comp.price) || 0 : 0);
+                            }, 0).toFixed(2)}
+                          </span>
+                          {pComboComponentIds.length >= 2 && pComboPrice > 0 && (
+                            <span className="block mt-0.5 text-emerald-600 font-bold">
+                              Customer saves {currencySymbol}{(pComboComponentIds.reduce((s, id) => {
+                                const comp = products.find(x => x.id === id);
+                                return s + (comp ? Number(comp.price) || 0 : 0);
+                              }, 0) - Number(pComboPrice)).toFixed(2)}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Advanced Variants Sub-panel */}
-              <div className="border border-[#e1e2ed] p-3 rounded-lg bg-gray-50 space-y-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#191b23] block">
+              <div className="border border-[var(--color-border-default)] p-3 rounded-lg bg-gray-50 space-y-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-primary)] block">
                   Product Variants (Optional)
                 </span>
                 <p className="text-[9px] text-gray-400">If variants are declared, they will display as select-buttons during order billing.</p>
                 
                 {/* Variant list preview */}
                 {pVariants.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-1 bg-white border border-gray-200 rounded min-h-8">
+                  <div className="flex flex-wrap gap-1.5 p-1 bg-[var(--color-bg-white)] border border-gray-200 rounded min-h-8">
                     {pVariants.map((v, index) => (
                       <span key={index} className="bg-gray-100 text-[10px] text-gray-700 px-2 py-0.5 rounded font-medium border border-gray-200 flex items-center gap-1">
                         {v.name} ({currencySymbol}{v.price})
@@ -1073,7 +1449,7 @@ export default function ProductManager({
                     placeholder="Variant name (e.g., Medium 10-inch)"
                     value={varName}
                     onChange={(e) => setVarName(e.target.value)}
-                    className="col-span-6 px-2 py-1 border border-[#c3c6d7] rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
+                    className="col-span-6 px-2 py-1 border border-[var(--color-border-input)] rounded text-xs bg-[var(--color-bg-white)] focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   />
                   <input
                     type="number"
@@ -1081,12 +1457,12 @@ export default function ProductManager({
                     placeholder="Price"
                     value={varPrice || ''}
                     onChange={(e) => setVarPrice(Number(e.target.value))}
-                    className="col-span-4 px-2 py-1 border border-[#c3c6d7] rounded text-xs font-mono font-bold bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
+                    className="col-span-4 px-2 py-1 border border-[var(--color-border-input)] rounded text-xs font-mono font-bold bg-[var(--color-bg-white)] focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
                   />
                   <button
                     type="button"
                     onClick={handleAddVariant}
-                    className="col-span-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded font-bold text-xs flex items-center justify-center cursor-pointer"
+                    className="col-span-2 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white rounded font-bold text-xs flex items-center justify-center cursor-pointer"
                   >
                     + Add
                   </button>
@@ -1130,7 +1506,7 @@ export default function ProductManager({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer"
+                  className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer"
                 >
                   {editingProduct ? 'Update Product Details' : 'Register Product'}
                 </button>
@@ -1142,12 +1518,12 @@ export default function ProductManager({
 
       {/* Per-Branch Pricing Modal (with Variant Support) */}
       {pricingModalProduct && branches.length > 1 && (
-        <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setPricingModalProduct(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 border border-[#e1e2ed] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-[#e1e2ed] flex items-center justify-between">
+        <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setPricingModalProduct(null)}>
+          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-lg w-full mx-4 border border-[var(--color-border-default)] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-[var(--color-border-default)] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Tag className="w-4 h-4 text-purple-600" />
-                <h3 className="font-bold text-sm text-[#191b23]">Branch Prices: {pricingModalProduct.name}</h3>
+                <h3 className="font-bold text-sm text-[var(--color-text-primary)]">Branch Prices: {pricingModalProduct.name}</h3>
               </div>
               <button onClick={() => setPricingModalProduct(null)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
                 <X className="w-4 h-4" />
@@ -1156,6 +1532,7 @@ export default function ProductManager({
             <div className="p-5 space-y-3">
               <p className="text-[10px] text-gray-400 mb-2">
                 Set custom prices for this product at each branch. Leave base price empty to use the default ({currencySymbol}{pricingModalProduct.price.toFixed(2)}).
+                {pricingModalProduct.isCombo && ` Combo price can also be overridden per branch (default ${currencySymbol}${(pricingModalProduct.comboPrice ?? 0).toFixed(2)}).`}
                 {pricingModalProduct.variants && pricingModalProduct.variants.length > 0 && ' Variant prices can also be overridden per branch.'}
               </p>
               {branches.filter(b => b.isActive).map(branch => {
@@ -1169,7 +1546,7 @@ export default function ProductManager({
                     return vv && !isNaN(Number(vv)) && Number(vv) !== v.price;
                   });
                 return (
-                  <div key={branch.id} className={`rounded-xl border p-3 transition-all ${isDifferent || hasVariantOverrides ? 'border-purple-200 bg-purple-50/50' : 'border-[#e1e2ed]'}`}>
+                  <div key={branch.id} className={`rounded-xl border p-3 transition-all ${isDifferent || hasVariantOverrides ? 'border-purple-200 bg-purple-50/50' : 'border-[var(--color-border-default)]'}`}>
                     <div className="flex items-center gap-3 mb-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-gray-800 truncate">
@@ -1187,8 +1564,8 @@ export default function ProductManager({
                           onChange={(e) => setPricingForm(prev => ({ ...prev, [branch.id]: e.target.value }))}
                           className={`w-full pl-6 pr-2 py-1.5 rounded-lg border text-xs font-mono font-bold focus:outline-none focus:ring-1 ${
                             isDifferent
-                              ? 'border-purple-300 bg-white focus:ring-purple-500 text-purple-800'
-                              : 'border-[#c3c6d7] focus:ring-[var(--brand-color)]'
+                              ? 'border-purple-300 bg-[var(--color-bg-white)] focus:ring-purple-500 text-purple-800'
+                              : 'border-[var(--color-border-input)] focus:ring-[var(--brand-color)]'
                           }`}
                           placeholder={`Base ${basePrice.toFixed(2)}`}
                         />
@@ -1197,6 +1574,30 @@ export default function ProductManager({
                         )}
                       </div>
                     </div>
+
+                    {/* Meal-combo per-branch price sub-row */}
+                    {pricingModalProduct.isCombo && (
+                      <div className="ml-2 pl-3 border-l-2 border-purple-200 mt-1.5 mb-1.5 flex items-center gap-2">
+                        <span className="text-[9px] font-bold text-purple-700 w-20 truncate shrink-0">Combo price</span>
+                        <span className="text-[9px] text-gray-400 w-16">Default: {currencySymbol}{(pricingModalProduct.comboPrice ?? 0).toFixed(2)}</span>
+                        <div className="relative w-24">
+                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-gray-400">{currencySymbol}</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={comboPricingForm[branch.id] || ''}
+                            onChange={(e) => setComboPricingForm(prev => ({ ...prev, [branch.id]: e.target.value }))}
+                            className={`w-full pl-5 pr-1.5 py-1 rounded-lg border text-[10px] font-mono font-bold focus:outline-none focus:ring-1 ${
+                              comboPricingForm[branch.id] && !isNaN(Number(comboPricingForm[branch.id])) && Number(comboPricingForm[branch.id]) !== Number(pricingModalProduct.comboPrice ?? 0)
+                                ? 'border-purple-300 bg-purple-50/50 focus:ring-purple-500 text-purple-700'
+                                : 'border-gray-200 focus:ring-[var(--brand-color)]'
+                            }`}
+                            placeholder={(pricingModalProduct.comboPrice ?? 0).toFixed(2)}
+                          />
+                        </div>
+                      </div>
+                    )}
 
                     {/* Variant pricing sub-rows */}
                     {pricingModalProduct.variants && pricingModalProduct.variants.length > 0 && (
@@ -1262,14 +1663,14 @@ export default function ProductManager({
                 <button
                   type="button"
                   onClick={() => setPricingModalProduct(null)}
-                  className="flex-1 py-2 border border-[#c3c6d7] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="flex-1 py-2 border border-[var(--color-border-input)] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveBranchPrices}
-                  className="flex-1 py-2 bg-purple-600 text-white rounded-xl text-xs font-bold hover:bg-purple-700 transition-colors cursor-pointer flex items-center justify-center gap-1"
+                  className="flex-1 py-2 bg-[var(--color-purple-600-solid)] text-white rounded-xl text-xs font-bold hover:bg-[var(--color-purple-700-solid)] transition-colors cursor-pointer flex items-center justify-center gap-1"
                 >
                   <CheckCircle className="w-3.5 h-3.5" />
                   Save Prices

@@ -12,7 +12,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { Link2, Check, Copy, Printer, RefreshCw, ExternalLink, QrCode } from 'lucide-react';
+import { Link2, Check, Copy, Printer, ExternalLink, QrCode } from 'lucide-react';
+import RefreshButton from './common/RefreshButton';
 
 interface LoyaltyQrPanelProps {
   /** Public store token from the server-synced settings. */
@@ -104,21 +105,20 @@ export default function LoyaltyQrPanel({ publicToken, restaurantName = '', capti
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-xs space-y-4">
+    <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-xs space-y-4">
       <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">
         <div className="w-2.5 h-2.5 rounded-full bg-[var(--brand-color)]" />
         <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">
           Loyalty QR <span className="text-gray-400 font-semibold">/ Public Store</span>
         </h3>
-        <button
-          type="button"
-          onClick={() => setRenderError(null)}
-          className="ml-auto flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-[var(--brand-color)] transition-colors cursor-pointer"
+        <RefreshButton
+          onRefresh={() => { setRenderError(null); return Promise.resolve(); }}
+          className="ml-auto gap-1 text-[10px] font-bold text-gray-400 hover:text-[var(--brand-color)] transition-colors"
+          iconClassName="w-3 h-3"
           title="Regenerate QR"
         >
-          <RefreshCw className="w-3 h-3" />
-          Refresh
-        </button>
+          Regenerate
+        </RefreshButton>
       </div>
 
       {!publicToken ? (
@@ -132,7 +132,7 @@ export default function LoyaltyQrPanel({ publicToken, restaurantName = '', capti
       ) : (
         <>
           <div className="flex flex-wrap items-start gap-6">
-            <div className="shrink-0 rounded-2xl border border-[#e1e2ed] bg-white p-3 shadow-sm">
+            <div className="shrink-0 rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-white)] p-3 shadow-sm">
               {renderError ? (
                 <div className="w-52 h-52 flex items-center justify-center text-xs text-red-500 font-bold text-center px-4">{renderError}</div>
               ) : (
@@ -142,7 +142,7 @@ export default function LoyaltyQrPanel({ publicToken, restaurantName = '', capti
 
             <div className="flex-1 min-w-[220px] space-y-2.5">
               <p className="text-xs font-bold text-gray-700">Scan & earn â€” customers see live rewards &amp; offers</p>
-              <p className="text-[11px] leading-relaxed text-gray-500 break-all bg-[#f6f7fb] border border-[#e9ebf4] rounded-xl p-3">
+              <p className="text-[11px] leading-relaxed text-gray-500 break-all bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-xl p-3">
                 <span className="font-mono">{url}</span>
               </p>
 
@@ -159,7 +159,7 @@ export default function LoyaltyQrPanel({ publicToken, restaurantName = '', capti
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-[#d7dae6] text-gray-700 text-[11px] font-bold hover:bg-[#f3f4fa] transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-gray-700 text-[11px] font-bold hover:bg-[var(--color-surface-muted)] transition-colors cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   Print
@@ -168,7 +168,7 @@ export default function LoyaltyQrPanel({ publicToken, restaurantName = '', capti
                   href={url}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-[#d7dae6] text-gray-700 text-[11px] font-bold hover:bg-[#f3f4fa] transition-colors cursor-pointer no-underline"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-gray-700 text-[11px] font-bold hover:bg-[var(--color-surface-muted)] transition-colors cursor-pointer no-underline"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Open
@@ -177,7 +177,7 @@ export default function LoyaltyQrPanel({ publicToken, restaurantName = '', capti
             </div>
           </div>
 
-          <div className="bg-[#f6f7fb] border border-[#e9ebf4] rounded-xl p-3 text-[11px] text-gray-500 leading-relaxed space-y-1">
+          <div className="bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-xl p-3 text-[11px] text-gray-500 leading-relaxed space-y-1">
             <p className="flex items-center gap-1.5 font-bold text-gray-600">
               <QrCode className="w-3.5 h-3.5" /> How this works
             </p>

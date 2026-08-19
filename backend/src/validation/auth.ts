@@ -46,10 +46,33 @@ export const ownerRegistrationSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters').max(100),
   confirmPassword: z.string(),
   restaurantName: z.string().min(2, 'Restaurant name must be at least 2 characters').max(200),
+  // Owner-chosen login (falls back to phone when omitted — legacy clients).
+  userId: z.string().min(3, 'User ID must be at least 3 characters').max(50)
+    .regex(/^[a-zA-Z0-9_]+$/, 'User ID can only contain letters, numbers and underscores')
+    .optional(),
+  // Paid onboarding: presence of planId requires payment proof (order + payment).
+  planId: z.string().min(1).max(50).optional(),
+  paymentOrderId: z.string().min(1).max(64).optional(),
+  paymentId: z.string().min(1).max(64).optional(),
+  paymentSignature: z.string().min(1).max(256).optional(),
 }).strict().refine((data) => data.password === data.confirmPassword, {
   message: 'Passwords do not match',
   path: ['confirmPassword'],
+}).refine((data) => {
+  // A paid plan must come with payment proof; a trial never needs one.
+  if (data.planId) return !!(data.paymentOrderId && data.paymentId);
+  return true;
+}, {
+  message: 'Payment proof (orderId + paymentId) is required when selecting a paid plan',
+  path: ['paymentOrderId'],
 });
+
+/** Public pre-registration payment order (plan purchase before account creation). */
+export const registerOrderSchema = z.object({
+  planId: z.string().min(1).max(50).optional(),
+  billingPeriod: z.enum(['monthly', 'yearly']).optional(),
+  email: z.string().email('Invalid email format').optional().or(z.literal('')),
+}).strict();
 
 export const generateCredentialsSchema = z.object({
   name: z.string().min(1, 'Name is required').max(40),

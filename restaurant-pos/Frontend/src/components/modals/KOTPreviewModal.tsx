@@ -29,15 +29,15 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
 
   return (
     <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 border border-[#e1e2ed]" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-md w-full mx-4 border border-[var(--color-border-default)]" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center bg-gradient-to-r from-orange-50 to-white">
+        <div className="p-4 border-b border-[var(--color-border-default)] flex justify-between items-center bg-gradient-to-r from-orange-50 to-white">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
               <CookingPot className="w-4 h-4 text-orange-600" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-[#191b23]">Send to Kitchen</h3>
+              <h3 className="font-bold text-sm text-[var(--color-text-primary)]">Send to Kitchen</h3>
               <p className="text-[10px] text-gray-500">
                 {kotType === 'Original' ? 'First KOT' : 'Additional KOT'} · {totalItems} item{totalItems !== 1 ? 's' : ''}
               </p>
@@ -60,7 +60,7 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
           </div>
 
           {/* Pending Items */}
-          <div className="bg-gray-50 rounded-lg border border-[#e1e2ed] divide-y divide-[#e1e2ed]">
+          <div className="bg-gray-50 rounded-lg border border-[var(--color-border-default)] divide-y divide-[var(--color-border-default)]">
             <div className="px-3 py-1.5 bg-gray-100/50 rounded-t-lg">
               <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Pending Items</p>
             </div>
@@ -73,7 +73,7 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
                     <span className="text-[10px] font-mono font-bold text-orange-600 bg-orange-100 rounded w-5 h-5 flex items-center justify-center shrink-0">
                       {item.quantity || 1}
                     </span>
-                    <span className="text-xs font-medium text-[#191b23] truncate">
+                    <span className="text-xs font-medium text-[var(--color-text-primary)] truncate">
                       {item.product?.name || item.name || 'Item'}
                     </span>
                     {item.notes && (
@@ -111,10 +111,10 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
         </div>
 
         {/* Footer Action Buttons */}
-        <div className="p-4 border-t border-[#e1e2ed] flex gap-3 bg-gray-50/50">
+        <div className="p-4 border-t border-[var(--color-border-default)] flex gap-3 bg-gray-50/50">
           <button
             onClick={onClose}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white hover:text-[#191b23] transition-all cursor-pointer"
+            className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-[var(--color-bg-white)] hover:text-[var(--color-text-primary)] transition-all cursor-pointer"
           >
             Cancel
           </button>
@@ -122,14 +122,14 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
             <div className="flex gap-2 ml-auto">
               <button
                 onClick={onConfirm}
-                className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white rounded-lg text-xs font-bold hover:bg-orange-600 transition-all shadow-sm cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-orange-500-solid)] text-white rounded-lg text-xs font-bold hover:bg-[var(--color-orange-600-solid)] transition-all shadow-sm cursor-pointer"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
                 Send as Additional
               </button>
               <button
                 onClick={onConfirmMerge}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-all shadow-sm cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all shadow-sm cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 Merge & Print All
@@ -138,7 +138,7 @@ export default function KOTPreviewModal({ isOpen, data, onClose }: KOTPreviewMod
           ) : (
             <button
               onClick={onConfirm}
-              className="flex items-center gap-1.5 px-5 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] transition-all shadow-sm hover:shadow-md ml-auto cursor-pointer"
+              className="flex items-center gap-1.5 px-5 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all shadow-sm hover:shadow-md ml-auto cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               Send to Kitchen ({totalItems})

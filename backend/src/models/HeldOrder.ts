@@ -17,6 +17,7 @@ export interface IHeldOrder extends Document {
   items: any[];
   type: string;
   timestamp?: string;
+  restaurantId?: mongoose.Types.ObjectId;
   branchId?: mongoose.Types.ObjectId;
   isDeleted: boolean;
   deletedAt?: Date;
@@ -32,6 +33,7 @@ const HeldOrderSchema = new Schema<IHeldOrder>(
     items: { type: Schema.Types.Mixed, default: [] },
     type: { type: String, default: 'Takeaway', trim: true },
     timestamp: { type: String, default: '', trim: true },
+    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', default: null, index: true },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },

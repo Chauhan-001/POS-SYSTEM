@@ -10,7 +10,7 @@ import { useSession } from '../context/session';
 
 /** Tracking page: live order status (poll + socket), items, totals, timeline. */
 export default function TrackPage() {
-  const { qr, type, clientRef, trackOrder } = useSession();
+  const { type, clientRef, trackOrder } = useSession();
   const navigate = useNavigate();
 
   const [track, setTrack] = useState(null);
@@ -28,8 +28,11 @@ export default function TrackPage() {
   }, [clientRef, trackOrder]);
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
+    const poll = async () => {
+      await load();
+    };
+    void poll();
+    const t = setInterval(poll, 5000);
     return () => clearInterval(t);
   }, [load]);
 

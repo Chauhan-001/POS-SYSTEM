@@ -25,6 +25,16 @@ interface DraftInput {
   reAcceptanceRequired: boolean;
 }
 
+/** Published version of a seeded document: the rewritten body + sections with
+ *  the draft scaffolding (DRAFT marker, "areas requiring legal review"
+ *  placeholder) stripped — i.e. what an admin would actually publish. */
+export function toPublishedContent(content: string): string {
+  return content
+    .replace(DRAFT_MARKER, '')
+    .split('\n\n## Areas requiring legal review\n\n')[0]
+    .trim();
+}
+
 const DRAFT_MARKER =
   '[DRAFT FOR REVIEW — This document has not been finalised or published. It must be reviewed by a qualified lawyer before use. It is not an active legal agreement.]\n\n';
 
@@ -39,7 +49,7 @@ function buildContent(body: string, sections: Array<{ heading: string; text: str
   );
 }
 
-const DRAFTS: DraftInput[] = [
+export const DRAFTS: DraftInput[] = [
   {
     documentType: 'terms_of_service',
     title: 'Terms of Service',
@@ -48,16 +58,17 @@ const DRAFTS: DraftInput[] = [
     content: buildContent(
       'These Terms of Service ("Terms") govern your use of the restaurant management platform operated by [PLATFORM LEGAL ENTITY NAME — to be confirmed] ("Platform", "we", "us"). By creating an account and using the Platform you agree to these Terms.',
       [
-        { heading: '1. The Service', text: 'The Platform provides restaurant POS, billing, kitchen display, ordering (in-person and customer website), loyalty, offers, reporting, AI-assisted features and related tools ("Service"). We may add, change or remove features from time to time.' },
-        { heading: '2. Accounts', text: 'You must provide accurate account information and keep your credentials confidential. You are responsible for activity under your account. We may suspend or terminate accounts that violate these Terms or applicable law.' },
-        { heading: '3. Acceptable use', text: 'You agree not to misuse the Service, attempt to access another tenant\u2019s data, interfere with the Service, or use it in violation of applicable law. See the Acceptable Use Policy.' },
-        { heading: '4. Fees and payment', text: 'Subscription fees, billing periods, renewal, cancellation and refund handling are described on the plan you select and in the applicable order. Payment is processed by our payment provider; we do not store full card numbers on our servers.' },
-        { heading: '5. Your data', text: 'You retain ownership of the data you enter. We process data to provide the Service as described in the Privacy Policy and the Data Processing terms. We apply reasonable technical and organisational security measures.' },
-        { heading: '6. AI features', text: 'Certain features use third-party AI providers. Data sent to AI providers is limited to what is necessary for the requested feature, as described in the AI & Voice Data Disclosure. AI output is generated and may be inaccurate; you remain responsible for decisions made using it.' },
-        { heading: '7. Termination', text: 'You may stop using the Service and close your account at any time. Sections that by their nature survive termination (fees, indemnities, limitations of liability, governing law) will survive.' },
-        { heading: '8. Disclaimers and limitation of liability', text: 'THE SERVICE IS PROVIDED "AS IS" WITHOUT WARRANTIES OF ANY KIND, TO THE MAXIMUM EXTENT PERMITTED BY LAW. OUR TOTAL LIABILITY ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE IS LIMITED TO THE AMOUNT YOU PAID US IN THE 3 MONTHS PRECEDING THE CLAIM, OR AS OTHERWISE REQUIRED BY LAW. NOTHING HERE EXCLUDES LIABILITY THAT CANNOT BE EXCLUDED UNDER APPLICABLE LAW.' },
-        { heading: '9. Governing law and disputes', text: '[GOVERNING LAW / JURISDICTION — to be confirmed by lawyer.] These Terms are governed by the laws of [JURISDICTION]. Disputes will be subject to the exclusive jurisdiction of the courts at [VENUE].' },
-        { heading: '10. Changes to these Terms', text: 'We may update these Terms. If a change is material, we will notify you and, where required, ask you to accept the new version before continued use. The version you accepted remains on record.' },
+        { heading: '1. The Service', text: 'The Platform provides restaurant POS, billing, kitchen display, ordering (in-person, table QR and customer website), menu configuration (variants, customizations and add-ons), inventory and recipe management, loyalty, offers, reporting, AI-assisted features and related tools ("Service"). We may add, change or remove features from time to time.' },
+        { heading: '2. Offline operation and sync', text: 'The Service is designed to continue operating when a device loses internet connectivity. Orders, bills and inventory events created offline are stored on the device and synchronised with the platform when connectivity is restored. Each offline transaction carries a unique client transaction identifier and the platform processes each transaction at most once; the platform does not silently rewrite the amounts of a completed offline transaction based on later menu or pricing changes. You remain responsible for the accuracy of transactions you create, whether online or offline.' },
+        { heading: '3. Accounts', text: 'You must provide accurate account information and keep your credentials confidential. You are responsible for activity under your account. We may suspend or terminate accounts that violate these Terms or applicable law.' },
+        { heading: '4. Acceptable use', text: 'You agree not to misuse the Service, attempt to access another tenant\u2019s data, interfere with the Service, or use it in violation of applicable law. See the Acceptable Use Policy.' },
+        { heading: '5. Fees and payment', text: 'Subscription fees, billing periods, renewal, cancellation and refund handling are described on the plan you select and in the applicable order. Payment is processed by our payment provider; we do not store full card numbers on our servers.' },
+        { heading: '6. Your data', text: 'You retain ownership of the data you enter. We process data to provide the Service as described in the Privacy Policy and the Data Processing terms. We apply reasonable technical and organisational security measures. For offline operation, a copy of the data needed to run the terminal (menu catalog, prices, configuration, tax and offline-safe offer rules) is stored on your device and updated when connectivity is available.' },
+        { heading: '7. AI features', text: 'Certain features use third-party AI providers. Data sent to AI providers is limited to what is necessary for the requested feature, as described in the AI & Voice Data Disclosure. AI output is generated and may be inaccurate; you remain responsible for decisions made using it.' },
+        { heading: '8. Termination', text: 'You may stop using the Service and close your account at any time. Sections that by their nature survive termination (fees, indemnities, limitations of liability, governing law) will survive. Historical transaction records are retained in accordance with applicable law.' },
+        { heading: '9. Disclaimers and limitation of liability', text: 'THE SERVICE IS PROVIDED "AS IS" WITHOUT WARRANTIES OF ANY KIND, TO THE MAXIMUM EXTENT PERMITTED BY LAW. OUR TOTAL LIABILITY ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE IS LIMITED TO THE AMOUNT YOU PAID US IN THE 3 MONTHS PRECEDING THE CLAIM, OR AS OTHERWISE REQUIRED BY LAW. NOTHING HERE EXCLUDES LIABILITY THAT CANNOT BE EXCLUDED UNDER APPLICABLE LAW.' },
+        { heading: '10. Governing law and disputes', text: '[GOVERNING LAW / JURISDICTION — to be confirmed by lawyer.] These Terms are governed by the laws of [JURISDICTION]. Disputes will be subject to the exclusive jurisdiction of the courts at [VENUE].' },
+        { heading: '11. Changes to these Terms', text: 'We may update these Terms. If a change is material, we will notify you and, where required, ask you to accept the new version before continued use. The version you accepted remains on record.' },
       ],
     ),
   },
@@ -73,12 +84,13 @@ const DRAFTS: DraftInput[] = [
         { heading: '2. How we use information', text: 'We use information to provide and operate the Service, process orders and payments, support loyalty/offers, secure the platform, comply with legal obligations, and — only with separate consent — send marketing communications.' },
         { heading: '3. Sharing', text: 'We share information only as needed: with hosting and infrastructure providers, payment processors for billing, AI providers for AI features (minimised data), and where required by law. We do not sell personal information. A current third-party list is available in the platform documentation.' },
         { heading: '4. Tenant isolation', text: 'Restaurants are separate tenants. Data entered by one restaurant is not accessible to other restaurants. Access is controlled server-side.' },
-        { heading: '5. Retention', text: 'We retain personal information only as long as needed for the purposes described, and to meet legal, tax and accounting obligations. Voice/audio is retained only as described in the AI & Voice Data Disclosure.' },
-        { heading: '6. Your choices', text: 'Through the platform you can export data, request account closure, withdraw optional marketing/communications consent, and request correction of your profile data. These requests are logged and processed by the platform.' },
-        { heading: '7. Security', text: 'We apply reasonable administrative, technical and physical safeguards, including encryption in transit, hashed credentials and access controls. No security measure is infallible.' },
-        { heading: '8. Children', text: 'The Service is intended for businesses, not children. We do not knowingly collect personal information from children. [CONFIRM WITH LAWYER whether any age-specific requirements apply.]' },
-        { heading: '9. Contact and grievance', text: 'For privacy questions or requests, contact us at [CONTACT EMAIL — to be confirmed]. We will respond within the time required by applicable law. [GRIEVANCE OFFICER DETAILS — to be confirmed if required.]' },
-        { heading: '10. Changes', text: 'We may update this Privacy Policy. Material changes will be notified and, where required, presented for acknowledgement before continued use.' },
+        { heading: '5. Offline operation and device data', text: 'The platform\u2019s POS software may store a local copy of data needed to operate (menu catalog, prices, configuration, tax and offline-safe offer rules) on the device, and may store orders, bills and inventory events locally when the device is offline until they synchronise to the platform. You should secure devices that hold such data and limit access to authorised staff.' },
+        { heading: '6. Retention', text: 'We retain personal information only as long as needed for the purposes described, and to meet legal, tax and accounting obligations. Voice/audio is retained only as described in the AI & Voice Data Disclosure. Completed transaction records (including offline-created transactions after sync) are retained as business records in accordance with applicable law.' },
+        { heading: '7. Your choices', text: 'Through the platform you can export data, request account closure, withdraw optional marketing/communications consent, and request correction of your profile data. These requests are logged and processed by the platform.' },
+        { heading: '8. Security', text: 'We apply reasonable administrative, technical and physical safeguards, including encryption in transit, hashed credentials and access controls. No security measure is infallible.' },
+        { heading: '9. Children', text: 'The Service is intended for businesses, not children. We do not knowingly collect personal information from children. [CONFIRM WITH LAWYER whether any age-specific requirements apply.]' },
+        { heading: '10. Contact and grievance', text: 'For privacy questions or requests, contact us at [CONTACT EMAIL — to be confirmed]. We will respond within the time required by applicable law. [GRIEVANCE OFFICER DETAILS — to be confirmed if required.]' },
+        { heading: '11. Changes', text: 'We may update this Privacy Policy. Material changes will be notified and, where required, presented for acknowledgement before continued use.' },
       ],
     ),
   },
@@ -90,11 +102,11 @@ const DRAFTS: DraftInput[] = [
     content: buildContent(
       'This Restaurant Merchant Agreement ("Agreement") is between [PLATFORM LEGAL ENTITY NAME — to be confirmed] ("Platform") and the restaurant operating the account ("Restaurant", "you"). It supplements the Terms of Service.',
       [
-        { heading: '1. Platform services', text: 'The Platform provides POS, ordering, billing, kitchen display, loyalty, offers, reporting and related services to the Restaurant.' },
-        { heading: '2. Restaurant responsibilities', text: 'You are responsible for the accuracy of menu/pricing data, compliance with food-safety and consumer laws applicable to your business, tax collection and remittance (e.g. GST where applicable), and lawful processing of your customers\u2019 data.' },
+        { heading: '1. Platform services', text: 'The Platform provides POS, ordering (in-person, table QR and customer website), billing, kitchen display, menu configuration, inventory and recipe management, loyalty, offers, reporting and related services to the Restaurant.' },
+        { heading: '2. Restaurant responsibilities', text: 'You are responsible for the accuracy of menu/pricing data, compliance with food-safety and consumer laws applicable to your business, tax collection and remittance (e.g. GST where applicable), and lawful processing of your customers\u2019 data. You are also responsible for the accuracy of transactions created while operating offline and for settling or rectifying them in accordance with applicable law.' },
         { heading: '3. Customer data', text: 'You are the controller (or are otherwise responsible under applicable law) for customer data you enter. The Platform processes it on your behalf as described in the Data Processing terms and Privacy Policy. You must comply with applicable privacy law when collecting customer data (e.g. informing customers about your practices).' },
         { heading: '4. Fees', text: 'Subscription fees are as selected at sign-up. [CONFIRM: commission/facilitation fees, if any, for online orders.] Payment failures may suspend service per the subscription terms.' },
-        { heading: '5. Term and termination', text: 'This Agreement continues while your account is active. Either party may terminate per the Terms. Upon termination, the Restaurant may export its data during a transition period defined by the Platform; business records are retained per applicable law.' },
+        { heading: '5. Term and termination', text: 'This Agreement continues while your account is active. Either party may terminate per the Terms. Upon termination, the Restaurant may export its data during a transition period defined by the Platform; business records (including offline-created transactions after sync) are retained per applicable law.' },
       ],
     ),
   },
@@ -106,11 +118,12 @@ const DRAFTS: DraftInput[] = [
     content: buildContent(
       'These Customer Terms apply when you place an order through a restaurant\u2019s online ordering page powered by the Platform. The restaurant you order from is the merchant for your order.',
       [
-        { heading: '1. Ordering', text: 'When you place an order you confirm the items, quantities and price shown at checkout. Order confirmation does not guarantee availability; the restaurant may contact you about unavailable items.' },
-        { heading: '2. Payment', text: 'Payment is processed through the restaurant\u2019s payment provider. Prices include applicable taxes unless stated otherwise. [CONFIRM tax display rules with lawyer.]' },
-        { heading: '3. Cancellation and refunds', text: 'Cancellation and refund eligibility are governed by the restaurant\u2019s policies and applicable consumer law. Contact the restaurant for order issues. See the Refund & Cancellation Policy.' },
-        { heading: '4. Your information', text: 'When you provide your name, phone number or other details, the restaurant uses them to fulfil your order. See the restaurant\u2019s privacy practices and the platform Privacy Policy.' },
-        { heading: '5. Food safety', text: 'The restaurant is responsible for the preparation, quality and safety of the food. Please report any concerns to the restaurant directly.' },
+        { heading: '1. Ordering', text: 'When you place an order you confirm the items, quantities and price shown at checkout. Items may have configuration choices (size, customizations, add-ons) that affect the price; the final price is calculated by the restaurant\u2019s system using the same pricing rules as its POS. Order confirmation does not guarantee availability; the restaurant may contact you about unavailable items.' },
+        { heading: '2. Tables and QR ordering', text: 'A table with an existing open order is not available for a new order from its QR code. If a table is already occupied, you will be asked to speak with your server to add items to the existing order.' },
+        { heading: '3. Payment', text: 'Payment is processed through the restaurant\u2019s payment provider. Prices include applicable taxes unless stated otherwise. [CONFIRM tax display rules with lawyer.]' },
+        { heading: '4. Cancellation and refunds', text: 'Cancellation and refund eligibility are governed by the restaurant\u2019s policies and applicable consumer law. Contact the restaurant for order issues. See the Refund & Cancellation Policy.' },
+        { heading: '5. Your information', text: 'When you provide your name, phone number or other details, the restaurant uses them to fulfil your order. See the restaurant\u2019s privacy practices and the platform Privacy Policy.' },
+        { heading: '6. Food safety', text: 'The restaurant is responsible for the preparation, quality and safety of the food. Please report any concerns to the restaurant directly.' },
       ],
     ),
   },

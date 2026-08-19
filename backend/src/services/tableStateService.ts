@@ -18,6 +18,7 @@
  */
 
 import { orderRepo, reservationRepo, tableRepo, auditLogRepo } from '../repositories';
+import QROrderingSession from '../modules/qr-ordering/models/QROrderingSession';
 
 /** Order statuses that mean "the table is free". */
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
@@ -61,7 +62,7 @@ export class TableStateService {
 
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (matches Reservation.date)
 
-    const [liveOrder, activeReservation] = await Promise.all([
+    const [liveOrder, activeReservation, activeClaim] = await Promise.all([
       orderRepo.findOne({
         tableId,
         // A table is occupied by ANY live order on it — a waiter-created
@@ -76,6 +77,15 @@ export class TableStateService {
         status: 'Confirmed',
         date: today,
       } as any),
+      // A customer who SCANNED the table QR holds it for their seating even
+      // before they order — the scan claim occupies the table so the floor
+      // plan turns Occupied instantly (and never double-seats). The claim
+      // carries an expiresAt, so an abandoned scan (no activity) releases
+      // the table when the sweeper marks it EXPIRED and re-reconciles.
+      QROrderingSession.findOne({ tableId, status: 'ACTIVE' })
+        .select({ createdAt: 1 })
+        .lean()
+        .exec() as any,
     ]);
 
     // occupiedSince is ALWAYS derived from the live order's createdAt (never
@@ -87,6 +97,11 @@ export class TableStateService {
     if (liveOrder) {
       newStatus = mapOrderToTableStatus(String(liveOrder.status || 'New'));
       occupiedSince = liveOrder.createdAt || new Date();
+    } else if (activeClaim) {
+      // Scan claim — occupied from the moment the guest scanned (createdAt,
+      // never extended by heartbeats, so the seated timer is honest).
+      newStatus = 'Occupied';
+      occupiedSince = activeClaim.createdAt || new Date();
     } else if (activeReservation) {
       newStatus = 'Reserved';
     } else if (MANUAL_TABLE_STATUSES.includes(String(table.status))) {
@@ -115,6 +130,16 @@ export class TableStateService {
         newStatus,
         occupiedSince: occupiedSince ? occupiedSince.toISOString() : null,
       });
+      // Live broadcast: every terminal sees the table flip instantly (floor plan + grid).
+      try {
+        const { emitToRestaurant } = await import('../socket');
+        emitToRestaurant(ctx.restaurantId || (table as any).restaurantId, 'table:updated', {
+          tableId,
+          status: newStatus,
+          occupiedSince: occupiedSince ? occupiedSince.toISOString() : null,
+          previousStatus: prevStatus,
+        });
+      } catch { /* socket not ready — non-fatal */ }
     }
     return updated;
   }

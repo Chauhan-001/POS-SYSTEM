@@ -156,7 +156,7 @@ export default function CustomerSegmentsPage() {
             <div
               key={seg._id}
               onClick={() => setSelectedSegment(selectedSegment?._id === seg._id ? null : seg)}
-              className={`bg-white rounded-2xl border-2 p-4 cursor-pointer transition-all hover:shadow-md ${
+              className={`bg-[var(--color-bg-white)] rounded-2xl border-2 p-4 cursor-pointer transition-all hover:shadow-md ${
                 selectedSegment?._id === seg._id ? 'border-indigo-400 shadow-md' : 'border-gray-100'
               }`}
             >
@@ -188,7 +188,7 @@ export default function CustomerSegmentsPage() {
                 </div>
                 <div className="bg-gray-50 rounded-lg p-2 text-center">
                   <DollarSign className="w-3.5 h-3.5 text-green-500 mx-auto mb-0.5" />
-                  <span className="block text-sm font-black text-gray-800">₹{seg.averageSpend || 0}</span>
+                  <span className="block text-sm font-black text-gray-800">₹{Number(seg.averageSpend || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   <span className="block text-[7px] text-gray-400 uppercase tracking-wider">Avg Spend</span>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-2 text-center">

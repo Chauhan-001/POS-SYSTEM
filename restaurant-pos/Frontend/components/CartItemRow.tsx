@@ -6,7 +6,7 @@
  * Extracted to avoid re-rendering all cart items when only one item changes.
  */
 import { memo, useState } from 'react';
-import { Minus, Plus, Trash, AlertTriangle, Lock } from 'lucide-react';
+import { Minus, Plus, Trash, AlertTriangle, Lock, Pencil } from 'lucide-react';
 import type { CartItem } from '../src/types';
 
 // ─── Props ──────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ export interface CartItemRowProps {
   onAdjustQuantity: (id: string, delta: number) => void;
   onDeleteItem: (id: string) => void;
   onUpdateItemNotes: (itemId: string, notes: string) => void;
+  onEditConfiguredItem?: (item: CartItem) => void;
 }
 
 // ─── Comparator ────────────────────────────────────────────────
@@ -38,6 +39,9 @@ function areEqual(prev: CartItemRowProps, next: CartItemRowProps): boolean {
   if (a.product?.image !== b.product?.image) return false;
   // Compare variant name
   if ((a.selectedVariant?.name ?? '') !== (b.selectedVariant?.name ?? '')) return false;
+  // Compare config summary (Phase 3 configured items)
+  if (((a as any).configSummary ?? '') !== ((b as any).configSummary ?? '')) return false;
+  if (JSON.stringify((a as any).configuration ?? null) !== JSON.stringify((b as any).configuration ?? null)) return false;
   // Compare config props
   if (prev.currencySymbol !== next.currencySymbol) return false;
   if (prev.enableOrderNotes !== next.enableOrderNotes) return false;
@@ -52,10 +56,12 @@ function areEqual(prev: CartItemRowProps, next: CartItemRowProps): boolean {
 
 function CartItemRow({
   item, currencySymbol, enableOrderNotes,
-  onAdjustQuantity, onDeleteItem, onUpdateItemNotes,
+  onAdjustQuantity, onDeleteItem, onUpdateItemNotes, onEditConfiguredItem,
 }: CartItemRowProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const locked = !!item.kotPrinted;
+  const isConfigured = !!(item as any).configuration?.selections?.length;
+  const configSummary = (item as any).configSummary as string | undefined;
 
   const handleDeleteClick = () => {
     if (locked) return;
@@ -71,21 +77,22 @@ function CartItemRow({
   };
 
   return (
-    <div className={`bg-gray-50 rounded-lg p-2.5 border border-[#e1e2ed] group transition-all ${locked ? 'opacity-80 border-[#c3c6d7] bg-gray-100' : 'hover:border-[var(--brand-color)]/30'}`}>
+    <div className={`bg-gray-50 rounded-lg p-2.5 border border-[var(--color-border-default)] group transition-all ${locked ? 'opacity-80 border-[var(--color-border-input)] bg-gray-100' : 'hover:border-[var(--brand-color)]/30'}`}>
       <div className="flex justify-between items-start">
         <div className="flex items-start gap-2">
-          <div className="w-7 h-7 rounded-md overflow-hidden shrink-0 border border-[#e1e2ed] bg-white flex items-center justify-center">
+          <div className="w-7 h-7 rounded-md overflow-hidden shrink-0 border border-[var(--color-border-default)] bg-[var(--color-bg-white)] flex items-center justify-center">
             {item.product.image
               ? <img src={item.product.image} alt={item.product.name} className="w-full h-full object-cover" />
               : <div className="w-3 h-3 rounded-sm bg-[var(--brand-color)]/10" />
             }
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-bold text-[#191b23] truncate">
+            <p className="text-xs font-bold text-[var(--color-text-primary)] truncate">
               {item.isFree && <span className="text-emerald-600 mr-1">[FREE]</span>}
               {item.product.name}
             </p>
             {item.selectedVariant && <p className="text-[9px] text-gray-500">{item.selectedVariant.name}</p>}
+            {configSummary && <p className="text-[9px] text-gray-400 truncate">{configSummary}</p>}
           </div>
         </div>
         <div className="flex items-center gap-1.5 ml-2">
@@ -108,6 +115,15 @@ function CartItemRow({
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
+              {isConfigured && onEditConfiguredItem && (
+                <button
+                  onClick={() => onEditConfiguredItem(item)}
+                  className="p-0.5 rounded ml-0.5 text-gray-300 hover:text-[var(--brand-color)] hover:bg-blue-50 cursor-pointer"
+                  title="Edit configuration"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button
                 onClick={handleDeleteClick}
                 className={`p-0.5 rounded ml-1 cursor-pointer transition-all ${

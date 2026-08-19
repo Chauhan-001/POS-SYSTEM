@@ -15,16 +15,17 @@ import type { MarketingData } from './useMarketingData';
 interface MarketingHomeProps {
   data: MarketingData;
   currencySymbol: string;
-  onCreate: () => void;
   onViewRecommendations: () => void;
   onUseSuggestion: (suggestion: any) => void;
 }
 
-export default function MarketingHome({ data, currencySymbol, onCreate, onViewRecommendations, onUseSuggestion }: MarketingHomeProps) {
+export default function MarketingHome({ data, currencySymbol, onViewRecommendations, onUseSuggestion }: MarketingHomeProps) {
   const { offers, recommendations, loading } = data;
   const live = offers.filter((o) => o.status === 'active');
   const upcoming = offers.filter((o) => o.status === 'scheduled');
-  const top = recommendations.slice(0, 4);
+  // LIFECYCLE: Filter out converted/cooldown from active opportunity cards
+  const activeRecs = recommendations.filter((r: any) => !['converted', 'cooldown', 'reevaluate'].includes(r.status));
+  const top = activeRecs.slice(0, 4);
 
   return (
     <div className="space-y-8">
@@ -36,12 +37,6 @@ export default function MarketingHome({ data, currencySymbol, onCreate, onViewRe
         <h1 className="text-xl font-black mt-1 tracking-tight">Create promotions, bring customers back, and increase sales.</h1>
         <div className="flex flex-wrap gap-3 mt-5 relative">
           <button
-            onClick={onCreate}
-            className="flex items-center gap-2 bg-white text-[var(--brand-color)] px-5 py-2.5 rounded-xl text-sm font-black shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all active:scale-95 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" /> Create Promotion
-          </button>
-          <button
             onClick={onViewRecommendations}
             className="flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white border border-white/30 px-5 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95 cursor-pointer"
           >
@@ -50,12 +45,14 @@ export default function MarketingHome({ data, currencySymbol, onCreate, onViewRe
         </div>
       </div>
 
-      {/* Quick stats */}
+      {/* Quick stats — show a loading dash instead of a misleading 0 while
+          the 5 parallel fetches are still in flight (offers + recommendations
+          + segments + analytics + campaigns resolve together). */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={<Tag className="w-4 h-4" />} label="Live offers" value={String(live.length)} tone="bg-green-100 text-green-700" />
-        <StatCard icon={<Megaphone className="w-4 h-4" />} label="Starting soon" value={String(upcoming.length)} tone="bg-amber-100 text-amber-700" />
-        <StatCard icon={<Sparkles className="w-4 h-4" />} label="Opportunities" value={String(recommendations.length)} tone="bg-purple-100 text-purple-700" />
-        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="Total offers" value={String(offers.length)} tone="bg-blue-100 text-blue-700" />
+        <StatCard icon={<Tag className="w-4 h-4" />} label="Live offers" value={loading ? '—' : String(live.length)} tone="bg-green-100 text-green-700" />
+        <StatCard icon={<Megaphone className="w-4 h-4" />} label="Starting soon" value={loading ? '—' : String(upcoming.length)} tone="bg-amber-100 text-amber-700" />
+        <StatCard icon={<Sparkles className="w-4 h-4" />} label="Opportunities" value={loading ? '—' : String(activeRecs.length)} tone="bg-purple-100 text-purple-700" />
+        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="Total offers" value={loading ? '—' : String(offers.length)} tone="bg-blue-100 text-blue-700" />
       </div>
 
       {/* Opportunities for you */}
@@ -65,8 +62,8 @@ export default function MarketingHome({ data, currencySymbol, onCreate, onViewRe
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">AI + rule based</p>
             <h2 className="text-sm font-extrabold text-gray-900">Opportunities for You</h2>
           </div>
-          {recommendations.length > 3 && (
-            <button onClick={onViewRecommendations} className="flex items-center gap-1 text-xs font-bold text-[var(--brand-color)] hover:text-[#003ea8] transition-colors cursor-pointer">
+          {activeRecs.length > 3 && (
+            <button onClick={onViewRecommendations} className="flex items-center gap-1 text-xs font-bold text-[var(--brand-color)] hover:text-[var(--color-primary-hover)] transition-colors cursor-pointer">
               See all <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}
@@ -80,8 +77,7 @@ export default function MarketingHome({ data, currencySymbol, onCreate, onViewRe
           <EmptyState
             icon="🔍"
             title="No opportunities detected yet"
-            subtitle="Open Recommendations to scan for ideas, or create a promotion yourself."
-            cta={<button onClick={onCreate} className="flex items-center gap-1.5 bg-[var(--brand-color)] text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer"><Plus className="w-3.5 h-3.5" /> Create Promotion</button>}
+            subtitle="Open Recommendations to scan for ideas, or use the Create tab to build a promotion yourself."
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -98,8 +94,8 @@ export default function MarketingHome({ data, currencySymbol, onCreate, onViewRe
           <h2 className="text-sm font-extrabold text-gray-900 mb-3">Live now</h2>
           <div className="flex flex-wrap gap-2">
             {live.slice(0, 6).map((o) => (
-              <div key={o._id} className="flex items-center gap-2 bg-white border border-green-200 rounded-xl px-3 py-2 shadow-xs">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <div key={o._id} className="flex items-center gap-2 bg-[var(--color-bg-white)] border border-green-200 rounded-xl px-3 py-2 shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-[var(--color-green-500-solid)] animate-pulse" />
                 <span className="text-xs font-bold text-gray-800">{o.title}</span>
                 <span className="text-[10px] font-bold text-green-600">{offerValueLabel(o.type, o.value, currencySymbol)}</span>
               </div>
@@ -113,7 +109,7 @@ export default function MarketingHome({ data, currencySymbol, onCreate, onViewRe
 
 function StatCard({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone: string }) {
   return (
-    <div className="bg-white rounded-2xl border border-[#e1e2ed] p-4 flex items-center gap-3 shadow-xs">
+    <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-4 flex items-center gap-3 shadow-xs">
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>{icon}</div>
       <div>
         <p className="text-xl font-black text-gray-900 leading-none">{value}</p>
@@ -127,37 +123,43 @@ export function OpportunityCard({ suggestion, currencySymbol, onCreate }: {
   suggestion: any; currencySymbol: string; onCreate: () => void;
 }) {
   const meta = opportunityMeta(suggestion.recommendationSource);
+  const isWarning = !!suggestion.isWarning;
   return (
-    <div className={`bg-gradient-to-br ${meta.tone} border border-[#e1e2ed] rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all`}>
+    <div className={`bg-gradient-to-br ${meta.tone} border ${isWarning ? 'border-red-200' : 'border-[var(--color-border-default)]'} rounded-2xl p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center text-xl shrink-0">{meta.icon}</div>
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-bg-white)] shadow-sm flex items-center justify-center text-xl shrink-0">{meta.icon}</div>
           <div>
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{meta.eyebrow}</p>
             <p className="text-sm font-extrabold text-gray-900">{suggestion.title}</p>
           </div>
         </div>
+        {isWarning && <span className="text-[9px] font-black text-red-600 bg-red-50 border border-red-200 px-2 py-1 rounded-full uppercase tracking-wide shrink-0">Safety check</span>}
       </div>
       <p className="text-xs text-gray-600 mt-3 leading-relaxed line-clamp-2">{suggestion.description}</p>
       <div className="flex flex-wrap items-center gap-2 mt-3 text-[10px] font-bold">
-        <span className="px-2 py-1 rounded-lg bg-white border border-gray-200 text-gray-700">
-          {OFFER_TYPE_LABELS[suggestion.type] || suggestion.type} · {offerValueLabel(suggestion.type, suggestion.value, currencySymbol)}
-        </span>
+        {!isWarning && (
+          <span className="px-2 py-1 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-700">
+            {OFFER_TYPE_LABELS[suggestion.type] || suggestion.type} · {offerValueLabel(suggestion.type, suggestion.value, currencySymbol)}
+          </span>
+        )}
         {suggestion.minOrderValue ? (
-          <span className="px-2 py-1 rounded-lg bg-white border border-gray-200 text-gray-500">Min {currencySymbol}{fmtNumber(suggestion.minOrderValue)}</span>
+          <span className="px-2 py-1 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-500">Min {currencySymbol}{fmtNumber(suggestion.minOrderValue)}</span>
         ) : null}
         {suggestion.estimatedReach ? (
-          <span className="px-2 py-1 rounded-lg bg-white border border-gray-200 text-gray-500">~{fmtNumber(suggestion.estimatedReach)} reach</span>
+          <span className="px-2 py-1 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-500">~{fmtNumber(suggestion.estimatedReach)} reach</span>
         ) : null}
       </div>
       <div className="flex items-center justify-between mt-4">
         <p className="text-[10px] text-gray-500 italic">{suggestion.recommendationReason}</p>
-        <button
-          onClick={onCreate}
-          className="flex items-center gap-1.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5" /> Create Offer
-        </button>
+        {!isWarning && (
+          <button
+            onClick={onCreate}
+            className="flex items-center gap-1.5 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" /> Create Offer
+          </button>
+        )}
       </div>
     </div>
   );

@@ -67,14 +67,21 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
 export const FEATURE_KEYS = new Set(FEATURE_CATALOG.map((f) => f.key));
 
 /**
+ * Every feature key in the catalog — the free trial grants the full product
+ * (trial subscribers get everything; restrictions apply only after a paid
+ * plan is selected). Single source of truth so registration, trial repair,
+ * and conversion can never drift.
+ */
+export const ALL_FEATURES = FEATURE_CATALOG.map((f) => f.key);
+
+/**
  * All configurable plan limits. 0 = unlimited everywhere.
  * Values are validated against this key set in planService + zod schemas.
  */
 export const LIMIT_KEYS = [
   'maxRestaurants',
   'maxBranches',
-  'maxDevices',
-  'maxEmployees',
+  'maxDevicesPerBranch',
   'maxProducts',
   'maxCustomers',
   'maxMonthlyOrders',
@@ -91,8 +98,7 @@ export type PlanLimitKey = (typeof LIMIT_KEYS)[number];
 export const DEFAULT_LIMITS: Record<PlanLimitKey, number> = {
   maxRestaurants: 1,
   maxBranches: 1,
-  maxDevices: 3,
-  maxEmployees: 10,
+  maxDevicesPerBranch: 3,
   maxProducts: 0, // unlimited
   maxCustomers: 0, // unlimited
   maxMonthlyOrders: 0, // unlimited

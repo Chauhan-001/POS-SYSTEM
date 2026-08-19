@@ -70,7 +70,7 @@ import {
 import {
   getSubscriptions, getSubscription, renewSubscription, upgradeSubscription,
   downgradeSubscription, pauseSubscription, resumeSubscription,
-  getSubscriptionByRestaurant, getSubscriptionPayments,
+  getSubscriptionByRestaurant, getSubscriptionPayments, updateGrantedFeatures,
 } from '../controllers/adminSubscriptionsController';
 import {
   getPlans, getPlan, createPlan, updatePlan, deletePlan,
@@ -169,7 +169,7 @@ import {
 } from '../validation';
 import {
   createRestaurantSchema, updateRestaurantSchema, restaurantListQuerySchema,
-  restaurantIdParamsSchema,
+  restaurantIdParamsSchema, subscriptionFeatureGrantSchema,
   ownerIdParamsSchema, ownerRestaurantParamsSchema, ownerSessionParamsSchema,
   ownerDeviceParamsSchema, ownerListQuerySchema, ownerCreateSchema,
   ownerUpdateSchema, ownerStatusSchema, ownerLoginHistoryQuerySchema,
@@ -185,6 +185,7 @@ router.put('/auth/admin/change-password', requireAuth, requireCollectionAccess('
 
 router.get('/admin/restaurants', requireAuth, requireCollectionAccess('Restaurant', 'read'), validate({ query: restaurantListQuerySchema }), cached({ ttlMs: 30_000, tags: ['restaurants'] }), getRestaurants);
 router.get('/admin/restaurants/:id/subscription', requireAuth, requireCollectionAccess('Subscription', 'read'), validate({ params: restaurantIdParamsSchema }), getSubscriptionByRestaurant);
+router.put('/admin/restaurants/:id/subscription/features', requireAuth, requireCollectionAccess('Subscription', 'update'), validate({ params: restaurantIdParamsSchema, body: subscriptionFeatureGrantSchema }), updateGrantedFeatures, invalidateCache('analytics'));
 router.get('/admin/restaurants/:id/payment-history', requireAuth, requireCollectionAccess('Subscription', 'read'), validate({ params: restaurantIdParamsSchema }), getSubscriptionPayments);
 router.get('/admin/restaurants/:id', requireAuth, requireCollectionAccess('Restaurant', 'read'), validate({ params: restaurantIdParamsSchema }), getRestaurant);
 router.get('/admin/restaurants/:id/statistics', requireAuth, requireCollectionAccess('Restaurant', 'read'), validate({ params: restaurantIdParamsSchema }), getRestaurantStatistics);
@@ -294,7 +295,7 @@ router.get('/admin/subscription-plans/:id/versions', requireAuth, requireCollect
 router.post('/admin/subscription-plans/:id/rollback', requireAuth, requireCollectionAccess('Subscription', 'update'), validate({ params: planIdParamsSchema, body: planRollbackSchema }), rollbackPlan, invalidateCache('plans'), invalidateCache('analytics'));
 router.get('/admin/subscription-plans/:id/statistics', requireAuth, requireCollectionAccess('Subscription', 'read'), validate({ params: planIdParamsSchema }), getPlanStatistics);
 router.post('/admin/subscription-plans/assign', requireAuth, requireCollectionAccess('Subscription', 'update'), validate({ body: planAssignSchema }), assignPlan, invalidateCache('plans'), invalidateCache('analytics'), invalidateCache('restaurants'));
-router.post('/admin/subscription-plans/trial-convert', requireAuth, requireCollectionAccess('Subscription', 'update'), validate({ body: planAssignSchema.pick({ restaurantId: true, planId: true }) }), convertTrial, invalidateCache('plans'), invalidateCache('analytics'));
+router.post('/admin/subscription-plans/trial-convert', requireAuth, requireCollectionAccess('Subscription', 'update'), validate({ body: planAssignSchema.pick({ restaurantId: true, planId: true, billingPeriod: true }) }), convertTrial, invalidateCache('plans'), invalidateCache('analytics'));
 router.delete('/admin/subscription-plans/:id', requireAuth, requireCollectionAccess('Subscription', 'delete'), validate({ params: planIdParamsSchema }), deletePlan, invalidateCache('plans'), invalidateCache('analytics'));
 
 router.get('/admin/analytics/dashboard', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getDashboardStats);

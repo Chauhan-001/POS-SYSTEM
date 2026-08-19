@@ -35,6 +35,11 @@ export interface IRecipeConsumptionLine {
   /** Recipe version the line resolved against (0 = no recipe / legacy). */
   recipeVersion: number;
   recipeName?: string;
+  /** 'recipe' = base product recipe; 'option' = variant/modifier recipe delta;
+   *  'addon' = a selected add-on's own product recipe (Phase 4 layers). */
+  source?: 'recipe' | 'option' | 'addon';
+  /** Human-readable option name for option/addon lines (e.g. "Extra Cheese"). */
+  optionName?: string;
 }
 
 export interface IRecipeConsumptionItem {
@@ -81,6 +86,8 @@ const ConsumptionLineSchema = new Schema<IRecipeConsumptionLine>(
     quantity: { type: Number, required: true, min: 0 },
     recipeVersion: { type: Number, default: 0, min: 0 },
     recipeName: { type: String, trim: true, default: '' },
+    source: { type: String, enum: ['recipe', 'option', 'addon'], default: 'recipe' },
+    optionName: { type: String, trim: true, default: '' },
   },
   { _id: false }
 );

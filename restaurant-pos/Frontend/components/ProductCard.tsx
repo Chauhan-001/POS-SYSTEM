@@ -61,6 +61,8 @@ function areEqual(prev: ProductCardProps, next: ProductCardProps): boolean {
     p.name === n.name &&
     p.category === n.category &&
     p.code === n.code &&
+    p.isCombo === n.isCombo &&
+    (p.comboComponentIds?.length ?? 0) === (n.comboComponentIds?.length ?? 0) &&
     (p.variants?.length ?? 0) === (n.variants?.length ?? 0) &&
     prev.categoryColor === next.categoryColor &&
     prev.showImages === next.showImages &&
@@ -85,7 +87,7 @@ function ProductCard({
       <div
         key={product.id}
         data-tour="product-card"
-        className="bg-white rounded-xl border border-gray-200 hover:border-[var(--brand-color)] hover:shadow-lg transition-all cursor-pointer group relative flex flex-col overflow-hidden min-h-[128px] p-3.5 select-none"
+        className="bg-[var(--color-bg-white)] rounded-xl border border-gray-200 hover:border-[var(--brand-color)] hover:shadow-lg transition-all cursor-pointer group relative flex flex-col overflow-hidden min-h-[128px] p-3.5 select-none"
         onClick={() => onAddProduct(product, undefined)}
       >
         <div className="absolute left-0 top-0 bottom-0 w-[6px]" style={{ backgroundColor: darkBarColor }} />
@@ -106,9 +108,12 @@ function ProductCard({
           </div>
           <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-gray-100">
             <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
-              {currencySymbol}{product.price.toFixed(2)}
+              {currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}
               {product.variants && product.variants.length > 0 && (
                 <span className="text-[10px] text-gray-500 font-normal ml-1">+variants</span>
+              )}
+              {product.isCombo && (
+                <span className="text-[9px] font-bold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full ml-1 uppercase tracking-wide">Combo</span>
               )}
             </p>
             <div className="w-9 h-9 rounded-full bg-[var(--brand-color)] text-white flex items-center justify-center shadow-md group-hover:scale-110 active:scale-95 transition-all shrink-0">
@@ -125,16 +130,32 @@ function ProductCard({
     <div
       key={product.id}
       data-tour="product-card"
-      className="bg-white rounded-xl border border-gray-200 hover:border-[var(--brand-color)] hover:shadow-lg transition-all cursor-pointer group relative flex flex-col overflow-hidden select-none"
+      className="bg-[var(--color-bg-white)] rounded-xl border border-gray-200 hover:border-[var(--brand-color)] hover:shadow-lg transition-all cursor-pointer group relative flex flex-col overflow-hidden select-none"
       onClick={() => onAddProduct(product, undefined)}
     >
       <div className="absolute left-0 top-0 bottom-0 w-1.5 z-10" style={{ backgroundColor: categoryColor }} />
-      <div className="w-full h-24 rounded-t-xl overflow-hidden bg-gray-100 shrink-0 relative">
-        <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy"
-          onError={(e) => { (e.currentTarget).style.display = 'none'; }}
-        />
+      <div
+        className="w-full h-24 rounded-t-xl overflow-hidden shrink-0 relative"
+        style={{ background: `linear-gradient(135deg, ${categoryColor}1a, ${categoryColor}40)` }}
+      >
+        {/* Placeholder initial — visible whenever the product has no photo
+            or the photo fails to load (broken link / offline). */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-3xl font-black select-none" style={{ color: categoryColor }}>
+            {(product.name || '?').charAt(0).toUpperCase()}
+          </span>
+        </div>
+        {product.image && (
+          <img
+            src={product.image}
+            alt={product.name}
+            className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            loading="lazy"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
+        )}
         {product.favorite && (
-          <div className="absolute top-2 right-2 bg-white/90 backdrop-blur-sm p-1 rounded-full shadow-sm">
+          <div className="absolute top-2 right-2 z-10 bg-white/90 backdrop-blur-sm p-1 rounded-full shadow-sm">
             <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
           </div>
         )}
@@ -152,7 +173,12 @@ function ProductCard({
           </div>
         </div>
         <div className="flex items-center justify-between gap-1 mt-1 pt-2 border-t border-gray-100">
-          <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">{currencySymbol}{product.price.toFixed(2)}</p>
+          <p className="text-base font-extrabold font-mono text-[var(--brand-color)]">
+            {currencySymbol}{((product.isCombo ? (product.comboPrice ?? product.price) : product.price) || 0).toFixed(2)}
+            {product.isCombo && (
+              <span className="text-[9px] font-bold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full ml-1 uppercase tracking-wide">Combo</span>
+            )}
+          </p>
           <div className="w-9 h-9 rounded-full bg-[var(--brand-color)] text-white flex items-center justify-center shadow-md group-hover:scale-110 active:scale-95 transition-all shrink-0">
             <Plus className="w-5 h-5 stroke-[2.5]" />
           </div>

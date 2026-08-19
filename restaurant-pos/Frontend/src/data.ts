@@ -69,6 +69,10 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   invoicePrefix: 'INV',
   invoiceStartingNumber: 1001,
   receiptFooterMessage: '',
+  // Business day starts at 08:00 local and closes at 23:59 by default —
+  // everything before 08:00 belongs to the previous business day.
+  openingTime: '08:00',
+  closingTime: '23:59',
 };
 
 // ============================================================
@@ -187,9 +191,47 @@ export function invalidateCache(key: string): void {
   } catch { /* ignore */ }
 }
 
-/** Remove all cache timestamps (forces full re-fetch on next load) */
+/**
+ * Session/auth/device keys that must survive a cache wipe. These identify the
+ * CURRENT login (tokens + current employee), the device itself, or the cache
+ * schema migration marker — they are NOT restaurant data and must never be
+ * dropped when switching restaurants on the same device.
+ */
+const SESSION_PRESERVED_KEYS = new Set([
+  'pos_access_token',
+  'pos_auth_token',
+  'pos_refresh_token',
+  'pos_session_mode',
+  'pos_current_employee',
+  'pos_device_id',
+  'pos_cache_schema_version',
+  'pos_saved_accounts', // persisted across logout/switch for fast re-login
+]);
+
+/**
+ * Remove ALL cached restaurant data from localStorage — data rows AND their
+ * TTL stamps — so a device switching restaurants can never hydrate the new
+ * restaurant's screens (bills, orders, menu, employees, tables, settings,
+ * sync queue, report caches) from the previous restaurant's cache.
+ *
+ * Session/auth/device keys are preserved (see SESSION_PRESERVED_KEYS): the
+ * caller has just written the fresh tokens + current employee, and the device
+ * id must survive restarts. Call this when the LOGGED-IN RESTAURANT changes
+ * (and on logout).
+ */
 export function clearAllCache(): void {
-  try { localStorage.removeItem(CACHE_META_KEY); } catch { /* ignore */ }
+  try {
+    const doomed: string[] = [];
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('pos_') && !SESSION_PRESERVED_KEYS.has(key)) {
+        doomed.push(key);
+      }
+    }
+    for (const key of doomed) {
+      try { localStorage.removeItem(key); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 // ============================================================
@@ -237,16 +279,67 @@ runCacheSchemaMigration();
  * Compute a DailySales object from an array of bills.
  * Used by Dashboard and Reports for KPI aggregation.
  */
-export function computeDailySales(bills: Bill[], currencySymbol: string): DailySales {
-  const today = new Date().toISOString().split('T')[0];
-  const todayBills = bills.filter(b => b.date === today);
+/** Local calendar date (YYYY-MM-DD) for a given instant. Bills and daily
+ *  summaries must use the restaurant's LOCAL day, not UTC: in IST (UTC+5:30)
+ *  the UTC date lags the local date between midnight and 05:29, so a
+ *  UTC-based "today" would label early-morning sales as yesterday. */
+export function localDateKey(d: Date = new Date()): string {
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+/** Shift a YYYY-MM-DD calendar date by N days (pure calendar math, TZ-safe). */
+export function shiftDateKey(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * The BUSINESS day a bill belongs to. The business day runs from opening time
+ * (HH:mm, e.g. 08:00) until the next day's opening time — a bill stamped at
+ * 03:00 belongs to the PREVIOUS calendar day's business day, not "today".
+ * Returns the YYYY-MM-DD of the business day's start date.
+ */
+export function businessDateKey(dateStr: string, timeStr: string | undefined, openingTime?: string): string {
+  const t = (timeStr || '00:00').slice(0, 5);
+  const open = (openingTime || '08:00').slice(0, 5);
+  if (t < open) return shiftDateKey(dateStr, -1);
+  return dateStr;
+}
+
+/** The business day currently in progress (YYYY-MM-DD of its start date). */
+export function todayBusinessKey(openingTime?: string): string {
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return businessDateKey(localDateKey(now), timeStr, openingTime);
+}
+
+/** True when a bill falls inside the given business-day start date. */
+export function isInBusinessDay(b: Bill, businessDayStart: string, openingTime?: string): boolean {
+  return businessDateKey(b.date, b.time, openingTime) === businessDayStart;
+}
+
+export function computeDailySales(bills: Bill[], currencySymbol: string, openingTime?: string): DailySales {
+  const today = todayBusinessKey(openingTime);
+  const todayBills = bills.filter(b => isInBusinessDay(b, today, openingTime));
 
   const totalRevenue = todayBills.reduce((s, b) => s + b.grandTotal, 0);
   const totalOrders = todayBills.length;
-  const totalItemsSold = todayBills.reduce((s, b) => s + (b.items || []).length, 0);
+  // Count items by QUANTITY (not just line-item count) — a bill with 3 lines
+  // of qty 2 each has 6 items sold, not 3. When items array is empty (API-fetched
+  // bills where BillItem join failed), fall back to 0 and let the backend summary
+  // endpoint provide the authoritative count.
+  const totalItemsSold = todayBills.reduce((s, b) => {
+    const items = b.items || [];
+    if (items.length === 0) return s; // empty items — backend summary is authoritative
+    return s + items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+  }, 0);
   const totalDiscount = todayBills.reduce((s, b) => s + b.discount, 0);
   const totalGst = todayBills.reduce((s, b) => s + b.gst, 0);
   const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+  // Data integrity flag: revenue exists but no items could be counted locally.
+  // The dashboard uses the backend summary's itemsSold as the authoritative
+  // source when this happens.
+  const itemsSoldFromBackend = totalRevenue > 0 && totalItemsSold === 0;
 
   // Payment method breakdown
   const paymentMap = new Map<string, { amount: number; count: number }>();
@@ -301,9 +394,9 @@ export function computeDailySales(bills: Bill[], currencySymbol: string): DailyS
     entry.revenue += bill.grandTotal;
     cashierMap.set(name, entry);
   }
-  const cashierPerformance = Array.from(cashierMap.entries()).map(([name, v]) => ({
-    name, orders: v.orders, revenue: v.revenue,
-  }));
+  const cashierPerformance = Array.from(cashierMap.entries())
+    .map(([name, v]) => ({ name, orders: v.orders, revenue: v.revenue }))
+    .sort((a, b) => b.revenue - a.revenue);
 
   return {
     date: today,

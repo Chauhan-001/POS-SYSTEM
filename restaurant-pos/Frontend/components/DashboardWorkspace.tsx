@@ -14,9 +14,11 @@ import {
   ChefHat, UtensilsCrossed, PieChart, BarChart3, Zap, Calendar,
   Percent, Receipt, Package, Layers, Coffee, TrendingDown, Sparkles, RefreshCw
 } from 'lucide-react';
-import type { DailySales, Bill, Order, TableInfo, Employee } from '../src/types';
+import RefreshButton from './common/RefreshButton';
+import type { DailySales, Bill, Order, TableInfo, Employee, Reservation } from '../src/types';
 import { generateDailySummary, type DailyAISummary } from '../src/ai/aiData';
-import { fetchInventoryEvents, fetchSalesPeakHours, fetchSalesOrderTypes } from '../src/api/client';
+import { todayBusinessKey, isInBusinessDay, shiftDateKey, localDateKey } from '../src/data';
+import { fetchInventoryEvents, fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary } from '../src/api/client';
 import WeatherWidget from '../src/ai/WeatherWidget';
 import DashboardStatCard from './DashboardStatCard';
 
@@ -26,6 +28,7 @@ interface DashboardWorkspaceProps {
   orders: Order[];
   tables: TableInfo[];
   employees: Employee[];
+  reservations?: Reservation[];
   products?: any[];
   currentEmployee: Employee;
   settings: any;
@@ -48,6 +51,16 @@ function formatCurrency(amount: number, symbol: string): string {
   return `${symbol}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// Compact currency for narrow chart labels (₹16.6k / ₹1.2L / ₹3.4Cr) so the
+// per-hour revenue fits beside each bar without overflowing the column.
+function formatCompactCurrency(amount: number, symbol: string): string {
+  const one = (v: number) => v.toFixed(1).replace(/\.0$/, '');
+  if (amount >= 10000000) return `${symbol}${one(amount / 10000000)}Cr`;
+  if (amount >= 100000) return `${symbol}${one(amount / 100000)}L`;
+  if (amount >= 1000) return `${symbol}${one(amount / 1000)}k`;
+  return `${symbol}${Math.round(amount)}`;
+}
+
 function getGreeting(): string {
   const hour = new Date().getHours();
   if (hour < 12) return 'Good Morning';
@@ -60,13 +73,10 @@ function formatDate(date: Date): string {
 }
 
 // Compute hourly order distribution from bills for peak hours chart
-function computeHourlyBreakdown(bills: Bill[]): { hour: string; orders: number; revenue: number }[] {
+function computeHourlyBreakdown(bills: Bill[], openingTime?: string): { hour: string; orders: number; revenue: number }[] {
   const hourlyMap: Record<string, { orders: number; revenue: number }> = {};
-  const today = new Date();
-  const tzoffset = today.getTimezoneOffset() * 60000;
-  const todayStr = new Date(Date.now() - tzoffset).toISOString().slice(0, 10);
-
-  const todayBills = bills.filter(b => b.date === todayStr);
+  const todayKey = todayBusinessKey(openingTime);
+  const todayBills = bills.filter(b => isInBusinessDay(b, todayKey, openingTime));
 
   // Initialize all hours
   for (let i = 8; i <= 23; i++) {
@@ -128,7 +138,7 @@ const Sparkline = React.memo(function Sparkline({ data, color, height = 40 }: { 
 
 export default function DashboardWorkspace({
   dailySales, bills, orders, tables, employees,
-  products = [], currentEmployee, settings, currencySymbol,
+  reservations = [], products = [], currentEmployee, settings, currencySymbol,
   totalExpensesToday = 0, totalExpensesThisMonth = 0,
   moduleSettings = {} as Record<string, boolean>,
   hasInventory = false,
@@ -144,7 +154,10 @@ export default function DashboardWorkspace({
   const [backendToday, setBackendToday] = useState<{
     hourly: { hour: string; orders: number; revenue: number }[] | null;
     orderTypes: { type: string; count: number; revenue: number }[] | null;
-  }>({ hourly: null, orderTypes: null });
+    topItems: { name: string; qty: number; revenue: number }[] | null;
+    categoryBreakdown: { category: string; qty: number; revenue: number }[] | null;
+    itemsSold: number | null;
+  }>({ hourly: null, orderTypes: null, topItems: null, categoryBreakdown: null, itemsSold: null });
 
   // Refresh button state + last-successful-update timestamp (shown in the footer).
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -161,13 +174,31 @@ export default function DashboardWorkspace({
     // YESTERDAY's data every morning before sunrise.
     const now = new Date();
     const todayStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    const [h, ot] = await Promise.all([
-      fetchSalesPeakHours(todayStr, todayStr),
-      fetchSalesOrderTypes(todayStr, todayStr),
+    // Business-day window: "today" starts at openingTime (default 08:00) and
+    // runs until the NEXT day's openingTime — before opening, the in-progress
+    // business day began yesterday, so the backend range spans [yesterday, today]
+    // and the openingTime param lets it exclude pre-opening bills on the start date.
+    const opening = (settings.openingTime || '08:00').slice(0, 5);
+    const nowTime = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    const start = nowTime < opening ? shiftDateKey(todayStr, -1) : todayStr;
+    const [h, ot, top, cats, summ] = await Promise.all([
+      fetchSalesPeakHours(start, todayStr, opening),
+      fetchSalesOrderTypes(start, todayStr, opening),
+      fetchProductTop(start, todayStr, 10, opening),
+      fetchProductCategories(start, todayStr, opening),
+      fetchSalesSummary(start, todayStr, opening),
     ]);
     setBackendToday({
       hourly: h.data && Array.isArray(h.data.hourly) ? h.data.hourly : null,
       orderTypes: ot.data && Array.isArray(ot.data) ? ot.data : null,
+      // Server-side BillItem aggregation — authoritative; the bills list API
+      // intentionally omits line items, so local bill.items is empty for
+      // API-fetched bills.
+      topItems: top.data && Array.isArray(top.data)
+        ? top.data.map((r: any) => ({ name: r.name, qty: r.qty, revenue: r.revenue }))
+        : null,
+      categoryBreakdown: cats.data && Array.isArray(cats.data) ? cats.data : null,
+      itemsSold: summ.data?.summary?.itemsSold ?? null,
     });
   }, []);
 
@@ -214,8 +245,26 @@ export default function DashboardWorkspace({
     if (backendToday.hourly) {
       return backendToday.hourly.map(x => ({ hour: x.hour, orders: x.orders, revenue: x.revenue }));
     }
-    return computeHourlyBreakdown(bills);
-  }, [backendToday.hourly, bills]);
+    return computeHourlyBreakdown(bills, settings.openingTime);
+  }, [backendToday.hourly, bills, settings.openingTime]);
+
+  // Top items / category breakdown / items sold — prefer the server-side
+  // BillItem aggregation (the bills list API omits line items, so the local
+  // bill.items fallback would be empty for API-fetched bills).
+  const topItems = useMemo(() => {
+    if (backendToday.topItems) return backendToday.topItems;
+    return dailySales.topItems;
+  }, [backendToday.topItems, dailySales.topItems]);
+
+  const categoryBreakdown = useMemo(() => {
+    if (backendToday.categoryBreakdown) return backendToday.categoryBreakdown;
+    return dailySales.categoryBreakdown;
+  }, [backendToday.categoryBreakdown, dailySales.categoryBreakdown]);
+
+  const itemsSold = useMemo(() => {
+    if (backendToday.itemsSold != null) return backendToday.itemsSold;
+    return dailySales.totalItemsSold;
+  }, [backendToday.itemsSold, dailySales.totalItemsSold]);
 
   // Find peak hour (hour with most orders)
   const peakHour = useMemo(() => {
@@ -252,12 +301,19 @@ export default function DashboardWorkspace({
     [tables]
   );
 
-  // Total customers today (unique)
+  // Total customers today (unique) — feeds the AI daily summary.
   const todayCustomerCount = useMemo(() => {
-    const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    const phones = new Set(bills.filter(b => b.date === todayStr && b.customerPhone).map(b => b.customerPhone));
+    const todayKey = todayBusinessKey(settings.openingTime);
+    const phones = new Set(bills.filter(b => isInBusinessDay(b, todayKey, settings.openingTime) && b.customerPhone).map(b => b.customerPhone));
     return phones.size;
-  }, [bills]);
+  }, [bills, settings.openingTime]);
+
+  // Reservations still to come today — only meaningful when the Reservations
+  // module is toggled on in Settings (moduleSettings.enableReservations).
+  const reservationsRemainingToday = useMemo(() => {
+    const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return (reservations || []).filter(r => r.date === todayStr && r.status === 'Confirmed').length;
+  }, [reservations]);
 
   // Sparkline data from hourly revenue
   const sparklineData = useMemo(() => hourlyData.map(h => h.revenue), [hourlyData]);
@@ -268,16 +324,18 @@ export default function DashboardWorkspace({
   // the data-dependency changes, so an idle dashboard never burns LLM tokens.
   const [aiSummary, setAiSummary] = useState<DailyAISummary | null>(null);
   const [aiRefreshKey, setAiRefreshKey] = useState(0);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    setAiSummaryLoading(true);
     (async () => {
-      const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-      const yesterday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - 86400000);
-      const yesterdayStr = yesterday.toISOString().slice(0, 10);
+      const todayKey = todayBusinessKey(settings.openingTime);
+      const yesterdayKey = shiftDateKey(todayKey, -1);
 
-      // REAL yesterday revenue — sum of all bills dated yesterday.
+      // REAL yesterday revenue — the previous BUSINESS day's sales (opening
+      // window aware: last night's post-midnight bills count toward it).
       const yesterdayRevenue = bills
-        .filter(b => b.date === yesterdayStr)
+        .filter(b => isInBusinessDay(b, yesterdayKey, settings.openingTime))
         .reduce((s, b) => s + (b.grandTotal || 0), 0);
 
       // REAL low-stock count — products at/below their minimum threshold.
@@ -296,7 +354,7 @@ export default function DashboardWorkspace({
         const wasteEvents = await fetchInventoryEvents({ type: 'waste', limit: 200 });
         if (wasteEvents) {
           wasteToday = wasteEvents
-            .filter(e => String(e.timestamp || '').slice(0, 10) === todayStr)
+            .filter(e => localDateKey(new Date(e.timestamp || Date.now())) === todayKey)
             .reduce((s, e) => {
               const product = products.find((p: any) => p.name === e.item);
               return s + Math.abs(e.quantity || 0) * (Number(product?.averageCost) || 0);
@@ -314,17 +372,19 @@ export default function DashboardWorkspace({
         todayCustomerCount,
         {
           orderCount: dailySales.totalOrders,
-          itemCount: dailySales.totalItemsSold,
+          itemCount: itemsSold,
           totalDiscount: dailySales.totalDiscount,
           totalGst: dailySales.totalGst,
           averageOrderValue: dailySales.averageOrderValue,
-          topItems: dailySales.topItems,
+          topItems,
           paymentMethods: dailySales.paymentBreakdown,
-          categoryBreakdown: dailySales.categoryBreakdown,
-        }
+          categoryBreakdown,
+        },
+        // The revenue projection needs the real open/close window.
+        { openingTime: settings.openingTime, closingTime: settings.closingTime }
       );
       if (!cancelled) setAiSummary(summary);
-    })();
+    })().finally(() => { if (!cancelled) setAiSummaryLoading(false); });
     return () => { cancelled = true; };
   }, [aiRefreshKey]); // mount + explicit refresh button only — never the 60s auto-refresh
 
@@ -332,14 +392,14 @@ export default function DashboardWorkspace({
   // subscription plan + module toggles include them)
   const kitchenEnabled = moduleSettings?.enableKitchenDisplay !== false;
   const quickActions = [
-    { icon: ShoppingCart, label: 'New Order', action: () => onNavigate('Orders'), color: 'bg-blue-500 hover:bg-blue-600' },
-    { icon: Zap, label: 'Billing', action: () => onNavigate('Billing'), color: 'bg-green-500 hover:bg-green-600' },
-    ...(kitchenEnabled ? [{ icon: UtensilsCrossed, label: 'Kitchen', action: () => onNavigate('Kitchen'), color: 'bg-amber-500 hover:bg-amber-600' }] : []),
-    ...(hasInventory ? [{ icon: Layers, label: 'Inventory', action: () => onNavigate('More'), color: 'bg-purple-500 hover:bg-purple-600' }] : []),
+    { icon: ShoppingCart, label: 'New Order', action: () => onNavigate('Orders'), color: 'bg-[var(--color-blue-500-solid)] hover:bg-[var(--color-blue-600-solid)]' },
+    { icon: Zap, label: 'Billing', action: () => onNavigate('Billing'), color: 'bg-[var(--color-green-500-solid)] hover:bg-[var(--color-green-600-solid)]' },
+    ...(kitchenEnabled ? [{ icon: UtensilsCrossed, label: 'Kitchen', action: () => onNavigate('Kitchen'), color: 'bg-[var(--color-amber-500-solid)] hover:bg-[var(--color-amber-600-solid)]' }] : []),
+    ...(hasInventory ? [{ icon: Layers, label: 'Inventory', action: () => onNavigate('More'), color: 'bg-[var(--color-purple-500-solid)] hover:bg-[var(--color-purple-600-solid)]' }] : []),
   ];
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto bg-[#faf8ff]">
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto bg-[var(--color-bg-page)]">
       <div className="p-4 md:p-6 space-y-5 pb-12">
         {/* ===== HEADER ===== */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -350,7 +410,7 @@ export default function DashboardWorkspace({
               </h1>
               {showBranchIndicator && currentBranchName && (
                 <span className="px-2.5 py-1 rounded-lg bg-purple-100 text-purple-700 border border-purple-200 text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-purple-500-solid)]" />
                   {currentBranchName}
                 </span>
               )}
@@ -362,17 +422,17 @@ export default function DashboardWorkspace({
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => handleRefresh()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               {isRefreshing ? 'Refreshing…' : 'Refresh'}
             </button>
             <button onClick={onOpenDailySales}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <Receipt className="w-3.5 h-3.5" />
               Daily Sales
             </button>
             <button onClick={onOpenZReport}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-xl text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <BarChart3 className="w-3.5 h-3.5" />
               Z-Report
             </button>
@@ -398,11 +458,11 @@ export default function DashboardWorkspace({
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-r from-purple-50 via-white to-blue-50 rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
+          className="bg-gradient-to-r from-[var(--color-purple-50)] via-[var(--color-bg-white)] to-[var(--color-blue-50)] rounded-2xl border border-[var(--color-border-default)] shadow-sm overflow-hidden"
         >
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3.5 border-b border-purple-100">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-purple-500 flex items-center justify-center shadow-sm">
+              <div className="w-9 h-9 rounded-xl bg-[var(--color-purple-500-solid)] flex items-center justify-center shadow-sm">
                 <Sparkles className="w-5 h-5 text-white" />
               </div>
               <div>
@@ -411,15 +471,15 @@ export default function DashboardWorkspace({
               </div>
             </div>
             <div className="flex flex-wrap gap-2 sm:ml-auto items-center">
-              <button
-                type="button"
-                onClick={() => setAiRefreshKey(k => k + 1)}
+              <RefreshButton
+                onRefresh={() => { setAiRefreshKey(k => k + 1); return Promise.resolve(); }}
+                busy={aiSummaryLoading}
                 title="Refresh AI summary (calls the AI once)"
-                className="flex items-center gap-1 text-[10px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2.5 py-1 transition-colors"
+                className="flex items-center gap-1 text-[10px] font-semibold text-purple-600 hover:text-purple-400 hover:bg-purple-50 border border-purple-200 rounded-full px-2.5 py-1 transition-colors"
+                iconClassName="w-3 h-3 shrink-0"
               >
-                <RefreshCw className="w-3 h-3" />
                 Refresh AI
-              </button>
+              </RefreshButton>
               {(aiSummary?.alerts || []).map((alert, i) => (
                 <span key={i} className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
                   alert.severity === 'critical' ? 'bg-red-50 text-red-700' :
@@ -440,19 +500,19 @@ export default function DashboardWorkspace({
               </div>
             ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-3.5">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
                 <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Key Insight</p>
                 <p className="text-xs font-semibold text-gray-800 mt-1">{aiSummary.keyInsight}</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-3.5">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
                 <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Top Priority</p>
                 <p className="text-xs font-semibold text-gray-800 mt-1">{aiSummary.topPriority}</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-3.5">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
                 <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Revenue Projection</p>
                 <p className="text-xs font-semibold text-emerald-700 mt-1">{aiSummary.revenuePrediction}</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-3.5">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
                 <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Suggestions</p>
                 <ul className="mt-1 space-y-0.5">
                   {aiSummary.itemSuggestions.map((s, i) => (
@@ -501,23 +561,25 @@ export default function DashboardWorkspace({
 
           <DashboardStatCard
             label="Items Sold"
-            value={dailySales.totalItemsSold}
+            value={itemsSold}
             subtitle={`Discounts: ${formatCurrency(dailySales.totalDiscount, currencySymbol)}`}
             icon={Package}
             iconBg="bg-amber-50"
             iconColor="text-amber-600"
           >
-            {dailySales.topItems.length > 0 && (
+            {topItems.length > 0 && (
               <p className="text-[9px] text-gray-400 font-semibold">
-                Top: {dailySales.topItems[0].name} ({dailySales.topItems[0].qty}x)
+                Top: {topItems[0].name} ({topItems[0].qty}x)
               </p>
             )}
           </DashboardStatCard>
 
           <DashboardStatCard
             label="Restaurant Status"
-            value={`${occupiedTables}/${availableTables}`}
-            subtitle={`👤 ${todayCustomerCount} customers · 👨‍🍳 ${employees.filter(e => e.status === 'Active').length} staff`}
+            value={`${occupiedTables}/${occupiedTables + availableTables}`}
+            subtitle={moduleSettings?.enableReservations !== false
+              ? `📅 ${reservationsRemainingToday} reservation${reservationsRemainingToday === 1 ? '' : 's'} left today · 👨‍🍳 ${employees.filter(e => e.status === 'Active').length} staff`
+              : `👨‍🍳 ${employees.filter(e => e.status === 'Active').length} staff`}
             icon={Users}
             iconBg="bg-purple-50"
             iconColor="text-purple-600"
@@ -544,20 +606,20 @@ export default function DashboardWorkspace({
         {/* ===== SECOND ROW: Top Items + Payment Breakdown ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Top Selling Items */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <Star className="w-4 h-4 text-amber-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Top Selling Items</h3>
             </div>
-            {dailySales.topItems.length === 0 ? (
+            {topItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-gray-300">
                 <Coffee className="w-10 h-10 mb-2" />
                 <p className="text-xs font-medium">No items sold today yet</p>
               </div>
             ) : (
               <div className="space-y-2">
-                {dailySales.topItems.slice(0, 8).map((item, idx) => {
-                  const maxQty = dailySales.topItems[0].qty || 1;
+                {topItems.slice(0, 8).map((item, idx) => {
+                  const maxQty = topItems[0].qty || 1;
                   const barWidth = (item.qty / maxQty) * 100;
                   return (
                     <div key={item.name} className="flex items-center gap-3">
@@ -586,7 +648,7 @@ export default function DashboardWorkspace({
           </div>
 
           {/* Payment Breakdown */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <CreditCard className="w-4 h-4 text-blue-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Payment Methods</h3>
@@ -643,7 +705,7 @@ export default function DashboardWorkspace({
         {/* ===== THIRD ROW: Peak Hours + Category Breakdown + Recent Activity ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Peak Hours Chart */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs lg:col-span-2">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs lg:col-span-2">
             <div className="flex items-center gap-2 mb-4">
               <Clock className="w-4 h-4 text-indigo-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Hourly Orders</h3>
@@ -665,16 +727,27 @@ export default function DashboardWorkspace({
                   const height = (h.orders / maxOrders) * 100;
                   const isPeak = peakHour && h.hour === peakHour.hour;
                   return (
-                    <div key={h.hour} className="flex flex-col items-center gap-1 min-w-[32px] flex-1">
-                      <span className="text-[8px] font-bold text-gray-400">{h.orders}</span>
-                      <div
-                        className={`w-full rounded-t-md transition-all ${
-                          isPeak ? 'bg-gradient-to-t from-indigo-500 to-indigo-400' : 'bg-gradient-to-t from-indigo-300 to-indigo-200'
-                        }`}
-                        style={{ height: `${Math.max(height, 2)}%` }}
-                        title={`${h.hour}: ${h.orders} orders, ${formatCurrency(h.revenue, currencySymbol)}`}
-                      />
-                      <span className={`text-[8px] font-semibold ${isPeak ? 'text-indigo-600' : 'text-gray-400'}`}>
+                    <div key={h.hour} className="flex flex-col h-full min-w-[32px] flex-1">
+                      {/* Order count + revenue figure */}
+                      <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                        <span className="text-[8px] font-bold text-gray-400">{h.orders}</span>
+                        {h.orders > 0 && (
+                          <span className={`text-[7px] font-semibold ${isPeak ? 'text-indigo-500' : 'text-gray-500'}`}>
+                            {formatCompactCurrency(h.revenue, currencySymbol)}
+                          </span>
+                        )}
+                      </div>
+                      {/* Bar — height % resolves against this definite flex area */}
+                      <div className="flex-1 flex items-end px-0.5">
+                        <div
+                          className={`w-full rounded-t-md transition-all ${
+                            isPeak ? 'bg-gradient-to-t from-indigo-500 to-indigo-400' : 'bg-gradient-to-t from-indigo-300 to-indigo-200'
+                          }`}
+                          style={{ height: `${Math.max(height, 2)}%` }}
+                          title={`${h.hour}: ${h.orders} orders, ${formatCurrency(h.revenue, currencySymbol)}`}
+                        />
+                      </div>
+                      <span className={`text-center text-[8px] font-semibold ${isPeak ? 'text-indigo-600' : 'text-gray-400'}`}>
                         {h.hour.replace(':00', '')}
                       </span>
                     </div>
@@ -685,20 +758,20 @@ export default function DashboardWorkspace({
           </div>
 
           {/* Category Breakdown */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <PieChart className="w-4 h-4 text-pink-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Categories Today</h3>
             </div>
-            {dailySales.categoryBreakdown.length === 0 ? (
+            {categoryBreakdown.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-gray-300">
                 <Layers className="w-10 h-10 mb-2" />
                 <p className="text-xs font-medium">No category data yet</p>
               </div>
             ) : (
               <div className="space-y-2">
-                {dailySales.categoryBreakdown.sort((a, b) => b.revenue - a.revenue).slice(0, 7).map(cat => {
-                  const maxRevenue = Math.max(...dailySales.categoryBreakdown.map(c => c.revenue), 1);
+                {[...categoryBreakdown].sort((a, b) => b.revenue - a.revenue).slice(0, 7).map(cat => {
+                  const maxRevenue = Math.max(...categoryBreakdown.map(c => c.revenue), 1);
                   const barWidth = (cat.revenue / maxRevenue) * 100;
                   const colors = [
                     'from-pink-400 to-pink-500',
@@ -719,7 +792,7 @@ export default function DashboardWorkspace({
                       </div>
                       <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full bg-gradient-to-r ${colors[dailySales.categoryBreakdown.indexOf(cat) % colors.length]} transition-all`}
+                          className={`h-full rounded-full bg-gradient-to-r ${colors[categoryBreakdown.indexOf(cat) % colors.length]} transition-all`}
                           style={{ width: `${barWidth}%` }}
                         />
                       </div>
@@ -733,7 +806,7 @@ export default function DashboardWorkspace({
 
         {/* ===== EXPENSES CARD ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <TrendingDown className="w-4 h-4 text-red-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Revenue vs Expenses</h3>
@@ -790,15 +863,15 @@ export default function DashboardWorkspace({
 
           {/* Cashier Performance */}
           {moduleSettings.showCashierPerformance !== false && (
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
-              <div className="flex items-center gap-2 mb-3">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs flex flex-col">
+              <div className="flex items-center gap-2 mb-3 shrink-0">
                 <Users className="w-4 h-4 text-cyan-500" />
                 <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Cashier Performance</h3>
               </div>
               {dailySales.cashierPerformance.length === 0 ? (
                 <p className="text-[10px] text-gray-400 py-4 text-center">No cashier data today</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 flex-1 min-h-0 max-h-[240px] overflow-y-auto pr-1">
                   {dailySales.cashierPerformance.map((c, idx) => (
                     <div key={c.name} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
                       <div className="flex items-center gap-2">
@@ -819,10 +892,17 @@ export default function DashboardWorkspace({
           )}
 
           {/* AI Weather Widget */}
-          {moduleSettings.enableAIWeather !== false && <WeatherWidget menuItems={products.map((p: any) => p.name).filter(Boolean)} />}
+          {moduleSettings.enableAIWeather !== false && (
+            <WeatherWidget
+              menuItems={products.map((p: any) => p.name).filter(Boolean)}
+              // The inventory module tracks products as its item catalog, so the
+              // product list is the real inventory list for weather-based tips.
+              inventoryItems={products.map((p: any) => p.name).filter(Boolean)}
+            />
+          )}
 
           {/* Quick Stats / Summary */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-3">
               <Activity className="w-4 h-4 text-emerald-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Today's Summary</h3>
@@ -849,7 +929,7 @@ export default function DashboardWorkspace({
               <div className="bg-gray-50 rounded-xl p-3">
                 <p className="text-[9px] font-bold text-gray-400 uppercase">Items per Order</p>
                 <p className="text-lg font-black text-gray-900 mt-0.5 font-mono">
-                  {dailySales.totalOrders > 0 ? (dailySales.totalItemsSold / dailySales.totalOrders).toFixed(1) : '0'}
+                  {dailySales.totalOrders > 0 ? (itemsSold / dailySales.totalOrders).toFixed(1) : '0'}
                 </p>
               </div>
             </div>
@@ -857,7 +937,7 @@ export default function DashboardWorkspace({
         </div>
 
         {/* ===== FOOTER ===== */}
-        <div className="flex items-center justify-between py-3 border-t border-[#e1e2ed] text-[9px] text-gray-400">
+        <div className="flex items-center justify-between py-3 border-t border-[var(--color-border-default)] text-[9px] text-gray-400">
           <span>
             Data for {dateStr} · Updated{' '}
             {lastUpdated

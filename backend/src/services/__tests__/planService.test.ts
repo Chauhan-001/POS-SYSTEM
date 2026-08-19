@@ -156,7 +156,7 @@ describe('planService.update', () => {
     const updated = await planService.update(created.id, { limits: { maxBranches: 8 } }, admin);
     expect(updated.limits.maxBranches).toBe(8);
     expect(updated.limits.maxStorageMB).toBe(2048); // preserved
-    expect(updated.limits.maxDevices).toBe(8); // from create
+    expect(updated.limits.maxDevicesPerBranch).toBe(8); // from create (legacy alias)
   });
 
   it('syncs status ↔ isActive', async () => {

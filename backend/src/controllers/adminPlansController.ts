@@ -168,6 +168,7 @@ export async function convertTrial(req: Request, res: Response): Promise<void> {
       req.body.restaurantId,
       req.body.planId,
       adminIdentity(req),
+      req.body.billingPeriod,
     ));
   } catch (error) {
     handleError(res, error, 'AdminPlans TrialConversion');

@@ -132,4 +132,53 @@ describe('SalesReportService (Phase 1.8)', () => {
     const anita = cashiers.find((c: any) => c.cashier === 'Anita');
     expect(anita?.orders).toBe(1);
   });
+
+  // ─── Business-day opening window (settings openingTime) ───────────
+  it('excludes pre-opening bills from a single-day report when openingTime is set', async () => {
+    await seedBill({ time: '07:59' });          // before 08:00 opening → NOT today
+    await seedBill({ time: '08:00' });          // at opening → today
+    await seedBill({ time: '14:00', grandTotal: 500 }); // mid-day → today
+
+    const scope = { restaurantId: REST_A, startDate: '2026-08-01', endDate: '2026-08-01', openingTime: '08:00' };
+    const summary = await salesReportService.summary(scope);
+    expect(summary.summary.orders).toBe(2);
+    expect(summary.summary.netSales).toBe(1340); // 840 + 500
+
+    // Same query WITHOUT openingTime keeps the calendar-day behaviour (all 3).
+    const plain = await salesReportService.summary({ restaurantId: REST_A, startDate: '2026-08-01', endDate: '2026-08-01' });
+    expect(plain.summary.orders).toBe(3);
+  });
+
+  it('rolls post-midnight bills into the previous business day for a 2-day window', async () => {
+    await seedBill({ date: '2026-08-01', time: '22:00' });   // business day 08-01
+    await seedBill({ date: '2026-08-02', time: '03:00' });   // before 08:00 → business day 08-01
+    await seedBill({ date: '2026-08-02', time: '09:00' });   // business day 08-02
+
+    const day1 = await salesReportService.summary({
+      restaurantId: REST_A, startDate: '2026-08-01', endDate: '2026-08-01', openingTime: '08:00',
+    });
+    // Business day 08-01 = [Aug 1 08:00 → Aug 2 08:00): the 22:00 bill AND the 03:00 bill.
+    expect(day1.summary.orders).toBe(2);
+    expect(day1.summary.netSales).toBe(1680);
+
+    const day2 = await salesReportService.summary({
+      restaurantId: REST_A, startDate: '2026-08-02', endDate: '2026-08-02', openingTime: '08:00',
+    });
+    expect(day2.summary.orders).toBe(1);
+  });
+
+  it('applies the opening window to hourly and order-type aggregations', async () => {
+    await seedBill({ time: '07:00' });
+    await seedBill({ time: '12:00' });
+    await seedBill({ time: '20:00', orderType: 'Takeaway' });
+
+    const scope = { restaurantId: REST_A, startDate: '2026-08-01', endDate: '2026-08-01', openingTime: '08:00' };
+    const hourly: any[] = await salesReportService.hourly(scope);
+    const preOpening = hourly.find((x: any) => x.hour === '07:00');
+    expect(preOpening.orders).toBe(0);
+    expect(hourly.reduce((s, x) => s + x.orders, 0)).toBe(2);
+
+    const types: any[] = await salesReportService.orderTypes(scope);
+    expect(types.reduce((s, t) => s + t.count, 0)).toBe(2);
+  });
 });

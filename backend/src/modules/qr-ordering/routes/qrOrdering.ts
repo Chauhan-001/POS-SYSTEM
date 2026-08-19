@@ -28,6 +28,7 @@ import {
   updateCustomerRequest,
   deleteCustomerRequest,
   assignRequest,
+  markRequestSeen,
   completeRequest,
   heartbeatSession,
   getExpiredSessions,
@@ -83,6 +84,7 @@ const sessionIdSchema = z.object({ sessionId: z.string().min(1) });
 const requestIdSchema = z.object({ id: z.string().min(1) });
 const requestAssignSchema = z.object({ assignedTo: z.string().min(1) });
 const requestCompleteSchema = z.object({ completedBy: z.string().optional() });
+const requestSeenSchema = z.object({ seenBy: z.string().optional() });
 const sessionHeartbeatSchema = z.object({ sessionId: z.string().min(1) });
 
 const router = Router();
@@ -225,6 +227,18 @@ router.post(
   requireAuth,
   validate({ params: requestIdSchema, body: requestAssignSchema }),
   assignRequest
+);
+
+/**
+ * POST /api/qr-ordering/requests/:id/seen
+ * Silence the reminder without resolving (used for online orders — the card
+ * stays live until the order's bill closes).
+ */
+router.post(
+  '/requests/:id/seen',
+  requireAuth,
+  validate({ params: requestIdSchema, body: requestSeenSchema }),
+  markRequestSeen
 );
 
 /**

@@ -34,8 +34,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Dual-environment module dir: under tsx (ESM) import.meta.url is valid; in
+// the esbuild CJS bundle it is undefined. Reference the CJS `__filename`
+// global as a FREE variable (never declare a same-named const — esbuild would
+// rename the declaration and defeat the typeof check), falling back to
+// import.meta.url when it doesn't exist (ESM). Without this the production
+// bundle crashes on startup.
+const __dirname = path.dirname(
+  typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url)
+);
 
 /**
  * First non-internal IPv4 address — the machine's current LAN IP. Prefers
@@ -127,7 +134,7 @@ export const config = {
     /** API key for the LLM provider */
     apiKey: process.env.AI_API_KEY || '',
     /** Model identifier (provider-specific default) */
-    model: process.env.AI_MODEL || 'gpt-4o-mini',
+    model: process.env.AI_MODEL || 'openai/gpt-oss-20b',
     /** Custom base URL (for Ollama or proxy) */
     baseUrl: process.env.AI_BASE_URL || '',
     /** Request timeout in ms */
@@ -156,7 +163,7 @@ export const config = {
 
   subscription: {
     /** Free-trial duration in days (single source of truth for 7-day trial) */
-    trialDays: parseInt(process.env.TRIAL_DAYS || '7', 10),
+    trialDays: parseInt(process.env.TRIAL_DAYS || '14', 10),
   },
 
   // ===========================================================================

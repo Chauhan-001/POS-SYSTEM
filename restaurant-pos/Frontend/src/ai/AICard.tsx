@@ -22,11 +22,11 @@ interface AICardProps {
 }
 
 const colorMap: Record<string, { bg: string; border: string; iconBg: string }> = {
-  blue: { bg: 'bg-blue-50', border: 'border-blue-200', iconBg: 'bg-blue-500' },
-  emerald: { bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-500' },
-  amber: { bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-500' },
-  purple: { bg: 'bg-purple-50', border: 'border-purple-200', iconBg: 'bg-purple-500' },
-  red: { bg: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-red-500' },
+  blue: { bg: 'bg-blue-50', border: 'border-blue-200', iconBg: 'bg-[var(--color-blue-500-solid)]' },
+  emerald: { bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-[var(--color-emerald-500-solid)]' },
+  amber: { bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-[var(--color-amber-500-solid)]' },
+  purple: { bg: 'bg-purple-50', border: 'border-purple-200', iconBg: 'bg-[var(--color-purple-500-solid)]' },
+  red: { bg: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-[var(--color-red-500-solid)]' },
   gray: { bg: 'bg-gray-50', border: 'border-gray-200', iconBg: 'bg-gray-500' },
 };
 

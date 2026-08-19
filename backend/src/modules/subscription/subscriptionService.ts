@@ -12,22 +12,53 @@ import { paymentGateway } from '../payment/RazorpayGateway';
 import mongoose from 'mongoose';
 import { config } from '../../config';
 import { entitlementService } from '../../services/entitlementService';
+import { effectiveFeatures } from '../../utils/subscriptionFeatures';
 import crypto from 'crypto';
 
 export const SUBSCRIPTION_DURATION_DAYS = 30;
-export const GRACE_PERIOD_DAYS = 10;
+export const SUBSCRIPTION_DURATION_DAYS_YEARLY = 365;
+/**
+ * Warning window after a subscription expires: the restaurant keeps full
+ * access for these days, then falls back to the free tier (core POS only)
+ * instead of being suspended outright.
+ */
+export const GRACE_PERIOD_DAYS = 2;
 // Single source of truth for the free-trial length (config.subscription.trialDays).
 const TRIAL_DAYS = config.subscription.trialDays;
 
-import { FEATURE_CATALOG } from '../../constants/planFeatures';
+import { ALL_FEATURES } from '../../constants/planFeatures';
+
+export type BillingPeriod = 'monthly' | 'yearly';
+
+/** True when the value is a supported billing cadence. */
+export function isBillingPeriod(value: unknown): value is BillingPeriod {
+  return value === 'monthly' || value === 'yearly';
+}
+
+/** Number of days a paid billing period lasts. Monthly = 30d, yearly = 365d. */
+export function billingDurationDays(period?: string): number {
+  return period === 'yearly' ? SUBSCRIPTION_DURATION_DAYS_YEARLY : SUBSCRIPTION_DURATION_DAYS;
+}
 
 /**
- * Every feature unlocked during the 7-day free trial.
- * Trial subscribers get the full product — feature restrictions apply only
- * after a paid plan is selected. Mirrors admin onboarding 'trial' mode.
- * Derived from the central catalog so new features never drift.
+ * Price a plan charges for a given billing cadence. Yearly billing uses the
+ * plan's yearly price when set, otherwise falls back to the monthly price.
  */
-const ALL_TRIAL_FEATURES = FEATURE_CATALOG.map((f) => f.key);
+export function planPriceForPeriod(plan: any, period?: string): number {
+  if (period === 'yearly' && typeof plan?.yearlyPrice === 'number' && plan.yearlyPrice > 0) {
+    return plan.yearlyPrice;
+  }
+  return typeof plan?.price === 'number' ? plan.price : 0;
+}
+
+/**
+ * Every feature unlocked during the free trial (config.subscription.trialDays,
+ * default 14 days). Trial subscribers get the full product — feature
+ * restrictions apply only after a paid plan is selected. Mirrors admin
+ * onboarding 'trial' mode. Derived from the central catalog so new features
+ * never drift.
+ */
+const ALL_TRIAL_FEATURES = ALL_FEATURES;
 
 export class SubscriptionService {
   async getPlans() {
@@ -51,6 +82,107 @@ export class SubscriptionService {
       plans = [defaultPlan];
     }
     return plans;
+  }
+
+  /**
+   * Ensure the platform's Free tier plan exists (core POS only). Restaurants
+   * whose subscription period expires fall back to this plan after the 2-day
+   * warning window. Idempotent — never clobbers admin edits to the plan.
+   */
+  async ensureFreePlan(): Promise<void> {
+    try {
+      const existing = await SubscriptionPlan.findOne({ planId: 'free' }).lean().exec();
+      if (existing) return;
+      await SubscriptionPlan.create({
+        planId: 'free',
+        name: 'Free Plan',
+        description: 'Core POS features — billing, orders, tables and payments. Upgrade anytime to unlock more.',
+        price: 0,
+        yearlyPrice: 0,
+        maxUsers: 3,
+        maxDevices: 1,
+        features: ['core_pos'],
+        aiEnabled: false,
+        trialDays: 0,
+        sortOrder: 0,
+        isActive: true,
+        isDefault: false,
+        status: 'active',
+        planType: 'free',
+        visibility: 'public',
+        limits: {
+          maxRestaurants: 1,
+          maxBranches: 1,
+          maxDevicesPerBranch: 1,
+          maxProducts: 0,
+          maxCustomers: 0,
+          maxMonthlyOrders: 0,
+          maxStorageMB: 100,
+          maxAIRequests: 0,
+          maxVoiceRequests: 0,
+          maxImages: 0,
+          maxExports: 0,
+        },
+      });
+      console.log('[SubscriptionService] Seeded the Free tier plan (core POS only)');
+    } catch (error) {
+      console.error('[SubscriptionService] ensureFreePlan failed:', error);
+    }
+  }
+
+  /**
+   * Move a subscription to the Free tier (core POS only) after the 2-day
+   * expiry warning elapses. The restaurant keeps working — premium features
+   * are simply no longer entitled (requireFeature gates them).
+   */
+  private async shiftToFreeTier(sub: ISubscription): Promise<void> {
+    let freeFeatures: string[] = ['core_pos'];
+    let freeLimits: Record<string, number> = {
+      maxRestaurants: 1, maxBranches: 1, maxDevicesPerBranch: 1,
+      maxProducts: 0, maxCustomers: 0, maxMonthlyOrders: 0, maxStorageMB: 100,
+      maxAIRequests: 0, maxVoiceRequests: 0, maxImages: 0, maxExports: 0,
+    };
+    let freeMaxUsers = 3;
+    let freeMaxDevices = 1;
+    try {
+      const freePlan = await SubscriptionPlan.findOne({ planId: 'free' }).exec();
+      if (freePlan) {
+        if (freePlan.features?.length) freeFeatures = freePlan.features;
+        if (freePlan.limits) freeLimits = freePlan.limits as unknown as Record<string, number>;
+        if (typeof freePlan.maxUsers === 'number') freeMaxUsers = freePlan.maxUsers;
+        if (typeof freePlan.maxDevices === 'number') freeMaxDevices = freePlan.maxDevices;
+      }
+    } catch (error) {
+      console.error('[SubscriptionService] shiftToFreeTier plan lookup failed:', error);
+    }
+
+    sub.plan = 'free';
+    sub.status = 'active';
+    sub.billingPeriod = 'monthly';
+    sub.expiryDate = null;
+    sub.renewalDate = null;
+    sub.graceEnd = null;
+    sub.trialEnd = null;
+    sub.features = freeFeatures;
+    sub.maxUsers = freeMaxUsers;
+    sub.maxDevices = freeMaxDevices;
+    sub.limits = freeLimits as any;
+    sub.pendingPlan = null;
+    sub.pendingEffectiveDate = null;
+
+    try {
+      await AuditLog.create({
+        action: 'subscription.downgraded_to_free',
+        entityType: 'Subscription',
+        entityId: sub.restaurantId.toString(),
+        performedBy: 'system',
+        details: {
+          reason: 'Subscription period expired and the 2-day warning elapsed',
+          plan: 'free',
+          features: freeFeatures,
+        },
+      });
+    } catch { /* non-blocking */ }
   }
 
   /**
@@ -105,20 +237,23 @@ export class SubscriptionService {
         sub.status = 'grace';
         changed = true;
       } else if (sub.graceEnd && now > sub.graceEnd) {
-        sub.status = 'suspended';
+        // 2-day warning elapsed — fall back to the free tier (core POS only).
+        await this.shiftToFreeTier(sub);
         changed = true;
       } else {
-        // Trial ended but no graceEnd set — set it now
+        // Trial ended but no graceEnd set — start the 2-day warning now
         sub.status = 'grace';
         sub.graceEnd = new Date(now.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
         changed = true;
       }
     } else if (sub.status === 'active' && sub.expiryDate && now > sub.expiryDate) {
+      // Expired — start the 2-day warning before falling back to the free tier.
       sub.status = 'grace';
       sub.graceEnd = new Date(now.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
       changed = true;
     } else if (sub.status === 'grace' && sub.graceEnd && now > sub.graceEnd) {
-      sub.status = 'suspended';
+      // 2-day warning elapsed — fall back to the free tier (core POS only).
+      await this.shiftToFreeTier(sub);
       changed = true;
     }
 
@@ -145,12 +280,13 @@ export class SubscriptionService {
     const plan = sub.plan
       ? await SubscriptionPlan.findOne({ planId: sub.plan }).exec()
       : null;
-    const effectiveLimits = sub.limits || plan?.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 };
+    const effectiveLimits = sub.limits || plan?.limits || { maxBranches: 1, maxDevicesPerBranch: 3 };
 
     return {
       restaurantId,
       restaurantName: restaurant?.name || 'Restaurant',
       plan: sub.plan,
+      billingPeriod: sub.billingPeriod || 'monthly',
       pendingPlan: sub.pendingPlan || null,
       pendingEffectiveDate: sub.pendingEffectiveDate?.toISOString() || null,
       status: sub.status,
@@ -160,22 +296,26 @@ export class SubscriptionService {
       expiryDate: sub.expiryDate,
       renewalDate: sub.renewalDate,
       graceEnd: sub.graceEnd,
+      maxUsers: sub.maxUsers,
       maxDevices: sub.maxDevices,
       currentDevices,
-      features: sub.status === 'trial' ? ALL_TRIAL_FEATURES : sub.features,
+      features: sub.status === 'trial' ? ALL_TRIAL_FEATURES : effectiveFeatures(sub.features, sub.grantedFeatures),
+      grantedFeatures: sub.grantedFeatures || [],
       limits: effectiveLimits,
       branchUsage: branchUsage.usage,
     };
   }
 
-  async createOrder(restaurantId: string, planId: string) {
+  async createOrder(restaurantId: string, planId: string, billingPeriod: string = 'monthly') {
     const plan = await SubscriptionPlan.findOne({ planId }).exec()
       || await SubscriptionPlan.findOne({ isDefault: true }).exec();
     if (!plan) {
       throw new Error('No subscription plan found');
     }
 
-    const amount = plan.price * 100; // Convert to paise
+    const period = isBillingPeriod(billingPeriod) ? billingPeriod : 'monthly';
+    const periodPrice = planPriceForPeriod(plan, period);
+    const amount = periodPrice * 100; // Convert to paise
     const receipt = `sub_${crypto.randomBytes(8).toString('hex')}`;
 
     const order = await paymentGateway.createOrder({
@@ -199,9 +339,10 @@ export class SubscriptionService {
       restaurantId,
       subscriptionId: sub?._id,
       razorpayOrderId: order.id,
-      amount: plan.price,
+      amount: periodPrice,
       currency: 'INR',
       gateway: 'razorpay',
+      billingPeriod: period,
       status: 'created',
       invoiceNumber,
     });
@@ -241,7 +382,7 @@ export class SubscriptionService {
 
     // Generate subscription invoice
     const invoice = await Invoice.create({
-      restaurantId: payment.restaurantId,
+      restaurantId: payment.restaurantId as any,
       paymentId: payment._id,
       invoiceNumber: payment.invoiceNumber,
       plan: payment.subscriptionId ? 'professional' : 'professional',
@@ -250,14 +391,17 @@ export class SubscriptionService {
       generatedAt: new Date(),
     });
 
-    // Activate subscription
+    // Activate subscription — the paid period length follows the billing
+    // cadence recorded on the payment (monthly = 30d, yearly = 365d).
+    const period = isBillingPeriod(payment.billingPeriod) ? payment.billingPeriod : 'monthly';
     const now = new Date();
-    const expiry = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+    const expiry = new Date(now.getTime() + billingDurationDays(period) * 24 * 60 * 60 * 1000);
     const graceEnd = new Date(expiry.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
 
     const sub = await Subscription.findOne({ restaurantId }).exec();
     if (sub) {
       sub.status = 'active';
+      sub.billingPeriod = period;
       sub.subscriptionStart = now;
       sub.expiryDate = expiry;
       sub.renewalDate = expiry;
@@ -403,7 +547,7 @@ export class SubscriptionService {
     const existingInvoice = await Invoice.findOne({ paymentId: payment._id }).exec();
     if (!existingInvoice) {
       await Invoice.create({
-        restaurantId: payment.restaurantId,
+        restaurantId: payment.restaurantId as any,
         paymentId: payment._id,
         invoiceNumber: payment.invoiceNumber,
         plan: 'professional',
@@ -413,9 +557,10 @@ export class SubscriptionService {
       });
     }
 
-    // Activate subscription
+    // Activate subscription — extend by the cadence the payment settled.
+    const period = isBillingPeriod(payment.billingPeriod) ? payment.billingPeriod : 'monthly';
     const now = new Date();
-    const existingSub = await Subscription.findOne({ restaurantId: payment.restaurantId }).exec();
+    const existingSub = await Subscription.findOne({ restaurantId: payment.restaurantId as any }).exec();
 
     // Calculate new expiry — if still in active period, extend from current expiry
     let baseDate = now;
@@ -423,13 +568,14 @@ export class SubscriptionService {
       baseDate = existingSub.expiryDate;
     }
 
-    const newExpiry = new Date(baseDate.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+    const newExpiry = new Date(baseDate.getTime() + billingDurationDays(period) * 24 * 60 * 60 * 1000);
 
     await Subscription.findOneAndUpdate(
-      { restaurantId: payment.restaurantId },
+      { restaurantId: payment.restaurantId as any },
       {
         $set: {
           status: 'active',
+          billingPeriod: period,
           subscriptionStart: existingSub?.subscriptionStart || now,
           expiryDate: newExpiry,
           renewalDate: newExpiry,
@@ -456,18 +602,20 @@ export class SubscriptionService {
     return payments;
   }
 
-  async manualRenew(restaurantId: string, options?: { amount?: number; notes?: string; paymentMethod?: string }) {
+  async manualRenew(restaurantId: string, options?: { amount?: number; notes?: string; paymentMethod?: string; billingPeriod?: string }) {
     const now = new Date();
     const existingSub = await Subscription.findOne({ restaurantId }).exec();
     if (!existingSub) {
       throw new Error('Subscription not found. Cannot renew without an active subscription.');
     }
 
-    // Resolve plan to get default price
+    const period = isBillingPeriod(options?.billingPeriod) ? options.billingPeriod : (existingSub.billingPeriod || 'monthly');
+
+    // Resolve plan to get the period's default price
     const plan = existingSub.plan
       ? await SubscriptionPlan.findOne({ planId: existingSub.plan }).exec()
       : null;
-    const defaultPrice = plan?.price || 499;
+    const defaultPrice = planPriceForPeriod(plan, period) || 499;
 
     const parsedAmount = Math.max(1, Math.round(options?.amount || defaultPrice));
     const paymentMethod = options?.paymentMethod || 'cash';
@@ -493,6 +641,7 @@ export class SubscriptionService {
       currency: 'INR',
       gateway: 'cash',
       paymentMethod,
+      billingPeriod: period,
       status: 'success',
       invoiceNumber,
     });
@@ -508,17 +657,18 @@ export class SubscriptionService {
       generatedAt: now,
     });
 
-    // Extend subscription
+    // Extend subscription by the cadence that was paid for.
     const baseDate = (existingSub.expiryDate && existingSub.expiryDate > now)
       ? existingSub.expiryDate
       : now;
-    const newExpiry = new Date(baseDate.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+    const newExpiry = new Date(baseDate.getTime() + billingDurationDays(period) * 24 * 60 * 60 * 1000);
 
     const sub = await Subscription.findOneAndUpdate(
       { restaurantId },
       {
         $set: {
           status: 'active',
+          billingPeriod: period,
           subscriptionStart: existingSub.subscriptionStart || now,
           expiryDate: newExpiry,
           renewalDate: newExpiry,
@@ -537,6 +687,7 @@ export class SubscriptionService {
       details: {
         amount: parsedAmount,
         paymentMethod,
+        billingPeriod: period,
         invoiceNumber,
         notes,
         expiryDate: newExpiry.toISOString(),
@@ -553,7 +704,7 @@ export class SubscriptionService {
     };
   }
 
-  async changePlan(restaurantId: string, planId: string) {
+  async changePlan(restaurantId: string, planId: string, billingPeriod?: string) {
     const plan = await SubscriptionPlan.findOne({ planId }).exec();
     if (!plan) throw new Error('Plan not found');
 
@@ -578,7 +729,8 @@ export class SubscriptionService {
     // when a paid plan is selected converts the trial → paid correctly.
     const now = new Date();
     const needsActivation = !!currentSub && (currentSub.status === 'suspended' || currentSub.status === 'trial');
-    const expiryDate = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+    const effectivePeriod = isBillingPeriod(billingPeriod) ? billingPeriod : (currentSub?.billingPeriod || 'monthly');
+    const expiryDate = new Date(now.getTime() + billingDurationDays(effectivePeriod) * 24 * 60 * 60 * 1000);
     const graceEnd = new Date(expiryDate.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
 
     const sub = await Subscription.findOneAndUpdate(
@@ -586,14 +738,14 @@ export class SubscriptionService {
       {
         $set: {
           plan: plan.planId,
+          ...(isBillingPeriod(billingPeriod) ? { billingPeriod } : {}),
           maxDevices: plan.maxDevices,
           maxUsers: plan.maxUsers,
           features: plan.features,
           limits: {
             maxRestaurants: plan.limits?.maxRestaurants ?? 1,
             maxBranches: plan.limits?.maxBranches ?? 1,
-            maxDevices: plan.limits?.maxDevices ?? 3,
-            maxEmployees: plan.limits?.maxEmployees ?? 10,
+            maxDevicesPerBranch: plan.limits?.maxDevicesPerBranch ?? (plan.limits as any)?.maxDevices ?? 3,
             maxProducts: plan.limits?.maxProducts ?? 0,
             maxCustomers: plan.limits?.maxCustomers ?? 0,
             maxMonthlyOrders: plan.limits?.maxMonthlyOrders ?? 0,
@@ -645,8 +797,7 @@ export class SubscriptionService {
     sub.limits = {
       maxRestaurants: targetPlan.limits?.maxRestaurants ?? 1,
       maxBranches: targetPlan.limits?.maxBranches ?? 1,
-      maxDevices: targetPlan.limits?.maxDevices ?? 3,
-      maxEmployees: targetPlan.limits?.maxEmployees ?? 10,
+      maxDevicesPerBranch: targetPlan.limits?.maxDevicesPerBranch ?? (targetPlan.limits as any)?.maxDevices ?? 3,
       maxProducts: targetPlan.limits?.maxProducts ?? 0,
       maxCustomers: targetPlan.limits?.maxCustomers ?? 0,
       maxMonthlyOrders: targetPlan.limits?.maxMonthlyOrders ?? 0,
@@ -751,14 +902,17 @@ export class SubscriptionService {
     const featuresGained = targetFeatures.filter(f => !currentFeatures.includes(f));
     const featuresLost = currentFeatures.filter(f => !targetFeatures.includes(f));
 
-    // Compare limits
-    const currentLimits = sub.limits || currentPlan?.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 };
-    const targetLimits = targetPlan.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 };
+    // Compare limits (canonical three: users total, branches total, devices per branch)
+    const currentLimits = sub.limits || currentPlan?.limits || { maxBranches: 1, maxDevicesPerBranch: 3 };
+    const targetLimits = targetPlan.limits || { maxBranches: 1, maxDevicesPerBranch: 3 };
 
     const limitsChanged = {
       branches: { from: currentLimits.maxBranches, to: targetLimits.maxBranches, unlimited: targetLimits.maxBranches === 0 },
-      devices: { from: currentLimits.maxDevices, to: targetLimits.maxDevices },
-      employees: { from: currentLimits.maxEmployees, to: targetLimits.maxEmployees },
+      users: { from: sub.maxUsers ?? currentPlan?.maxUsers ?? 5, to: targetPlan.maxUsers ?? 5 },
+      devicesPerBranch: {
+        from: (currentLimits as any).maxDevicesPerBranch ?? (currentLimits as any).maxDevices ?? 3,
+        to: (targetLimits as any).maxDevicesPerBranch ?? (targetLimits as any).maxDevices ?? 3,
+      },
     };
 
     return {

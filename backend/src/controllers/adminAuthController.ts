@@ -43,7 +43,8 @@ export async function adminLogin(req: Request, res: Response): Promise<void> {
     await User.updateOne({ _id: user._id }, { lastLogin: new Date() }).exec();
     const tokenPayload = {
       userId: user._id.toString(),
-      restaurantId: user.restaurantId.toString(),
+      // The platform super_admin has no tenant restaurant (restaurantId null).
+      restaurantId: user.restaurantId?.toString() ?? '',
       role: 'super_admin' as const,
       name: user.name,
       surface: 'admin' as const, // admin-dashboard surface — rejected on POS routes

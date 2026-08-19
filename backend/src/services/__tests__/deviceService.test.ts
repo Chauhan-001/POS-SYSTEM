@@ -84,6 +84,9 @@ async function createRestaurant(name = 'Dev Eats', maxDevices = 3) {
     status: 'active',
     startDate: new Date(),
     maxDevices,
+    // Canonical per-branch device limit — the resolver reads
+    // limits.maxDevicesPerBranch first (top-level maxDevices is legacy).
+    limits: { maxBranches: 1, maxDevicesPerBranch: maxDevices },
   });
   return restaurant;
 }

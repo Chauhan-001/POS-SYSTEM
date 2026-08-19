@@ -140,7 +140,7 @@ function ToggleCell({ enabled, onClick, title }: { enabled: boolean; onClick: ()
         title={title}
         className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none cursor-pointer ${enabled ? 'bg-[var(--brand-color)]' : 'bg-gray-200'}`}
       >
-        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${enabled ? 'left-6' : 'left-1'}`} />
+        <div className={`w-4 h-4 bg-[var(--color-bg-white)] rounded-full absolute top-1 transition-all shadow-sm ${enabled ? 'left-6' : 'left-1'}`} />
       </button>
     </div>
   );
@@ -160,7 +160,7 @@ function MatrixRow({ row, rolePermissions, onToggle }: MatrixRowProps) {
   const isEnabled = rolePermissions[row.managerKey] || rolePermissions[row.cashierKey];
   return (
     <div
-      className={`${GRID} py-2.5 border-b border-[#e1e2ed] last:border-b-0 transition-colors ${
+      className={`${GRID} py-2.5 border-b border-[var(--color-border-default)] last:border-b-0 transition-colors ${
         isEnabled ? 'hover:bg-gray-50/70' : 'bg-gray-50/40 hover:bg-gray-50'
       }`}
     >
@@ -170,7 +170,7 @@ function MatrixRow({ row, rolePermissions, onToggle }: MatrixRowProps) {
           <Icon className={`w-3.5 h-3.5 ${row.color}`} />
         </div>
         <div className="min-w-0">
-          <p className={`text-[11px] font-bold truncate ${isEnabled ? 'text-[#191b23]' : 'text-gray-400'}`}>{row.label}</p>
+          <p className={`text-[11px] font-bold truncate ${isEnabled ? 'text-[var(--color-text-primary)]' : 'text-gray-400'}`}>{row.label}</p>
           <p className="text-[9px] text-gray-400 truncate">{row.description}</p>
         </div>
       </div>
@@ -253,17 +253,17 @@ interface RoleNavPreviewProps {
 function RoleNavPreview({ roleLabel, roleIcon: RoleIcon, headerColor, badge, sidebar, more, discountAllowed }: RoleNavPreviewProps) {
   const visibleSidebar = sidebar.filter((s) => s.exists);
   return (
-    <div className="rounded-xl border border-[#e1e2ed] bg-white p-3">
+    <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-white)] p-3">
       <div className="flex items-center gap-1.5 mb-2.5">
         <RoleIcon className={`w-3.5 h-3.5 ${headerColor}`} />
-        <p className="text-[11px] font-black text-[#191b23]">{roleLabel} view</p>
+        <p className="text-[11px] font-black text-[var(--color-text-primary)]">{roleLabel} view</p>
         <span className="ml-auto px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[8px] font-black uppercase">{badge}</span>
       </div>
 
       {/* Sidebar rail mock */}
-      <div className="bg-[#191b23] rounded-lg p-1.5 space-y-0.5 mb-2.5">
+      <div className="bg-[var(--color-sidebar-bg)] rounded-lg p-1.5 space-y-0.5 mb-2.5">
         {visibleSidebar.map((s) => (
-          <div key={s.id} className={`flex items-center gap-1.5 px-1.5 py-1 rounded ${s.visible ? 'text-gray-200' : 'text-gray-600 line-through decoration-gray-700'}`}>
+          <div key={s.id} className={`flex items-center gap-1.5 px-1.5 py-1 rounded ${s.visible ? 'text-gray-500' : 'text-gray-600 line-through decoration-gray-700'}`}>
             <s.icon className="w-3 h-3 shrink-0" />
             <span className="text-[8px] font-bold uppercase tracking-wide">{s.id}</span>
             {!s.visible && <EyeOff className="w-2.5 h-2.5 ml-auto text-gray-600" />}
@@ -324,7 +324,7 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
 
   return (
     <div className="flex-1 overflow-y-auto min-h-0">
-      <div className="max-w-4xl mx-auto space-y-5 pb-6">
+      <div className="space-y-5 pb-6">
         {/* ── Info header ── */}
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
           <Shield className="w-5 h-5 text-[var(--brand-color)] shrink-0 mt-0.5" />
@@ -345,7 +345,7 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
             <div className="flex items-center gap-2 mb-2">
               <Crown className="w-4 h-4 text-purple-600" />
               <p className="text-xs font-black text-purple-700">Owner</p>
-              <span className="ml-auto px-2 py-0.5 rounded-full bg-purple-600 text-white text-[9px] font-black uppercase tracking-wide">Full</span>
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-[var(--color-purple-600-solid)] text-white text-[9px] font-black uppercase tracking-wide">Full</span>
             </div>
             <p className="text-[10px] text-purple-600/80">Full access to all {TOTAL_PERMISSIONS} features &amp; settings. Cannot be restricted.</p>
           </div>
@@ -354,7 +354,7 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
             <div className="flex items-center gap-2 mb-2">
               <Wrench className={`w-4 h-4 ${managerEnabled > 0 ? 'text-blue-600' : 'text-gray-400'}`} />
               <p className="text-xs font-black text-blue-700">Manager</p>
-              <span className="ml-auto px-2 py-0.5 rounded-full bg-white border border-blue-200 text-blue-700 text-[9px] font-black uppercase tracking-wide">
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-[var(--color-bg-white)] border border-blue-200 text-blue-700 text-[9px] font-black uppercase tracking-wide">
                 {managerEnabled}/{TOTAL_PERMISSIONS}
               </span>
             </div>
@@ -365,7 +365,7 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
             <div className="flex items-center gap-2 mb-2">
               <Wallet className={`w-4 h-4 ${cashierEnabled > 0 ? 'text-green-600' : 'text-gray-400'}`} />
               <p className="text-xs font-black text-green-700">Cashier</p>
-              <span className="ml-auto px-2 py-0.5 rounded-full bg-white border border-green-200 text-green-700 text-[9px] font-black uppercase tracking-wide">
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-[var(--color-bg-white)] border border-green-200 text-green-700 text-[9px] font-black uppercase tracking-wide">
                 {cashierEnabled}/{TOTAL_PERMISSIONS}
               </span>
             </div>
@@ -375,10 +375,10 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
 
         {/* ── Manager quick presets ── */}
         {onApplyPreset && (
-          <div className="bg-white rounded-xl border border-[#e1e2ed] p-4">
+          <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4">
             <div className="flex items-center gap-2 mb-1">
               <Wrench className="w-4 h-4 text-blue-600" />
-              <h4 className="text-xs font-bold text-[#191b23]">Manager Quick Presets</h4>
+              <h4 className="text-xs font-bold text-[var(--color-text-primary)]">Manager Quick Presets</h4>
             </div>
             <p className="text-[9px] text-gray-400 mb-3">
               Apply a ready-made permission set to the Manager role, then fine-tune individual toggles below if needed.
@@ -395,12 +395,12 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isActive
                         ? 'border-[var(--brand-color)] bg-blue-50/60 ring-1 ring-[var(--brand-color)]/20'
-                        : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/40 hover:bg-blue-50/30'
+                        : 'border-[var(--color-border-default)] hover:border-[var(--brand-color)]/40 hover:bg-blue-50/30'
                     }`}
                   >
                     <div className="flex items-center gap-1.5 mb-1">
                       <Icon className={`w-3.5 h-3.5 ${p.color}`} />
-                      <p className="text-[11px] font-bold text-[#191b23]">{p.label}</p>
+                      <p className="text-[11px] font-bold text-[var(--color-text-primary)]">{p.label}</p>
                       {isActive && <Check className="w-3 h-3 text-[var(--brand-color)] ml-auto" />}
                     </div>
                     <p className="text-[9px] text-gray-400">{p.description}</p>
@@ -413,10 +413,10 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
 
         {/* ── Cashier quick presets ── */}
         {onApplyPreset && (
-          <div className="bg-white rounded-xl border border-[#e1e2ed] p-4">
+          <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4">
             <div className="flex items-center gap-2 mb-1">
               <Wallet className="w-4 h-4 text-green-600" />
-              <h4 className="text-xs font-bold text-[#191b23]">Cashier Quick Presets</h4>
+              <h4 className="text-xs font-bold text-[var(--color-text-primary)]">Cashier Quick Presets</h4>
             </div>
             <p className="text-[9px] text-gray-400 mb-3">
               Grant the Cashier role extra access. Out of the box, Cashier only gets the operational base modules.
@@ -433,12 +433,12 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isActive
                         ? 'border-[var(--brand-color)] bg-blue-50/60 ring-1 ring-[var(--brand-color)]/20'
-                        : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/40 hover:bg-blue-50/30'
+                        : 'border-[var(--color-border-default)] hover:border-[var(--brand-color)]/40 hover:bg-blue-50/30'
                     }`}
                   >
                     <div className="flex items-center gap-1.5 mb-1">
                       <Icon className={`w-3.5 h-3.5 ${p.color}`} />
-                      <p className="text-[11px] font-bold text-[#191b23]">{p.label}</p>
+                      <p className="text-[11px] font-bold text-[var(--color-text-primary)]">{p.label}</p>
                       {isActive && <Check className="w-3 h-3 text-[var(--brand-color)] ml-auto" />}
                     </div>
                     <p className="text-[9px] text-gray-400">{p.description}</p>
@@ -450,9 +450,9 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
         )}
 
         {/* ── Permission matrix ── */}
-        <div className="bg-white rounded-xl border border-[#e1e2ed] overflow-hidden">
+        <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] overflow-hidden">
           {/* Header row */}
-          <div className={`${GRID} bg-[#f8f8fc] border-b border-[#e1e2ed] py-2.5`}>
+          <div className={`${GRID} bg-[var(--color-surface-muted)] border-b border-[var(--color-border-default)] py-2.5`}>
             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Feature</span>
             <span className="flex items-center justify-center gap-1 text-[10px] font-bold text-purple-600" title="Owner — always allowed">
               <Crown className="w-3 h-3" />Owner
@@ -470,17 +470,17 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
           ))}
 
           {/* Billing capabilities section */}
-          <div className="px-3 py-2 bg-blue-50/60 border-b border-[#e1e2ed] text-[10px] font-bold text-[var(--brand-color)] uppercase tracking-wider">
+          <div className="px-3 py-2 bg-blue-50/60 border-b border-[var(--color-border-default)] text-[10px] font-bold text-[var(--brand-color)] uppercase tracking-wider">
             Billing Capabilities
           </div>
           <MatrixRow row={DISCOUNT_ROW} rolePermissions={rolePermissions} onToggle={onToggle} />
         </div>
 
         {/* ── Live preview ── */}
-        <div className="bg-white rounded-xl border border-[#e1e2ed] p-4">
+        <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4">
           <div className="flex items-center gap-2 mb-1">
             <Eye className="w-4 h-4 text-[var(--brand-color)]" />
-            <h4 className="text-xs font-bold text-[#191b23]">Live Preview</h4>
+            <h4 className="text-xs font-bold text-[var(--color-text-primary)]">Live Preview</h4>
             <span className="ml-auto text-[9px] text-gray-400">Updates as you toggle</span>
           </div>
           <p className="text-[9px] text-gray-400 mb-3">
@@ -509,10 +509,10 @@ export default function RolePermissionsTab({ rolePermissions, onToggle, onApplyP
         </div>
 
         {/* ── Base access (every role) ── */}
-        <div className="bg-white rounded-xl border border-[#e1e2ed] p-4">
+        <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4">
           <div className="flex items-center gap-2 mb-3">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <h4 className="text-xs font-bold text-[#191b23]">Base Access — Every Role</h4>
+            <h4 className="text-xs font-bold text-[var(--color-text-primary)]">Base Access — Every Role</h4>
             <span className="ml-auto text-[9px] text-gray-400">Always available</span>
           </div>
           <div className="flex flex-wrap gap-1.5">

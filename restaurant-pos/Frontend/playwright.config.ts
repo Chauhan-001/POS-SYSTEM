@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Playwright configuration for POS Terminal E2E tests.
- * Uses the Vite dev server (runs at port 5173).
+ * Uses the Vite dev server (runs at port 5175).
  * @see https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
@@ -23,7 +23,7 @@ export default defineConfig({
 
   /* Shared settings for all projects */
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5175',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -33,9 +33,9 @@ export default defineConfig({
 
   /* Web server — starts Vite dev server before tests */
   webServer: {
-    command: 'npx vite --port 5173',
+    command: 'npx vite --port 5175',
     cwd: '.',
-    url: 'http://localhost:5173',
+    url: 'http://localhost:5175',
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },

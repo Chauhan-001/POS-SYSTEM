@@ -255,6 +255,7 @@ export async function converse(
       try {
         const resolution = await resolveProduct(item.item, restaurantId, {
           skipSemantic: skipLLM,
+          inventoryOnly: true,
         });
         resolutions.push(resolution);
       } catch (error: any) {

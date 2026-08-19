@@ -27,6 +27,9 @@ const createTokenSchema = z.object({
   tableId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
   parkingSlot: z.string().max(40).optional(),
   branchId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
+  // Required when regenerating an existing table sticker (invalidates the
+  // printed QR) — verified against the current user's PIN/password.
+  password: z.string().min(1).max(128).optional(),
 }).strict();
 
 const seedSchema = z.object({

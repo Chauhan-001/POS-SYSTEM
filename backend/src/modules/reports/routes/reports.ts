@@ -43,6 +43,7 @@ router.get('/sales/top-hours', requireAuth, requireFeature('analytics'), validat
 router.get('/products/top', requireAuth, requireFeature('analytics'), validate({ query: productReportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productTop);
 router.get('/products/least', requireAuth, requireFeature('analytics'), validate({ query: productReportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productLeast);
 router.get('/products/revenue', requireAuth, requireFeature('analytics'), validate({ query: productReportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productRevenue);
+router.get('/products/config-breakdown', requireAuth, requireFeature('analytics'), validate({ query: productReportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productConfigBreakdown);
 router.get('/products/categories', requireAuth, requireFeature('analytics'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productCategories);
 router.get('/products/menu-engineering', requireAuth, requireFeature('analytics'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productMenuEngineering);
 router.get('/products/abc', requireAuth, requireFeature('analytics'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.productAbc);

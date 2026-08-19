@@ -15,6 +15,7 @@ import {
   updateTable,
   deleteTable,
   releaseTable,
+  expireTableSession,
   startCleaning,
   completeCleaning,
   disableTable,
@@ -42,6 +43,7 @@ router.get('/:id', requireAuth, validate({ params: tableParamsSchema }), getTabl
 // Table operations — Manager+ (status transitions are server-decided)
 router.post('/merge', requireRole('Owner', 'Manager'), validate({ body: mergeTablesSchema }), mergeTables);
 router.post('/:id/release', requireRole('Owner', 'Manager'), validate({ params: tableParamsSchema }), releaseTable);
+router.post('/:id/expire-session', requireRole('Owner', 'Manager'), validate({ params: tableParamsSchema }), expireTableSession);
 router.post('/:id/clean', requireRole('Owner', 'Manager'), validate({ body: cleanTableSchema, params: tableParamsSchema }), startCleaning);
 router.post('/:id/clean-complete', requireRole('Owner', 'Manager'), validate({ params: tableParamsSchema }), completeCleaning);
 router.post('/:id/disable', requireRole('Owner', 'Manager'), validate({ body: disableTableSchema, params: tableParamsSchema }), disableTable);

@@ -457,7 +457,7 @@ describe('storage metrics', () => {
       maxUsers: 2,
       maxDevices: 1,
       features: ['core_pos'],
-      limits: { maxBranches: 1, maxDevices: 1, maxEmployees: 2, maxStorageMB: 2 },
+      limits: { maxBranches: 1, maxDevicesPerBranch: 1, maxStorageMB: 2 },
     });
     const restaurant = await seedRestaurant();
     await Subscription.create({

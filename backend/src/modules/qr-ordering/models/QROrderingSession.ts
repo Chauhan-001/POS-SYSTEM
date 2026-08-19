@@ -43,6 +43,8 @@ export interface IQROrderingSession extends Document {
   };
   status: 'ACTIVE' | 'COMPLETED' | 'EXPIRED' | 'CANCELLED';
   expiresAt: Date;
+  /** When the restaurant ended this seating via the POS (blocks silent re-claim). */
+  cancelledAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,7 +65,8 @@ const QROrderingSessionSchema = new Schema<IQROrderingSession>(
     tableId: {
       type: Schema.Types.ObjectId,
       ref: 'Table',
-      index: true,
+      // No field-level index here — table lookups are covered by the unique
+      // ACTIVE claim index below (one active claim per table, atomic).
     },
     carId: {
       type: String,
@@ -105,6 +108,10 @@ const QROrderingSessionSchema = new Schema<IQROrderingSession>(
       required: true,
       index: true,
     },
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -115,5 +122,16 @@ const QROrderingSessionSchema = new Schema<IQROrderingSession>(
 QROrderingSessionSchema.index({ restaurantId: 1, status: 1, expiresAt: 1 });
 QROrderingSessionSchema.index({ branchId: 1, tableId: 1, status: 1 });
 QROrderingSessionSchema.index({ carId: 1, status: 1 });
+
+// ONE active seat-claim per table, enforced atomically by Mongo. A customer
+// who scans a table QR claims the table for their seating (upsert below); a
+// concurrent scan from another guest hits the unique violation and gets a
+// clean 409 instead of two orders racing onto the same table. The claim
+// carries an expiresAt so an abandoned scan (no order, no heartbeat) frees
+// the table instead of blocking every later guest.
+QROrderingSessionSchema.index(
+  { tableId: 1 },
+  { unique: true, partialFilterExpression: { status: 'ACTIVE' }, name: 'tableId_1_active_unique' }
+);
 
 export default mongoose.model<IQROrderingSession>('QROrderingSession', QROrderingSessionSchema);

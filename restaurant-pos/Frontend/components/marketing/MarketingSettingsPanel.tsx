@@ -9,7 +9,7 @@
  *   Loyalty & Rewards — points rate, visit milestones, reward catalog
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Zap, Users, Ticket, Plus, Trash2, Info, HelpCircle, X, Save } from 'lucide-react';
 import type { LoyaltyReward, SystemSettings, Product, VisitMilestone } from '../../src/types';
 import AutomationsTab from '../offers/AutomationsTab';
@@ -55,7 +55,7 @@ export default function MarketingSettingsPanel({ rewards, onUpdateRewards, curre
           const Icon = t.icon;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${tab === t.id ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-500 hover:text-[var(--brand-color)]'}`}>
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${tab === t.id ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'bg-[var(--color-bg-white)] border border-gray-200 text-gray-500 hover:text-[var(--brand-color)]'}`}>
               <Icon className="w-3.5 h-3.5" /> {t.label}
             </button>
           );
@@ -94,11 +94,46 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
 
   const [rewardForm, setRewardForm] = useState<null | { editingId: string | null; title: string; pointsRequired: number; type: 'percentage' | 'flat' | 'item'; value: number; minBillAmount: number; isLargeReward: boolean; rewardItemId: string }>(null);
 
+  // Load the server-authoritative loyalty rate (LoyaltySettings.pointsPerCurrency
+  // — the ONLY value the awarding engine reads). The SystemSettings mirror
+  // (loyaltyPointsPerDollar) is just for POS-local display; saving here must
+  // also write through to /loyalty/settings or the marketing rate changes nothing.
+  useEffect(() => {
+    let cancelled = false;
+    api.fetchLoyaltySettings().then((s: any) => {
+      if (cancelled) return;
+      const rate = s?.pointsPerCurrency;
+      if (typeof rate === 'number' && !Number.isNaN(rate)) {
+        setPtsPerUnit(rate);
+        if (onUpdateSettings && settings) {
+          onUpdateSettings({ ...settings, loyaltyPointsPerDollar: rate });
+        }
+      }
+    }).catch((err) => debugWarn('Loyalty', 'fetchLoyaltySettings failed:', err));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const savePointsRate = () => {
-    if (onUpdateSettings && settings) {
-      onUpdateSettings({ ...settings, loyaltyPointsPerDollar: Number(ptsPerUnit) });
-    }
-    notify('Points rate updated.');
+    const rate = Number(ptsPerUnit);
+    if (!Number.isFinite(rate) || rate < 0) { notify('Enter a valid points rate.'); return; }
+    // Authoritative write — the loyalty engine reads THIS store. When offline,
+    // writeOfflineAware resolves with null after queueing, so a null result
+    // means the change will replay on reconnect (not a failure).
+    api.updateLoyaltySettings({ pointsPerCurrency: rate })
+      .then((s: any) => {
+        if (onUpdateSettings && settings) {
+          onUpdateSettings({ ...settings, loyaltyPointsPerDollar: Number(s?.pointsPerCurrency ?? rate) });
+        }
+        notify(s ? 'Points rate updated.' : 'Offline — rate will sync when back online.');
+      })
+      .catch((err) => {
+        debugWarn('Loyalty', 'updateLoyaltySettings failed:', err);
+        notify('Offline — rate will sync when back online.');
+        if (onUpdateSettings && settings) {
+          onUpdateSettings({ ...settings, loyaltyPointsPerDollar: rate });
+        }
+      });
   };
 
   const addMilestone = () => {
@@ -149,14 +184,14 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
   return (
     <div className="space-y-6">
       {/* Points rate */}
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5">
         <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-3">Points accumulation</p>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs font-bold text-gray-700">Earn</span>
           <input type="number" step="0.001" min="0" value={ptsPerUnit} onChange={(e) => setPtsPerUnit(Number(e.target.value))}
-            className="w-24 px-3 py-2 rounded-xl border border-[#c3c6d7] text-sm font-black text-[var(--brand-color)] text-center focus:outline-none focus:ring-2 focus:ring-blue-200" />
+            className="w-24 px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-sm font-black text-[var(--brand-color)] text-center focus:outline-none focus:ring-2 focus:ring-blue-200" />
           <span className="text-xs font-bold text-gray-700">point(s) per {currencySymbol}1.00 spent</span>
-          <button onClick={savePointsRate} className="flex items-center gap-1.5 bg-[var(--brand-color)] text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer hover:bg-[#003ea8] transition-all ml-auto">
+          <button onClick={savePointsRate} className="flex items-center gap-1.5 bg-[var(--brand-color)] text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer hover:bg-[var(--color-primary-hover)] transition-all ml-auto">
             <Save className="w-3.5 h-3.5" /> Save rate
           </button>
         </div>
@@ -164,11 +199,11 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
       </div>
 
       {/* Visit milestones */}
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5">
         <div className="flex items-center justify-between mb-3">
           <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Visit milestone rewards</p>
           <button onClick={() => { setShowMilestoneForm(!showMilestoneForm); setMilestoneProductId(products[0]?.id || ''); }}
-            className="flex items-center gap-1 text-xs font-black text-[var(--brand-color)] hover:text-[#003ea8] cursor-pointer">
+            className="flex items-center gap-1 text-xs font-black text-[var(--brand-color)] hover:text-[var(--color-primary-hover)] cursor-pointer">
             <Plus className="w-3.5 h-3.5" /> Add milestone
           </button>
         </div>
@@ -179,12 +214,12 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
               <div>
                 <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Visit #</label>
                 <input type="number" min="1" value={milestoneVisits} onChange={(e) => setMilestoneVisits(Number(e.target.value))}
-                  className="w-24 px-3 py-2 rounded-xl border border-[#c3c6d7] text-sm font-bold" />
+                  className="w-24 px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-sm font-bold" />
               </div>
               <div className="flex-1 min-w-[180px]">
                 <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Free dish</label>
                 <select value={milestoneProductId} onChange={(e) => setMilestoneProductId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-sm font-bold bg-white">
+                  className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-sm font-bold bg-[var(--color-bg-white)]">
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name} ({currencySymbol}{p.price.toFixed(2)})</option>)}
                 </select>
               </div>
@@ -211,11 +246,11 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
       </div>
 
       {/* Reward catalog */}
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5">
         <div className="flex items-center justify-between mb-3">
           <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Reward catalog</p>
           <button onClick={() => setRewardForm({ editingId: null, title: '', pointsRequired: 30, type: 'flat', value: 5, minBillAmount: 10, isLargeReward: false, rewardItemId: products[0]?.id || '' })}
-            className="flex items-center gap-1 text-xs font-black text-[var(--brand-color)] hover:text-[#003ea8] cursor-pointer">
+            className="flex items-center gap-1 text-xs font-black text-[var(--brand-color)] hover:text-[var(--color-primary-hover)] cursor-pointer">
             <Plus className="w-3.5 h-3.5" /> Add reward
           </button>
         </div>
@@ -225,9 +260,9 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {rewards.map((r) => (
-              <div key={r.id} className="border-2 border-dashed border-[#e1e2ed] rounded-2xl p-4 hover:border-[var(--brand-color)] transition-all relative">
-                <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 bg-[#fbfbff] rounded-full border-r-2 border-dashed border-[#e1e2ed]" />
-                <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 bg-[#fbfbff] rounded-full border-l-2 border-dashed border-[#e1e2ed]" />
+              <div key={r.id} className="border-2 border-dashed border-[var(--color-border-default)] rounded-2xl p-4 hover:border-[var(--brand-color)] transition-all relative">
+                <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 bg-[var(--color-surface-muted)] rounded-full border-r-2 border-dashed border-[var(--color-border-default)]" />
+                <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 bg-[var(--color-surface-muted)] rounded-full border-l-2 border-dashed border-[var(--color-border-default)]" />
                 <span className="font-extrabold text-[10px] bg-blue-50 text-[var(--brand-color)] px-2.5 py-0.5 rounded-full font-mono">{r.pointsRequired} pts</span>
                 <h4 className="font-extrabold text-xs text-gray-900 mt-2">{r.title}</h4>
                 <p className="text-[10px] text-gray-400 mt-0.5">Min spend {currencySymbol}{r.minBillAmount.toFixed(2)}</p>
@@ -251,24 +286,24 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
       {/* Reward form modal */}
       {rewardForm && (
         <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h4 className="font-black text-gray-900 text-sm">{rewardForm.editingId ? 'Update reward tier' : 'New reward tier'}</h4>
               <button onClick={() => setRewardForm(null)} className="text-gray-400 hover:text-gray-700 cursor-pointer"><X className="w-5 h-5" /></button>
             </div>
             <div className="space-y-3">
               <input value={rewardForm.title} onChange={(e) => setRewardForm({ ...rewardForm, title: e.target.value })} placeholder="Reward title (e.g. Free Garlic Bread)"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-200" />
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Points</label>
                   <input type="number" value={rewardForm.pointsRequired} onChange={(e) => setRewardForm({ ...rewardForm, pointsRequired: Number(e.target.value) })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold" />
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold" />
                 </div>
                 <div>
                   <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Type</label>
                   <select value={rewardForm.type} onChange={(e) => setRewardForm({ ...rewardForm, type: e.target.value as any })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold bg-white">
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold bg-[var(--color-bg-white)]">
                     <option value="flat">Flat {currencySymbol} off</option>
                     <option value="percentage">Percentage off</option>
                     <option value="item">Free item</option>
@@ -279,17 +314,17 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
                 <div>
                   <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Value</label>
                   <input type="number" value={rewardForm.value} onChange={(e) => setRewardForm({ ...rewardForm, value: Number(e.target.value) })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold" />
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold" />
                 </div>
                 <div>
                   <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Min bill ({currencySymbol})</label>
                   <input type="number" value={rewardForm.minBillAmount} onChange={(e) => setRewardForm({ ...rewardForm, minBillAmount: Number(e.target.value) })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold" />
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold" />
                 </div>
               </div>
               {rewardForm.type === 'item' && (
                 <select value={rewardForm.rewardItemId} onChange={(e) => setRewardForm({ ...rewardForm, rewardItemId: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold bg-white">
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold bg-[var(--color-bg-white)]">
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               )}
@@ -299,7 +334,7 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
               </label>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setRewardForm(null)} className="flex-1 py-2.5 border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold rounded-xl text-xs cursor-pointer">Cancel</button>
-                <button onClick={submitReward} className="flex-1 py-2.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white font-bold rounded-xl text-xs cursor-pointer shadow-sm">{rewardForm.editingId ? 'Save changes' : 'Add reward'}</button>
+                <button onClick={submitReward} className="flex-1 py-2.5 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white font-bold rounded-xl text-xs cursor-pointer shadow-sm">{rewardForm.editingId ? 'Save changes' : 'Add reward'}</button>
               </div>
             </div>
           </div>

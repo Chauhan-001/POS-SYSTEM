@@ -141,7 +141,7 @@ export default function OrderAdjustmentModal({
     const adj = result.adjustment;
     return (
       <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-[#e1e2ed] p-6">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-md w-full border border-[var(--color-border-default)] p-6">
           <div className="w-12 h-12 rounded-full bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-3">
             <Check className="w-6 h-6" />
           </div>
@@ -197,16 +197,16 @@ export default function OrderAdjustmentModal({
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-[#e1e2ed] overflow-hidden"
+        className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-lg w-full border border-[var(--color-border-default)] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[#e1e2ed] flex items-center gap-3">
+        <div className="px-5 py-4 border-b border-[var(--color-border-default)] flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
             <AlertTriangle className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="font-bold text-base text-[#191b23]">Item unavailable</h3>
+            <h3 className="font-bold text-base text-[var(--color-text-primary)]">Item unavailable</h3>
             <p className="text-[11px] text-gray-500">Order #{order.orderNumber} · {order.platform || order.type}</p>
           </div>
           <button onClick={onClose} className="ml-auto p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg cursor-pointer">
@@ -226,7 +226,7 @@ export default function OrderAdjustmentModal({
               {order.customerPhone && (
                 <a
                   href={`tel:${order.customerPhone}`}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-700 transition-all"
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-blue-600-solid)] text-white text-[10px] font-bold hover:bg-[var(--color-blue-700-solid)] transition-all"
                 >
                   <Phone className="w-3 h-3" /> Call
                 </a>
@@ -246,10 +246,10 @@ export default function OrderAdjustmentModal({
                   <button
                     key={idx}
                     onClick={() => startAction('REMOVE', item)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[#e1e2ed] hover:border-red-200 hover:bg-red-50/40 transition-all cursor-pointer text-left"
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[var(--color-border-default)] hover:border-red-200 hover:bg-red-50/40 transition-all cursor-pointer text-left"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-[#191b23] truncate">
+                      <p className="text-xs font-bold text-[var(--color-text-primary)] truncate">
                         {item.product?.name || 'Item'}
                       </p>
                       <p className="text-[10px] text-gray-400">× {item.quantity}</p>
@@ -259,7 +259,7 @@ export default function OrderAdjustmentModal({
                     </span>
                   </button>
                 ))}
-                <div className="pt-2 border-t border-[#e1e2ed]">
+                <div className="pt-2 border-t border-[var(--color-border-default)]">
                   <button
                     onClick={() => startAction('CANCEL')}
                     className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 text-red-600 text-xs font-bold hover:bg-red-50 transition-all cursor-pointer"
@@ -272,9 +272,9 @@ export default function OrderAdjustmentModal({
           ) : (
             <>
               {/* Selected item summary */}
-              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-50 border border-[#e1e2ed] mb-4">
+              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-50 border border-[var(--color-border-default)] mb-4">
                 <div className="flex-1">
-                  <p className="text-xs font-bold text-[#191b23]">{selection.productName}</p>
+                  <p className="text-xs font-bold text-[var(--color-text-primary)]">{selection.productName}</p>
                   <p className="text-[10px] text-gray-400">× {selection.quantity} · {currencySymbol}{(selection.price * selection.quantity).toFixed(2)}</p>
                 </div>
                 <button onClick={() => setSelection(null)} className="text-[10px] text-gray-400 hover:text-gray-600 cursor-pointer">
@@ -288,8 +288,8 @@ export default function OrderAdjustmentModal({
                   onClick={() => setSelection({ ...selection, action: 'REMOVE' })}
                   className={`flex-1 px-3 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer border ${
                     selection.action === 'REMOVE'
-                      ? 'bg-red-600 text-white border-red-600'
-                      : 'bg-white text-gray-600 border-[#e1e2ed] hover:border-red-300'
+                      ? 'bg-[var(--color-red-600-solid)] text-white border-red-600'
+                      : 'bg-[var(--color-bg-white)] text-gray-600 border-[var(--color-border-default)] hover:border-red-300'
                   }`}
                 >
                   Remove & refund
@@ -299,7 +299,7 @@ export default function OrderAdjustmentModal({
                   className={`flex-1 px-3 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer border ${
                     selection.action === 'REPLACE'
                       ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]'
-                      : 'bg-white text-gray-600 border-[#e1e2ed] hover:border-blue-300'
+                      : 'bg-[var(--color-bg-white)] text-gray-600 border-[var(--color-border-default)] hover:border-blue-300'
                   }`}
                 >
                   Replace item
@@ -312,7 +312,7 @@ export default function OrderAdjustmentModal({
                   <select
                     value={selection.replaceWithProductId || ''}
                     onChange={(e) => setSelection({ ...selection, replaceWithProductId: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#e1e2ed] text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-default)] text-xs bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-blue-100"
                   >
                     <option value="">Select a product…</option>
                     {products
@@ -337,7 +337,7 @@ export default function OrderAdjustmentModal({
               )}
 
               {isOnline && (
-                <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-50 border border-[#e1e2ed] mb-4 cursor-pointer">
+                <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-50 border border-[var(--color-border-default)] mb-4 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={markUnavailable}
@@ -355,7 +355,7 @@ export default function OrderAdjustmentModal({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={selection.action === 'CANCEL' ? 'Why is the whole order cancelled?' : 'e.g. Sold out in kitchen'}
-                className="w-full px-3 py-2 rounded-xl border border-[#e1e2ed] text-xs mb-3 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-default)] text-xs mb-3 focus:outline-none focus:ring-2 focus:ring-blue-100"
               />
 
               {refundEstimate > 0 && (
@@ -366,7 +366,7 @@ export default function OrderAdjustmentModal({
                 onChange={(e) => setManagerPin(e.target.value.replace(/\D/g, '').slice(0, 10))}
                 type="password"
                 placeholder={refundEstimate > 0 ? 'Enter manager PIN to authorize refund' : 'Manager PIN (optional)'}
-                className="w-full px-3 py-2 rounded-xl border border-[#e1e2ed] text-xs mb-4 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-default)] text-xs mb-4 focus:outline-none focus:ring-2 focus:ring-blue-100"
               />
 
               {error && (
@@ -374,7 +374,7 @@ export default function OrderAdjustmentModal({
               )}
 
               {/* Summary */}
-              <div className="px-3 py-2.5 rounded-xl bg-gray-50 border border-[#e1e2ed] mb-4 text-[11px] space-y-1">
+              <div className="px-3 py-2.5 rounded-xl bg-gray-50 border border-[var(--color-border-default)] mb-4 text-[11px] space-y-1">
                 {selection.action === 'CANCEL' && (
                   <div className="flex justify-between"><span className="text-gray-500">Full refund</span><span className="font-bold text-red-600">{currencySymbol}{(order.grandTotal || 0).toFixed(2)}</span></div>
                 )}
@@ -393,7 +393,7 @@ export default function OrderAdjustmentModal({
               <button
                 onClick={submit}
                 disabled={loading || (selection.action === 'REPLACE' && !selection.replaceWithProductId)}
-                className="w-full py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full py-2.5 rounded-xl bg-[var(--color-red-600-solid)] text-white text-sm font-bold hover:bg-[var(--color-red-700-solid)] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                 {selection.action === 'CANCEL' ? 'Cancel & refund order' : 'Apply adjustment'}

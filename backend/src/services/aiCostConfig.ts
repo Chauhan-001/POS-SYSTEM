@@ -98,6 +98,20 @@ const PRICING: Record<string, ModelPricing> = {
     provider: 'anthropic',
   },
 
+  // ─── Groq / GPT-OSS Models (OpenAI-compatible endpoint) ─────
+  'openai/gpt-oss-20b': {
+    inputPer1K: 0.0001,
+    outputPer1K: 0.0004,
+    label: 'GPT-OSS 20B (Groq)',
+    provider: 'openai',
+  },
+  'openai/gpt-oss-120b': {
+    inputPer1K: 0.0008,
+    outputPer1K: 0.0032,
+    label: 'GPT-OSS 120B (Groq)',
+    provider: 'openai',
+  },
+
   // ─── Ollama Models (self-hosted) ──────────────────────────────
   'llama3.2': {
     inputPer1K: 0,

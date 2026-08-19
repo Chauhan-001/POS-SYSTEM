@@ -86,7 +86,7 @@ export default function Restaurants() {
       setFormData(prev => ({
         ...prev,
         plan: firstPlan.planId,
-        maxDevices: (firstPlan.limits?.maxDevices ?? firstPlan.maxDevices) || 1,
+        maxDevices: (firstPlan.limits?.maxDevicesPerBranch ?? firstPlan.maxDevices) || 1,
         aiEnabled: (firstPlan.features || []).includes('ai'),
       }))
     }
@@ -110,7 +110,7 @@ export default function Restaurants() {
         address: '', city: '', state: '', country: '', gst: '',
         plan: defaultPlanId, maxDevices: (() => {
           const p = plans.length > 0 ? plans[0] : null
-          return (p?.limits?.maxDevices ?? p?.maxDevices) || 1
+          return (p?.limits?.maxDevicesPerBranch ?? p?.maxDevices) || 1
         })(),
         aiEnabled: plans.length > 0 ? (plans[0].features || []).includes('ai') : false,
         onboardingMode: 'cash',
@@ -200,7 +200,7 @@ export default function Restaurants() {
       country: restaurant.country || '',
       gst: restaurant.gst || '',
       plan: restaurant.plan,
-      maxDevices: (p?.limits?.maxDevices ?? p?.maxDevices) || restaurant.maxDevices,
+      maxDevices: (p?.limits?.maxDevicesPerBranch ?? p?.maxDevices) || restaurant.maxDevices,
       aiEnabled: p ? (p.features || []).includes('ai') : restaurant.aiEnabled,
       onboardingMode: 'cash',
     })
@@ -384,13 +384,13 @@ export default function Restaurants() {
                   setFormData({
                     ...formData,
                     plan: e.target.value,
-                    maxDevices: (p?.limits?.maxDevices ?? p?.maxDevices) || 1,
+                    maxDevices: (p?.limits?.maxDevicesPerBranch ?? p?.maxDevices) || 1,
                     aiEnabled: (p?.features || []).includes('ai'),
                   })
                 }} className="block w-full rounded-lg border border-surface-300 bg-white px-3 py-2 text-sm text-surface-900 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-100">
                   {plans.length === 0 && <option value="basic">Basic</option>}
                   {plans.map((p: SubscriptionPlan) => (
-                    <option key={p.id} value={p.planId}>{p.name} {p.price > 0 ? `- ${formatCurrency(p.price)}/mo` : ''}</option>
+                    <option key={p.id} value={p.planId}>{p.name} {p.price > 0 ? `- ${formatCurrency(p.price)}/mo` : ''}{p.yearlyPrice > 0 ? ` · ${formatCurrency(p.yearlyPrice)}/yr` : ''}</option>
                   ))}
                 </select>
               </div>
@@ -430,9 +430,8 @@ export default function Restaurants() {
             return (
               <div className="rounded-lg bg-surface-50 dark:bg-surface-800/50 p-4 space-y-2">
                 <p className="text-xs text-surface-500">
-                  {p.maxUsers} users · {p.limits?.maxDevices || p.maxDevices} devices ·{' '}
-                  {p.limits?.maxBranches === 0 ? 'Unlimited' : `${p.limits?.maxBranches || 1}`} branches ·{' '}
-                  {p.limits?.maxEmployees || p.maxUsers} employees
+                  {p.maxUsers} users · {p.limits?.maxBranches === 0 ? 'Unlimited' : `${p.limits?.maxBranches || 1}`} branches ·{' '}
+                  {p.limits?.maxDevicesPerBranch ?? p.maxDevices ?? 3} devices per branch
                 </p>
                 {p.description && <p className="text-xs text-surface-400 italic">{p.description}</p>}
                 <div className="flex flex-wrap gap-1">
@@ -471,13 +470,13 @@ export default function Restaurants() {
                 setFormData({
                   ...formData,
                   plan: e.target.value,
-                  maxDevices: (p?.limits?.maxDevices ?? p?.maxDevices) || 1,
+                  maxDevices: (p?.limits?.maxDevicesPerBranch ?? p?.maxDevices) || 1,
                   aiEnabled: (p?.features || []).includes('ai'),
                 })
               }} className="block w-full rounded-lg border border-surface-300 bg-white px-3 py-2 text-sm text-surface-900 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-100">
                 {plans.length === 0 && <option value="basic">Basic</option>}
                 {plans.map((p: SubscriptionPlan) => (
-                  <option key={p.id} value={p.planId}>{p.name} {p.price > 0 ? `- ${formatCurrency(p.price)}/mo` : ''}</option>
+                  <option key={p.id} value={p.planId}>{p.name} {p.price > 0 ? `- ${formatCurrency(p.price)}/mo` : ''}{p.yearlyPrice > 0 ? ` · ${formatCurrency(p.yearlyPrice)}/yr` : ''}</option>
                 ))}
               </select>
             </div>
@@ -508,9 +507,8 @@ export default function Restaurants() {
             return (
               <div className="rounded-lg bg-surface-50 dark:bg-surface-800/50 p-4 space-y-2">
                 <p className="text-xs text-surface-500">
-                  {p.maxUsers} users · {p.limits?.maxDevices || p.maxDevices} devices ·{' '}
-                  {p.limits?.maxBranches === 0 ? 'Unlimited' : `${p.limits?.maxBranches || 1}`} branches ·{' '}
-                  {p.limits?.maxEmployees || p.maxUsers} employees
+                  {p.maxUsers} users · {p.limits?.maxBranches === 0 ? 'Unlimited' : `${p.limits?.maxBranches || 1}`} branches ·{' '}
+                  {p.limits?.maxDevicesPerBranch ?? p.maxDevices ?? 3} devices per branch
                 </p>
                 {p.description && <p className="text-xs text-surface-400 italic">{p.description}</p>}
                 <div className="flex flex-wrap gap-1">

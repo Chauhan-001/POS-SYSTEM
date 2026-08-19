@@ -62,3 +62,27 @@ export async function listInventoryEvents(req: Request, res: Response): Promise<
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+/** DELETE /api/inventory-events/:id — Remove an activity event (undo). */
+export async function deleteInventoryEvent(req: Request, res: Response): Promise<void> {
+  try {
+    const restId = (req as AuthenticatedRequest).user?.restaurantId;
+    if (!restId) {
+      res.status(403).json({ error: 'Restaurant context required' });
+      return;
+    }
+    const { default: InventoryEvent } = await import('../models/InventoryEvent');
+    const event = await InventoryEvent.findOneAndDelete({
+      _id: req.params.id,
+      restaurantId: restId,
+    }).exec();
+    if (!event) {
+      res.status(404).json({ error: 'Event not found' });
+      return;
+    }
+    res.json({ success: true, data: event });
+  } catch (error: any) {
+    console.error('[InventoryEventsController] delete error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}

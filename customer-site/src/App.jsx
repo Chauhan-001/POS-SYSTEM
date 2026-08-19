@@ -4,6 +4,7 @@ import Home from './pages/Home';
 import MenuPage from './pages/MenuPage';
 import CartPage from './pages/CartPage';
 import TrackPage from './pages/TrackPage';
+import ReceiptPage from './pages/ReceiptPage';
 
 /**
  * The QR sticker URL looks like:  http://host/#/{publicToken}?mode=table&ref=…
@@ -21,6 +22,9 @@ export default function App() {
     <HashRouter>
       <Routes>
         <Route path="/" element={<Home />} />
+        {/* Receipt QR landing: #/r/{receiptToken} — standalone (no store token
+         * needed; the receipt token itself resolves restaurant + bill). */}
+        <Route path="/r/:receiptToken" element={<ReceiptPage />} />
         {/* QR ordering entry: #/{token}?mode=table|car|pickup&ref=… */}
         <Route path="/:token" element={<QrRoute />}>
           <Route index element={<MenuPage />} />

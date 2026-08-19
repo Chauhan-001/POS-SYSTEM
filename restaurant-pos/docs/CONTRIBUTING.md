@@ -99,7 +99,7 @@ NODE_ENV=development
 
 ### First-Time Usage
 
-1. Open `http://localhost:5173` after both servers are running
+1. Open `http://localhost:5175` after both servers are running
 2. Complete the **First Time Setup** wizard to register the Owner account
 3. Log in and start using the POS system
 
@@ -127,7 +127,7 @@ NODE_ENV=development
 ```bash
 # Frontend only (fastest)
 cd Frontend && npm run dev
-# → Hot reload at http://localhost:5173
+# → Hot reload at http://localhost:5175
 
 # Backend only
 cd backend && npm run dev
@@ -547,7 +547,7 @@ describe('computeKOTDelta', () => {
 import { test, expect } from '@playwright/test'
 
 test('complete ordering and payment flow', async ({ page }) => {
-  await page.goto('http://localhost:5173')
+  await page.goto('http://localhost:5175')
   // Login, create order, add items, process payment, verify receipt
 })
 ```

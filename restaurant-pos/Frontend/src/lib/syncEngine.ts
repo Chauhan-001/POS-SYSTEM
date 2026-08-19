@@ -30,6 +30,13 @@ export interface PendingOperation {
   retries: number;
   maxRetries: number;
   error?: string;
+  /**
+   * Reached maxRetries without success. The operation is KEPT (never silently
+   * dropped — an offline bill must not vanish from the queue) but is excluded
+   * from automatic replays until the operator explicitly retries or clears it
+   * from the Sync panel.
+   */
+  stalled?: boolean;
 }
 
 const QUEUE_KEY = 'pos_sync_queue';
@@ -40,7 +47,7 @@ export class SyncEngine {
   private listeners: Set<Listener> = new Set();
   private syncState: SyncState = {
     lastSynced: null,
-    online: true,
+    online: typeof navigator !== 'undefined' ? navigator.onLine : true,
     pendingChanges: 0,
   };
   private staleKeys: Set<string> = new Set();
@@ -107,6 +114,19 @@ export class SyncEngine {
     return this.queue;
   }
 
+  /**
+   * Drop EVERY queued operation (memory + persisted). Called when the logged-in
+   * RESTAURANT changes on this device: a previous tenant's offline writes must
+   * never replay into a different restaurant's account, and stale queued ops
+   * must never be retried against the new tenant.
+   */
+  clearQueue(): void {
+    this.queue = [];
+    this.syncState.pendingChanges = 0;
+    try { localStorage.removeItem(QUEUE_KEY); } catch { /* ignore */ }
+    this.notify();
+  }
+
   /** Mark an operation as completed (remove from queue) */
   dequeue(id: string): void {
     this.queue = this.queue.filter(op => op.id !== id);
@@ -122,12 +142,41 @@ export class SyncEngine {
       op.retries++;
       op.error = error;
       if (op.retries >= op.maxRetries) {
-        console.warn('[SyncEngine] Operation dropped after max retries:', op.method, op.path);
-        this.dequeue(id);
+        // Phase 5 — NEVER silently drop a persisted write. A completed offline
+        // bill (or refund/void) that stopped syncing must remain visible and
+        // recoverable — otherwise the terminal shows it as synced while the
+        // server (and every server-side report) never receives it. Stall it:
+        // excluded from auto-replay, surfaced in the Sync panel for a manual
+        // Retry or Clear.
+        op.stalled = true;
+        console.warn('[SyncEngine] Operation stalled after max retries (kept for manual action):', op.method, op.path);
+        this.saveQueue();
+        this.notify();
       } else {
         this.saveQueue();
         this.notify();
       }
+    }
+  }
+
+  /** Manually retry a stalled operation (resets its retry budget). */
+  retryNow(id: string): void {
+    const op = this.queue.find(o => o.id === id);
+    if (op) {
+      op.retries = 0;
+      op.error = undefined;
+      op.stalled = false;
+      this.saveQueue();
+      this.notify();
+    }
+  }
+
+  /** Manually discard a stalled operation (operator's explicit decision). */
+  clearOperation(id: string): void {
+    const op = this.queue.find(o => o.id === id);
+    if (op) {
+      console.warn('[SyncEngine] Operation cleared by operator:', op.method, op.path);
+      this.dequeue(id);
     }
   }
 
@@ -138,6 +187,9 @@ export class SyncEngine {
     let failed = 0;
 
     for (const op of snapshot) {
+      // Stalled operations wait for explicit operator action (Retry/Clear in
+      // the Sync panel) — never burn automatic retries on them again.
+      if (op.stalled) continue;
       try {
         const ok = await fetcher(op);
         if (ok) {

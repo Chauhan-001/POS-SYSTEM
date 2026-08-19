@@ -199,16 +199,24 @@ export interface Subscription {
   restaurantId: string
   restaurantName: string
   plan: string
+  /** Billing cadence — monthly (30d) or yearly (365d). Determines the price charged and renewal period. */
+  billingPeriod: 'monthly' | 'yearly'
   status: 'active' | 'paused' | 'expired' | 'cancelled' | 'trial' | 'grace'
   startDate: string
   expiryDate: string | null
   trialEnd: string | null
   graceEnd: string | null
+  maxUsers: number
   maxDevices: number
   aiEnabled: boolean
   price: number
   autoRenew: boolean
+  /** Effective feature set = plan snapshot + admin-granted add-ons. */
   features?: string[]
+  /** Add-on features granted by the platform admin beyond the plan snapshot. */
+  grantedFeatures?: string[]
+  /** The plan's own feature snapshot (without admin grants). */
+  planFeatures?: string[]
   lastPayment?: {
     amount: number
     date: string
@@ -224,7 +232,10 @@ export interface SubscriptionPlan {
   planId: string
   name: string
   description: string
+  /** Monthly price (legacy `price` — kept for billing compatibility). */
   price: number
+  /** Yearly price — billed once per year. 0 = not offered. */
+  yearlyPrice: number
   maxUsers: number
   maxDevices: number
   features: string[]
@@ -240,8 +251,7 @@ export interface SubscriptionPlan {
 
 export interface PlanLimits {
   maxBranches: number
-  maxDevices: number
-  maxEmployees: number
+  maxDevicesPerBranch: number
 }
 
 // ─── Subscription Usage Types ───────────────────────────────────
@@ -268,13 +278,22 @@ export interface SubscriptionUsage {
     id: string
     name: string
     status: string
+    /** Active billing cadence — monthly (30d) or yearly (365d). */
+    billingPeriod: 'monthly' | 'yearly'
+    /** Monthly price of the plan. */
     price: number
+    /** Yearly price of the plan (0 = not offered). */
+    yearlyPrice: number
+    /** Price actually charged for the active billing period. */
+    billingPrice: number
     expiryDate: string | null
+    /** End of the 2-day expiry warning window (status 'grace'). */
+    graceEnd: string | null
   }
   limits: {
     branches: ResourceUsage
-    devices: ResourceUsage
-    employees: ResourceUsage
+    devicesPerBranch: ResourceUsage
+    users: ResourceUsage
   }
   features: {
     enabled: UsageFeature[]

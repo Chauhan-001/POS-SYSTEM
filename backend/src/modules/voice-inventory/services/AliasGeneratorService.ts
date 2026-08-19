@@ -28,6 +28,7 @@
 
 import { z } from 'zod';
 import { complete } from '../../ai/provider/llmProvider';
+import { aiConfig } from '../../ai/config';
 import { parseJsonResponse } from '../../ai/services/responseParser';
 import { buildAliasGenerationPrompt } from '../prompts/aliasGeneration';
 import Product from '../../../models/Product';
@@ -110,7 +111,7 @@ export async function generateAliases(
         },
         { role: 'user', content: prompt },
       ],
-      { timeout: 10000, maxTokens: 1024, temperature: 0.3 }
+      { timeout: 10000, maxTokens: 1024, temperature: 0.3, model: aiConfig.reasoningModel }
     );
 
     const parsed = parseJsonResponse(response.content);

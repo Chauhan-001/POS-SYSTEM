@@ -27,7 +27,7 @@ import {
 import {
   fetchOfferPreview, fetchComboAssistant, createOffer,
 } from '../../src/api/client';
-import { emojiFor } from '../inventory/pages/EasyRecipeMaker';
+import { ItemThumb } from '../inventory/pages/EasyRecipeMaker';
 import { debugWarn } from '../../src/utils/debugLog';
 
 const money = (n: number) => Math.round(n * 100) / 100;
@@ -41,12 +41,15 @@ interface Props {
   onSaved?: () => void;
   products: any[];
   currencySymbol: string;
+  /** Active branches — when > 1, the owner picks where the offer runs (empty = all). */
+  branches?: { id: string; name: string; isActive?: boolean }[];
 }
 
-export default function EasyOfferMaker({ onClose, onSaved, products, currencySymbol }: Props) {
+export default function EasyOfferMaker({ onClose, onSaved, products, currencySymbol, branches = [] }: Props) {
   const [mode, setMode] = useState<Mode | null>(null);
   const [step, setStep] = useState<Step>('mode');
   const [selected, setSelected] = useState<string[]>([]);
+  const [branchIds, setBranchIds] = useState<string[]>([]);
   const [discountType, setDiscountType] = useState<'percentage' | 'flat'>('percentage');
   const [value, setValue] = useState(10);
   const [saving, setSaving] = useState(false);
@@ -151,6 +154,7 @@ export default function EasyOfferMaker({ onClose, onSaved, products, currencySym
         applicableProductIds: selected,
         targetSegmentIds: [],
         targetSegmentNames: [],
+        ...(branchIds.length > 0 ? { branchIds } : { branchIds: [] }),
         status: 'active',
         isAutoActivate: false,
       });
@@ -186,12 +190,12 @@ export default function EasyOfferMaker({ onClose, onSaved, products, currencySym
 
   return (
     <div
-      className="fixed inset-0 z-[250] bg-[#faf8ff] flex flex-col"
+      className="fixed inset-0 z-[250] bg-[var(--color-bg-page)] flex flex-col"
       role="dialog"
       aria-label="Easy offer maker"
     >
       {/* Top bar */}
-      <div className="bg-[#191b23] text-white px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
+      <div className="bg-[var(--color-sidebar-bg)] text-white px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <span className="text-2xl" aria-hidden>🏷️</span>
           <span className="text-lg sm:text-xl font-black tracking-tight">Easy Offer Maker</span>
@@ -224,7 +228,7 @@ export default function EasyOfferMaker({ onClose, onSaved, products, currencySym
                   <div
                     className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-2xl border-2 transition-all ${
                       active ? 'border-[var(--brand-color)] bg-blue-50 scale-110 shadow-md'
-                        : done ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'
+                        : done ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-[var(--color-bg-white)]'
                     }`}
                     aria-hidden
                   >
@@ -241,10 +245,10 @@ export default function EasyOfferMaker({ onClose, onSaved, products, currencySym
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 pb-10">
         {fatal && (
-          <div className="max-w-xl mx-auto mt-10 bg-white rounded-3xl border border-red-200 p-8 text-center">
+          <div className="max-w-xl mx-auto mt-10 bg-[var(--color-bg-white)] rounded-3xl border border-red-200 p-8 text-center">
             <CircleAlert className="w-14 h-14 text-red-400 mx-auto mb-4" />
             <p className="text-xl font-bold text-gray-800">{fatal}</p>
-            <button onClick={onClose} className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[#191b23] text-white text-lg font-black cursor-pointer hover:bg-black transition-colors">
+            <button onClick={onClose} className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[var(--color-sidebar-bg)] text-white text-lg font-black cursor-pointer hover:bg-black transition-colors">
               Close
             </button>
           </div>
@@ -298,6 +302,9 @@ export default function EasyOfferMaker({ onClose, onSaved, products, currencySym
             verdict={verdict}
             individualValue={individualValue}
             saving={saving}
+            branches={branches.filter((b) => b.isActive !== false)}
+            branchIds={branchIds}
+            onSetBranchIds={setBranchIds}
             onBack={() => setStep('amount')}
             onSave={() => void handleSave()}
           />
@@ -324,11 +331,11 @@ export default function EasyOfferMaker({ onClose, onSaved, products, currencySym
 function ModePick({ onPick, onClose, hasDishes }: { onPick: (m: Mode) => void; onClose: () => void; hasDishes: boolean }) {
   if (!hasDishes) {
     return (
-      <div className="max-w-xl mx-auto mt-10 bg-white rounded-3xl border border-[#e1e2ed] p-8 text-center">
+      <div className="max-w-xl mx-auto mt-10 bg-[var(--color-bg-white)] rounded-3xl border border-[var(--color-border-default)] p-8 text-center">
         <span className="text-6xl" aria-hidden>🍽️</span>
         <p className="text-2xl font-black text-gray-700 mt-4">No dishes on the menu yet</p>
         <p className="text-lg text-gray-400 mt-2">Add your dishes in Products first, then come back to make offers.</p>
-        <button onClick={onClose} className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[var(--brand-color)] text-white text-xl font-black cursor-pointer hover:bg-[#003ea8] transition-colors">
+        <button onClick={onClose} className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[var(--brand-color)] text-white text-xl font-black cursor-pointer hover:bg-[var(--color-primary-hover)] transition-colors">
           OK, close
         </button>
       </div>
@@ -341,7 +348,7 @@ function ModePick({ onPick, onClose, hasDishes }: { onPick: (m: Mode) => void; o
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-8">
         <button
           onClick={() => onPick('offer')}
-          className="bg-white rounded-3xl border-4 border-[#e1e2ed] hover:border-[var(--brand-color)] hover:shadow-xl active:scale-[0.98] transition-all p-8 cursor-pointer"
+          className="bg-[var(--color-bg-white)] rounded-3xl border-4 border-[var(--color-border-default)] hover:border-[var(--brand-color)] hover:shadow-xl active:scale-[0.98] transition-all p-8 cursor-pointer"
         >
           <span className="text-6xl block" aria-hidden>🏷️</span>
           <p className="mt-3 text-xl sm:text-2xl font-black text-gray-900">A discount</p>
@@ -349,7 +356,7 @@ function ModePick({ onPick, onClose, hasDishes }: { onPick: (m: Mode) => void; o
         </button>
         <button
           onClick={() => onPick('combo')}
-          className="bg-white rounded-3xl border-4 border-[#e1e2ed] hover:border-[var(--brand-color)] hover:shadow-xl active:scale-[0.98] transition-all p-8 cursor-pointer"
+          className="bg-[var(--color-bg-white)] rounded-3xl border-4 border-[var(--color-border-default)] hover:border-[var(--brand-color)] hover:shadow-xl active:scale-[0.98] transition-all p-8 cursor-pointer"
         >
           <span className="text-6xl block" aria-hidden>📦</span>
           <p className="mt-3 text-xl sm:text-2xl font-black text-gray-900">A combo deal</p>
@@ -387,7 +394,7 @@ function WhichScreen({ menu, mode, selected, currencySymbol, onToggle, onPickAll
         <button
           onClick={onPickAll}
           className={`flex-1 py-4 rounded-2xl border-4 text-lg font-black cursor-pointer transition-all active:scale-[0.98] ${
-            allSelected ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-[#e1e2ed] bg-white text-gray-600 hover:border-emerald-300'
+            allSelected ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-600 hover:border-emerald-300'
           }`}
         >
           {allSelected ? '✓ All dishes' : '🗂️ All dishes'}
@@ -399,7 +406,7 @@ function WhichScreen({ menu, mode, selected, currencySymbol, onToggle, onPickAll
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search…"
             aria-label="Search dishes"
-            className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-[#e1e2ed] bg-white text-lg font-semibold focus:outline-none focus:ring-4 focus:ring-[var(--brand-color)]/20"
+            className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-lg font-semibold focus:outline-none focus:ring-4 focus:ring-[var(--brand-color)]/20"
           />
         </div>
       </div>
@@ -413,16 +420,16 @@ function WhichScreen({ menu, mode, selected, currencySymbol, onToggle, onPickAll
               key={id}
               onClick={() => onToggle(id)}
               aria-pressed={on}
-              className={`relative bg-white rounded-3xl border-4 p-4 sm:p-5 flex flex-col items-center text-center cursor-pointer transition-all min-h-[150px] active:scale-[0.97] ${
-                on ? 'border-emerald-400 bg-emerald-50/60 shadow-md' : 'border-[#e1e2ed] hover:border-gray-300'
+              className={`relative bg-[var(--color-bg-white)] rounded-3xl border-4 p-4 sm:p-5 flex flex-col items-center text-center cursor-pointer transition-all min-h-[150px] active:scale-[0.97] ${
+                on ? 'border-emerald-400 bg-emerald-50/60 shadow-md' : 'border-[var(--color-border-default)] hover:border-gray-300'
               }`}
             >
               {on && (
-                <span className="absolute top-2 right-2 w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+                <span className="absolute top-2 right-2 w-9 h-9 rounded-full bg-[var(--color-emerald-500-solid)] text-white flex items-center justify-center">
                   <Check className="w-5 h-5" />
                 </span>
               )}
-              <span className="text-5xl sm:text-6xl" aria-hidden>{emojiFor(p.name)}</span>
+              <ItemThumb item={p} size="lg" />
               <span className="mt-2.5 text-base sm:text-lg font-black text-gray-900 leading-tight">{p.name}</span>
               <span className="mt-1 text-lg font-black text-[var(--brand-color)]">{fmt(p.price, currencySymbol)}</span>
             </button>
@@ -432,13 +439,13 @@ function WhichScreen({ menu, mode, selected, currencySymbol, onToggle, onPickAll
       </div>
 
       <div className="flex gap-3 mt-8 max-w-2xl mx-auto">
-        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
           <ChevronLeft className="w-6 h-6" /> Back
         </button>
         <button
           onClick={onNext}
           disabled={!canProceed}
-          className="flex-1 py-5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-30"
+          className="flex-1 py-5 rounded-2xl bg-[var(--color-emerald-500-solid)] hover:bg-[var(--color-emerald-600-solid)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-30"
         >
           {selected.length} selected · Next <ChevronRight className="w-7 h-7" />
         </button>
@@ -473,7 +480,7 @@ function AmountScreen({ mode, value, discountType, currencySymbol, picked, indiv
           <button
             onClick={() => onDiscountType('percentage')}
             className={`px-8 py-4 rounded-2xl border-4 text-xl font-black cursor-pointer transition-all ${
-              discountType === 'percentage' ? 'border-[var(--brand-color)] bg-blue-50 text-[var(--brand-color)]' : 'border-[#e1e2ed] bg-white text-gray-500'
+              discountType === 'percentage' ? 'border-[var(--brand-color)] bg-blue-50 text-[var(--brand-color)]' : 'border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-500'
             }`}
           >
             %
@@ -481,7 +488,7 @@ function AmountScreen({ mode, value, discountType, currencySymbol, picked, indiv
           <button
             onClick={() => onDiscountType('flat')}
             className={`px-8 py-4 rounded-2xl border-4 text-xl font-black cursor-pointer transition-all ${
-              discountType === 'flat' ? 'border-[var(--brand-color)] bg-blue-50 text-[var(--brand-color)]' : 'border-[#e1e2ed] bg-white text-gray-500'
+              discountType === 'flat' ? 'border-[var(--brand-color)] bg-blue-50 text-[var(--brand-color)]' : 'border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-500'
             }`}
           >
             {currencySymbol}
@@ -491,7 +498,7 @@ function AmountScreen({ mode, value, discountType, currencySymbol, picked, indiv
 
       {mode === 'combo' && (
         <div className="flex justify-center gap-3 mt-6 flex-wrap">
-          <div className="bg-white rounded-2xl border-2 border-[#e1e2ed] px-6 py-3">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border-2 border-[var(--color-border-default)] px-6 py-3">
             <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Worth alone</p>
             <p className="text-2xl font-black text-gray-800">{fmt(individualValue, currencySymbol)}</p>
           </div>
@@ -511,7 +518,7 @@ function AmountScreen({ mode, value, discountType, currencySymbol, picked, indiv
         <button
           onClick={() => onValue(Math.max(min, value - step))}
           aria-label="Less"
-          className="w-20 h-20 rounded-3xl bg-white border-4 border-[#e1e2ed] hover:border-gray-300 flex items-center justify-center cursor-pointer active:scale-95 transition-all"
+          className="w-20 h-20 rounded-3xl bg-[var(--color-bg-white)] border-4 border-[var(--color-border-default)] hover:border-gray-300 flex items-center justify-center cursor-pointer active:scale-95 transition-all"
         >
           <Minus className="w-9 h-9 text-gray-500" />
         </button>
@@ -539,13 +546,13 @@ function AmountScreen({ mode, value, discountType, currencySymbol, picked, indiv
       )}
 
       <div className="flex gap-3 mt-10 max-w-2xl mx-auto">
-        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
           <ChevronLeft className="w-6 h-6" /> Back
         </button>
         <button
           onClick={onNext}
           disabled={value <= 0}
-          className="flex-1 py-5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-30"
+          className="flex-1 py-5 rounded-2xl bg-[var(--color-emerald-500-solid)] hover:bg-[var(--color-emerald-600-solid)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-30"
         >
           See the money <ChevronRight className="w-7 h-7" />
         </button>
@@ -557,10 +564,12 @@ function AmountScreen({ mode, value, discountType, currencySymbol, picked, indiv
 // ────────────────────────────────────────────────────────────────────
 // STEP 4 — THE MONEY (auto-calculated, plain words, one-tap save)
 // ────────────────────────────────────────────────────────────────────
-function MoneyScreen({ mode, value, discountType, currencySymbol, picked, preview, previewLoading, previewError, verdict, individualValue, saving, onBack, onSave }: {
+function MoneyScreen({ mode, value, discountType, currencySymbol, picked, preview, previewLoading, previewError, verdict, individualValue, saving, branches, branchIds, onSetBranchIds, onBack, onSave }: {
   mode: Mode; value: number; discountType: 'percentage' | 'flat'; currencySymbol: string;
   picked: any[]; preview: any | null; previewLoading: boolean; previewError: string;
   verdict: any; individualValue: number; saving: boolean;
+  branches: { id: string; name: string }[]; branchIds: string[];
+  onSetBranchIds: (ids: string[]) => void;
   onBack: () => void; onSave: () => void;
 }) {
   const rows: any[] = preview?.rows || [];
@@ -596,7 +605,7 @@ function MoneyScreen({ mode, value, discountType, currencySymbol, picked, previe
               { label: 'Customers save', value: fmt(combo.customerSavings ?? 0, currencySymbol), cls: 'text-emerald-600' },
               { label: 'You keep', value: fmt(combo.contribution ?? 0, currencySymbol), cls: (combo.contribution ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500' },
             ].map((c) => (
-              <div key={c.label} className="bg-white rounded-3xl border-2 border-[#e1e2ed] p-4 text-center">
+              <div key={c.label} className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-4 text-center">
                 <p className={`text-2xl font-black ${c.cls}`}>{c.value}</p>
                 <p className="mt-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{c.label}</p>
               </div>
@@ -611,17 +620,18 @@ function MoneyScreen({ mode, value, discountType, currencySymbol, picked, previe
       )}
 
       {!previewLoading && !previewError && mode === 'offer' && rows.length > 0 && (
-        <div className="bg-white rounded-3xl border-2 border-[#e1e2ed] mt-8 overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#e1e2ed] flex items-center justify-between">
+        <div className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] mt-8 overflow-hidden">
+          <div className="px-5 py-4 border-b border-[var(--color-border-default)] flex items-center justify-between">
             <p className="text-base font-black text-gray-800">Dish by dish</p>
             <p className="text-sm text-gray-400">{rows.length} dish{rows.length === 1 ? '' : 'es'}</p>
           </div>
-          <div className="divide-y divide-[#e1e2ed]/70">
+          <div className="divide-y divide-[var(--color-border-default)]/70">
             {rows.slice(0, 8).map((r: any) => {
               const keep = Number(r.discountedContribution) || 0;
+              const rImg = picked.find((p: any) => String(p.id || p._id) === String(r.productId))?.image;
               return (
                 <div key={r.productId} className="px-5 py-3.5 flex items-center gap-3">
-                  <span className="text-3xl shrink-0" aria-hidden>{emojiFor(r.productName)}</span>
+                  <ItemThumb item={{ name: r.productName, image: rImg }} />
                   <div className="flex-1 min-w-0">
                     <p className="text-base font-black text-gray-900 truncate">{r.productName}</p>
                     <p className="text-sm text-gray-400">
@@ -642,7 +652,7 @@ function MoneyScreen({ mode, value, discountType, currencySymbol, picked, previe
       )}
 
       {!previewLoading && !previewError && mode === 'offer' && rows.length === 0 && (
-        <div className="mt-8 bg-white rounded-3xl border-2 border-[#e1e2ed] p-6 text-center">
+        <div className="mt-8 bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-6 text-center">
           <p className="text-base text-gray-500">Adding up the dishes… you can still save; costs will fill in as dish costs get added.</p>
         </div>
       )}
@@ -654,14 +664,43 @@ function MoneyScreen({ mode, value, discountType, currencySymbol, picked, previe
         </div>
       )}
 
+      {branches.length > 1 && (
+        <div className="mt-8 bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-5">
+          <p className="text-sm font-black text-gray-700">Where should this offer run?</p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button
+              onClick={() => onSetBranchIds([])}
+              className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 cursor-pointer transition-colors ${branchIds.length === 0 ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]' : 'bg-[var(--color-bg-white)] border-[var(--color-border-default)] text-gray-500'}`}
+            >
+              All branches
+            </button>
+            {branches.map((b) => {
+              const on = branchIds.includes(b.id);
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => onSetBranchIds(on ? branchIds.filter((x) => x !== b.id) : [...branchIds, b.id])}
+                  className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 cursor-pointer transition-colors ${on ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]' : 'bg-[var(--color-bg-white)] border-[var(--color-border-default)] text-gray-500'}`}
+                >
+                  {b.name}
+                </button>
+              );
+            })}
+          </div>
+          {branchIds.length > 0 && (
+            <p className="text-xs text-gray-400 mt-2">This offer will only be available at the selected {branchIds.length === 1 ? 'branch' : 'branches'}.</p>
+          )}
+        </div>
+      )}
+
       <div className="flex gap-3 mt-8">
-        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
           <ChevronLeft className="w-6 h-6" /> Back
         </button>
         <button
           onClick={onSave}
           disabled={saving}
-          className="flex-1 py-6 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-2xl font-black flex items-center justify-center gap-3 cursor-pointer transition-colors disabled:opacity-40 shadow-lg"
+          className="flex-1 py-6 rounded-2xl bg-[var(--color-emerald-500-solid)] hover:bg-[var(--color-emerald-600-solid)] text-white text-2xl font-black flex items-center justify-center gap-3 cursor-pointer transition-colors disabled:opacity-40 shadow-lg"
         >
           {saving ? <Loader2 className="w-8 h-8 animate-spin" /> : <Check className="w-8 h-8" />}
           {saving ? 'Saving…' : 'Turn it on ✅'}
@@ -685,10 +724,10 @@ function DoneScreen({ title, onAgain, onClose }: { title: string; onAgain: () =>
         “{title}” is now live for your customers.
       </p>
       <div className="flex flex-col sm:flex-row gap-3 mt-8 justify-center">
-        <button onClick={onAgain} className="py-5 px-8 rounded-2xl bg-[var(--brand-color)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[#003ea8] transition-colors">
+        <button onClick={onAgain} className="py-5 px-8 rounded-2xl bg-[var(--brand-color)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[var(--color-primary-hover)] transition-colors">
           <Plus className="w-6 h-6" /> Make another
         </button>
-        <button onClick={onClose} className="py-5 px-8 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-700 text-xl font-black cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onClose} className="py-5 px-8 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-700 text-xl font-black cursor-pointer hover:bg-gray-50 transition-colors">
           Done
         </button>
       </div>

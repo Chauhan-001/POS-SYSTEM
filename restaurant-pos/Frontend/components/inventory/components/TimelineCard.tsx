@@ -1,4 +1,4 @@
-import { ShoppingCart, Utensils, SlidersHorizontal, Trash2, ClipboardCheck, X, PackagePlus, RotateCcw } from 'lucide-react';
+import { ShoppingCart, Utensils, SlidersHorizontal, Trash2, ClipboardCheck, X, PackagePlus, RotateCcw, Undo2 } from 'lucide-react';
 import type { TimelineEntry } from '../types';
 
 const typeConfig = {
@@ -15,17 +15,21 @@ const typeConfig = {
 // of crashing on typeConfig[entry.type].icon === undefined.
 const FALLBACK_CONFIG = { icon: PackagePlus, color: 'text-gray-600 bg-gray-50 border-gray-200', label: 'Activity' };
 
-export default function TimelineCard({ entry, isLast, onDelete }: {
+export default function TimelineCard({ entry, isLast, onDelete, onUndo, onClick }: {
   entry: TimelineEntry;
   isLast?: boolean;
   /** When provided, renders a delete button (used for real purchase rows). */
   onDelete?: (id: string) => void;
+  /** When provided, renders an undo button (used for activity events). */
+  onUndo?: () => void;
+  /** When provided, the card is clickable and navigates to the product. */
+  onClick?: () => void;
 }) {
   const config = typeConfig[entry.type as keyof typeof typeConfig] ?? FALLBACK_CONFIG;
   const Icon = config.icon;
   return (
-    <div className="group relative flex gap-4 pb-6">
-      {!isLast && <div className="absolute left-[19px] top-10 bottom-0 w-px bg-[#e1e2ed]" />}
+    <div className={`group relative flex gap-4 pb-6 ${onClick ? 'cursor-pointer hover:bg-blue-50/50 -mx-2 px-2 py-1 rounded-xl transition-colors' : ''}`} onClick={onClick}>
+      {!isLast && <div className="absolute left-[19px] top-10 bottom-0 w-px bg-[var(--color-border-default)]" />}
       <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${config.color}`}>
         <Icon className="w-4 h-4" />
       </div>
@@ -41,13 +45,22 @@ export default function TimelineCard({ entry, isLast, onDelete }: {
           <span>{entry.timestamp}</span>
         </div>
       </div>
-      {onDelete && (
-        <button onClick={() => onDelete(entry.id)} title="Delete purchase"
-          className="self-start p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer shrink-0"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
+      <div className="flex items-start gap-1 shrink-0">
+        {onUndo && (
+          <button onClick={(e) => { e.stopPropagation(); onUndo(); }} title="Undo this event"
+            className="self-start p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-all cursor-pointer"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {onDelete && (
+          <button onClick={(e) => { e.stopPropagation(); onDelete(entry.id); }} title="Delete purchase"
+            className="self-start p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

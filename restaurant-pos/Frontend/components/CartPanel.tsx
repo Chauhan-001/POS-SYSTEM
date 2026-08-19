@@ -1,4 +1,5 @@
-import { ShoppingCart, RefreshCw, Phone, Award, X, DollarSign, ArrowLeftRight, ChevronLeft, ChevronRight, Search, Trash2, Printer, PauseCircle, MoreHorizontal, XCircle } from 'lucide-react';
+import { useState } from 'react';
+import { ShoppingCart, RefreshCw, Phone, Award, X, DollarSign, ArrowLeftRight, ChevronLeft, ChevronRight, Search, Trash2, Printer, PauseCircle, MoreHorizontal, AlertTriangle } from 'lucide-react';
 import { CartItem, Customer, HeldOrder, Product, ProductVariant, LoyaltyReward, SystemSettings } from '../src/types';
 import CartItemRow from './CartItemRow';
 import OfferProfitabilityStrip from './OfferProfitabilityStrip';
@@ -22,9 +23,6 @@ interface CartPanelProps {
   onAdjustQuantity: (id: string, delta: number) => void;
   onDeleteItem: (id: string) => void;
   onClearCart?: () => void;
-  /** Close the active order WITHOUT payment (undo accidental table tap). Only
-   * valid before the first KOT reaches the kitchen. */
-  onCloseOrder?: () => void;
   onShowKOT: () => void;
   onShowPayment: () => void;
   onHoldOrder: () => void;
@@ -51,8 +49,14 @@ interface CartPanelProps {
   currencySymbol: string;
   onOpenAddOnModal: (product: Product, variant?: ProductVariant) => void;
   onUpdateItemNotes: (itemId: string, notes: string) => void;
+  /** Reopen the configuration modal for a configured cart row (edit mode). */
+  onEditConfiguredItem?: (item: CartItem) => void;
   showToast: (msg: string, type?: 'success' | 'info' | 'warning') => void;
   moduleSettings?: Record<string, boolean>;
+  /** Summary of unserved KOT items — used to warn before closing the bill. */
+  unservedKotSummary?: { hasUnserved: boolean; unservedCount: number; unservedItems: string[] };
+  /** Force-close the bill even when kitchen items are not yet served. */
+  onForceCloseBill?: () => void;
   manualDiscount?: number;
   onManualDiscountChange?: (val: number) => void;
   /** Whether the current role may apply manual discounts (Owner always can). */
@@ -65,19 +69,21 @@ export default function CartPanel({
   cartWidth, startResizeCart, cartItems, activeOrder, heldOrders, onOpenHeldDrawer,
   settings, onPaymentChange, onOrderTypeChange, paymentMethod, orderType,
   calculateCartSubtotal, calculateCartDiscount, calculateCartTaxes, calculateCartGrandTotal,
-  onAdjustQuantity, onDeleteItem, onClearCart, onCloseOrder, onShowKOT, onShowPayment, onHoldOrder,
+  onAdjustQuantity, onDeleteItem, onClearCart, onShowKOT, onShowPayment, onHoldOrder,
   products, quickFireInput, onQuickFireChange, quickFireSessionCount, quickFireFlash, onQuickFireKeyDown,
   isQuickFireActive, onToggleQuickFire, isMoreBillingOpen, onToggleMoreBilling,
   searchedCustomer, customerPhone, onCustomerPhoneChange, onOpenOffers, onOpenCustomerSearch,
   loyaltyPhoneRef, quickFireRef, appliedReward, splitDetails, onOpenSplitPopup,
-  currencySymbol, onUpdateItemNotes, moduleSettings = {} as Record<string, boolean>,
+  currencySymbol, onUpdateItemNotes, onEditConfiguredItem, moduleSettings = {} as Record<string, boolean>,
+  unservedKotSummary, onForceCloseBill,
   manualDiscount, onManualDiscountChange, canApplyDiscount, appliedOffer,
 }: CartPanelProps) {
   const manualDiscountVal = manualDiscount ?? 0;
   const handleDiscountChange = onManualDiscountChange || ((val: number) => {});
+  const [showUnservedWarning, setShowUnservedWarning] = useState(false);
 
   return (
-    <div data-tour="cart-panel" className="bg-white border-l border-gray-300 flex flex-col min-h-0 overflow-hidden shrink-0 relative shadow-lg"
+    <div data-tour="cart-panel" className="bg-[var(--color-bg-white)] border-l border-gray-300 flex flex-col min-h-0 overflow-hidden shrink-0 relative shadow-lg"
       style={{ width: cartWidth }}>
       {/* Resizer */}
       <div onMouseDown={startResizeCart}
@@ -85,7 +91,7 @@ export default function CartPanel({
         <div className="w-1 h-8 rounded-full bg-gray-300 group-hover:bg-[var(--brand-color)] transition-colors" />
       </div>
       <button onMouseDown={startResizeCart}
-        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-10 rounded-full bg-white border border-gray-300 shadow-md flex items-center justify-center cursor-col-resize hover:bg-gray-100 transition-all z-20 group"
+        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-10 rounded-full bg-[var(--color-bg-white)] border border-gray-300 shadow-md flex items-center justify-center cursor-col-resize hover:bg-gray-100 transition-all z-20 group"
         title="Drag to resize cart panel">
         <ChevronLeft className="w-3 h-3 text-gray-400 group-hover:text-[var(--brand-color)]" />
         <ChevronRight className="w-3 h-3 text-gray-400 group-hover:text-[var(--brand-color)]" />
@@ -124,7 +130,7 @@ export default function CartPanel({
       </div>
 
       {/* Customer Mobile & Loyalty/Offers Bar */}
-      <div className="p-2.5 border-b border-gray-200 bg-white shrink-0">
+      <div className="p-2.5 border-b border-gray-200 bg-[var(--color-bg-white)] shrink-0">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -132,7 +138,7 @@ export default function CartPanel({
               placeholder={moduleSettings.enableGuestCheckout !== false ? 'Customer Mobile (optional)' : 'Customer Mobile'}
               data-tour="phone-input"
               value={customerPhone} onChange={(e) => onCustomerPhoneChange(e.target.value)} maxLength={10}
-              className="w-full pl-8 pr-2 py-2 rounded-xl border border-gray-300 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] bg-white" />
+              className="w-full pl-8 pr-2 py-2 rounded-xl border border-gray-300 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)]" />
           </div>
           <button onClick={onOpenCustomerSearch}
             className="shrink-0 p-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl flex items-center justify-center transition-all cursor-pointer border border-gray-200"
@@ -142,7 +148,7 @@ export default function CartPanel({
           {(moduleSettings.enableLoyalty !== false || searchedCustomer) && (
             <button onClick={onOpenOffers}
               data-tour="offers-btn"
-              className="shrink-0 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl flex items-center gap-1 text-xs font-extrabold transition-all cursor-pointer shadow-sm">
+              className="shrink-0 px-3 py-2 bg-[var(--color-amber-500-solid)] hover:bg-[var(--color-amber-600-solid)] text-white rounded-xl flex items-center gap-1 text-xs font-extrabold transition-all cursor-pointer shadow-sm">
               <Award className="w-4 h-4" />
               <span>Offers</span>
             </button>
@@ -175,7 +181,7 @@ export default function CartPanel({
               onChange={(e) => onQuickFireChange(e.target.value)}
               onKeyDown={onQuickFireKeyDown}
               onFocus={(e) => e.target.select()}
-              className="flex-1 px-3 py-1.5 text-xs font-bold border rounded-xl focus:outline-none bg-white border-amber-300"
+              className="flex-1 px-3 py-1.5 text-xs font-bold border rounded-xl focus:outline-none bg-[var(--color-bg-white)] border-amber-300"
               autoFocus
             />
             {quickFireSessionCount > 0 && (
@@ -208,19 +214,20 @@ export default function CartPanel({
               onAdjustQuantity={onAdjustQuantity}
               onDeleteItem={onDeleteItem}
               onUpdateItemNotes={onUpdateItemNotes}
+              onEditConfiguredItem={onEditConfiguredItem}
             />
           ))
         )}
       </div>
 
       {/* Vertical Order Actions Panel (Inside Order Panel) */}
-      <div className="bg-white border-t border-gray-200 p-2.5 shrink-0 flex flex-col gap-2">
+      <div className="bg-[var(--color-bg-white)] border-t border-gray-200 p-2.5 shrink-0 flex flex-col gap-2">
         <div className="grid grid-cols-4 gap-1.5">
           <button
             onClick={onShowKOT}
             disabled={cartItems.length === 0}
             data-tour="kot-btn"
-            className="py-2 px-1.5 bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1"
+            className="py-2 px-1.5 bg-[var(--color-amber-500-solid)] hover:bg-[var(--color-amber-600-solid)] disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1"
             title="Send KOT to Kitchen"
           >
             <Printer className="w-4 h-4" />
@@ -231,53 +238,22 @@ export default function CartPanel({
             onClick={onHoldOrder}
             disabled={cartItems.length === 0}
             data-tour="hold-btn"
-            className="py-2 px-1.5 bg-sky-600 hover:bg-sky-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1"
+            className="py-2 px-1.5 bg-[var(--color-sky-600-solid)] hover:bg-[var(--color-sky-700-solid)] disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1"
             title="Hold Current Order (F8)"
           >
             <PauseCircle className="w-4 h-4" />
             <span>Hold</span>
           </button>
 
-          {(() => {
-            // Before the first KOT is sent, the Clear action becomes CLOSE — it
-            // cancels the whole order (undoing an accidental table tap) instead
-            // of just emptying the cart. Once any KOT reaches the kitchen the
-            // order is locked: the bill cannot be closed from here.
-            const hasActiveOrder = !!activeOrder && !['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'].includes(activeOrder.status);
-            const kotSent = (activeOrder?.kotRecords?.length ?? 0) > 0;
-            const isCloseMode = hasActiveOrder && !!onCloseOrder;
-            const closeDisabled = isCloseMode && kotSent;
-            const canClear = cartItems.length > 0;
-            if (isCloseMode) {
-              return (
-                <button
-                  onClick={closeDisabled ? undefined : onCloseOrder}
-                  disabled={closeDisabled}
-                  data-tour="close-order-btn"
-                  className={`py-2 px-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1 ${
-                    closeDisabled
-                      ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
-                      : 'bg-rose-600 hover:bg-rose-700 text-white'
-                  }`}
-                  title={closeDisabled ? 'Order sent to kitchen — cannot close' : 'Close order & free the table (undo accidental table tap)'}
-                >
-                  <XCircle className={`w-4 h-4 ${closeDisabled ? '' : 'text-white'}`} />
-                  <span>{closeDisabled ? 'Locked' : 'Close'}</span>
-                </button>
-              );
-            }
-            return (
-              <button
-                onClick={() => onClearCart ? onClearCart() : cartItems.forEach(i => onDeleteItem(i.id))}
-                disabled={!canClear}
-                className="py-2 px-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1"
-                title="Clear All Cart Items"
-              >
-                <Trash2 className="w-4 h-4 text-rose-600" />
-                <span>Clear</span>
-              </button>
-            );
-          })()}
+          <button
+            onClick={() => onClearCart ? onClearCart() : cartItems.forEach(i => onDeleteItem(i.id))}
+            disabled={cartItems.length === 0}
+            className="py-2 px-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-sm flex flex-col items-center justify-center gap-1"
+            title="Clear All Cart Items"
+          >
+            <Trash2 className="w-4 h-4 text-rose-600" />
+            <span>Clear</span>
+          </button>
 
           <button
             onClick={onToggleMoreBilling}
@@ -293,7 +269,7 @@ export default function CartPanel({
         {isMoreBillingOpen && (
           <div className="p-2 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-around gap-2 text-xs">
             <button onClick={onToggleQuickFire}
-              className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg font-bold text-gray-700 hover:bg-gray-100">
+              className="px-3 py-1.5 bg-[var(--color-bg-white)] border border-gray-300 rounded-lg font-bold text-gray-700 hover:bg-gray-100">
               Quick Code Entry
             </button>
             {paymentMethod === "Split" && (
@@ -306,10 +282,20 @@ export default function CartPanel({
         )}
       </div>
 
+      {/* KDS Warning — subtle inline indicator */}
+      {unservedKotSummary?.hasUnserved && (
+        <div className="mx-3 mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <p className="text-[10px] text-amber-700 font-bold">
+            {unservedKotSummary.unservedCount} item{unservedKotSummary.unservedCount > 1 ? 's' : ''} in kitchen — closing bill will notify chef
+          </p>
+        </div>
+      )}
+
       {/* Totals & Payment Checkout Section */}
       <div className="bg-gray-50 border-t border-gray-300 p-3 shrink-0 flex flex-col gap-2.5">
         {/* Totals Row */}
-        <div className="bg-white p-2.5 rounded-xl border border-gray-200 flex flex-col gap-1 text-xs">
+        <div className="bg-[var(--color-bg-white)] p-2.5 rounded-xl border border-gray-200 flex flex-col gap-1 text-xs">
           <div className="flex justify-between items-center text-gray-600 font-semibold">
             <span>Subtotal</span>
             <span className="font-mono text-gray-900">{currencySymbol}{calculateCartSubtotal().toFixed(2)}</span>
@@ -344,7 +330,7 @@ export default function CartPanel({
         {/* Dropdowns for Payment Method & Order Type */}
         <div className="grid grid-cols-2 gap-2">
           <select value={paymentMethod} onChange={(e) => onPaymentChange(e.target.value as any)}
-            className="w-full px-2.5 py-2 text-xs font-extrabold border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] cursor-pointer text-gray-900">
+            className="w-full px-2.5 py-2 text-xs font-extrabold border border-gray-300 rounded-xl bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] cursor-pointer text-gray-900">
             <option value="Cash">Cash ▼</option>
             <option value="UPI">UPI ▼</option>
             <option value="Card">Card ▼</option>
@@ -352,7 +338,7 @@ export default function CartPanel({
             <option value="Split">Split ▼</option>
           </select>
           <select value={orderType} onChange={(e) => onOrderTypeChange(e.target.value as any)}
-            className="w-full px-2.5 py-2 text-xs font-extrabold border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] cursor-pointer text-gray-900">
+            className="w-full px-2.5 py-2 text-xs font-extrabold border border-gray-300 rounded-xl bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] cursor-pointer text-gray-900">
             {(moduleSettings.enableDineInModule !== false || orderType === 'Dine In') && <option value="Dine In">Dine In ▼</option>}
             {(moduleSettings.enableTakeawayModule !== false || orderType === 'Takeaway') && <option value="Takeaway">Takeaway ▼</option>}
             {(moduleSettings.enableDeliveryModule !== false || orderType === 'Delivery') && <option value="Delivery">Delivery ▼</option>}
@@ -369,16 +355,58 @@ export default function CartPanel({
 
         {/* Big Prominent CLOSE BILL Button */}
         <button
-          onClick={onShowPayment}
+          onClick={() => {
+            // If kitchen items are unserved, show warning dialog first
+            if (unservedKotSummary?.hasUnserved) {
+              setShowUnservedWarning(true);
+            } else {
+              onShowPayment();
+            }
+          }}
           disabled={cartItems.length === 0 || (paymentMethod === 'Split' && !(Math.abs((splitDetails.cashAmount || 0) + (splitDetails.cardAmount || 0) + (splitDetails.upiAmount || 0) + (splitDetails.walletAmount || 0) - calculateCartGrandTotal()) < 0.01))}
           data-tour="pay-btn"
-          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl text-base font-extrabold transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-[0.99]"
+          className="w-full py-3 bg-[var(--color-emerald-600-solid)] hover:bg-[var(--color-emerald-700-solid)] disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl text-base font-extrabold transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-[0.99]"
           title="Complete Order & Close Bill (F9)"
         >
           <DollarSign className="w-5 h-5 stroke-[2.5]" />
           <span>CLOSE BILL</span>
         </button>
       </div>
+
+      {/* Un served items warning dialog */}
+      {showUnservedWarning && (
+        <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-sm w-full p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              </div>
+              <h4 className="font-black text-gray-900 text-sm">Kitchen items not yet served</h4>
+            </div>
+            <p className="text-xs text-gray-600 leading-relaxed mb-1">
+              {unservedKotSummary?.unservedCount} item{unservedKotSummary?.unservedCount !== 1 ? 's' : ''} still being prepared:
+              {' '}<strong className="text-gray-900">{unservedKotSummary?.unservedItems.join(', ')}</strong>.
+            </p>
+            <p className="text-[11px] text-gray-500 mb-5">
+              If you close the bill now, these items will be removed from the kitchen display and the chef will be notified.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowUnservedWarning(false)}
+                className="flex-1 py-2.5 border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold rounded-xl text-xs cursor-pointer"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => { setShowUnservedWarning(false); onForceCloseBill?.(); }}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
+              >
+                <DollarSign className="w-3.5 h-3.5" /> Proceed to Pay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

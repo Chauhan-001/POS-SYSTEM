@@ -230,7 +230,7 @@ export default function PurchaseEntry() {
                 <motion.button key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: i * 0.02 }}
                   onClick={() => handleQuickTap(item)}
                   className={`relative rounded-2xl border-2 p-4 text-left transition-all cursor-pointer ${
-                    isSelected ? 'border-[var(--brand-color)] bg-[var(--brand-color)]/5 shadow-md' : 'border-[#e1e2ed] bg-white hover:border-[var(--brand-color)]/30 hover:shadow-md'
+                    isSelected ? 'border-[var(--brand-color)] bg-[var(--brand-color)]/5 shadow-md' : 'border-[var(--color-border-default)] bg-[var(--color-bg-white)] hover:border-[var(--brand-color)]/30 hover:shadow-md'
                   }`}
                 >
                   {isSelected && (
@@ -263,7 +263,7 @@ export default function PurchaseEntry() {
 
       {/* Add-stock form — always available, works for catalog items AND new items */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
-        className="bg-white rounded-2xl border border-[var(--brand-color)]/20 shadow-lg overflow-hidden"
+        className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--brand-color)]/20 shadow-lg overflow-hidden"
       >
         <div className="p-5 bg-gradient-to-r from-[var(--brand-color)]/5 to-blue-50 border-b border-[var(--brand-color)]/10">
           <div className="flex items-center justify-between">
@@ -290,7 +290,7 @@ export default function PurchaseEntry() {
                 onChange={e => handleItemChange(e.target.value)}
                 placeholder="Type item name — known items auto-fill"
                 autoFocus
-                className="w-full pl-9 pr-3 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full pl-9 pr-3 py-3 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
               />
               <datalist id="inventory-item-list">
                 {items.map(i => <option key={i.id} value={i.name} />)}
@@ -302,14 +302,14 @@ export default function PurchaseEntry() {
             <div>
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
               <input type="number" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} placeholder="e.g. 20" min={0} step={0.5}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 onKeyDown={e => e.key === 'Enter' && handleSave()}
               />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Unit</label>
               <select value={form.unit || matchedItem?.unit || 'kg'} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}
-                className="w-full px-3 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-3 py-3 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
               >
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
@@ -317,7 +317,7 @@ export default function PurchaseEntry() {
             <div className="col-span-2 sm:col-span-1">
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Price per unit (₹)</label>
               <input type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0"
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
               />
             </div>
           </div>
@@ -325,16 +325,16 @@ export default function PurchaseEntry() {
           <div>
             <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier</label>
             <input type="text" value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name"
-              className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+              className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
             />
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between pt-1">
             <p className="text-sm text-gray-500">
-              Total: <span className="text-emerald-600 font-bold font-mono text-lg">₹{total ?? '0.00'}</span>
+              Total: <span className="text-emerald-600 font-bold font-mono text-lg">₹{Number(total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </p>
             <button onClick={handleSave}
-              className="w-full sm:w-auto px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2 whitespace-nowrap"
+              className="w-full sm:w-auto px-8 py-3 bg-[var(--color-emerald-600-solid)] hover:bg-[var(--color-emerald-700-solid)] text-white rounded-xl text-sm font-bold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2 whitespace-nowrap"
             >
               <ShoppingCart className="w-5 h-5" />
               Save Purchase
@@ -345,7 +345,7 @@ export default function PurchaseEntry() {
 
       {/* Recent purchases */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.1 }}
-        className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+        className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
       >
         <div className="flex items-center gap-2 mb-4">
           <History className="w-4 h-4 text-gray-400" />
@@ -361,13 +361,13 @@ export default function PurchaseEntry() {
           {recentPurchases.slice(0, 12).map(p => (
             <div key={p.id} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-gray-50 transition-colors">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                <div className="w-2 h-2 rounded-full bg-[var(--color-emerald-500-solid)] shrink-0" />
                 <span className="text-sm font-semibold truncate">{p.item}</span>
                 <span className="text-xs text-gray-400">×{p.quantity} {p.unit}</span>
               </div>
               <div className="flex items-center gap-1 text-right shrink-0">
                 <div className="mr-1.5">
-                  <span className="text-sm font-bold font-mono">₹{p.total}</span>
+                  <span className="text-sm font-bold font-mono">₹{Number(p.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   <p className="text-[10px] text-gray-400">{p.supplier}</p>
                 </div>
                 <button onClick={() => openEdit(p)}
@@ -407,7 +407,7 @@ export default function PurchaseEntry() {
             onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}
           >
             <motion.div initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }} transition={{ duration: 0.18 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+              className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
             >
               <div className="px-5 py-4 bg-gradient-to-r from-[var(--brand-color)]/5 to-blue-50 border-b border-[var(--brand-color)]/10 flex items-center justify-between">
                 <div>
@@ -422,45 +422,45 @@ export default function PurchaseEntry() {
                 <div>
                   <label className="text-xs font-semibold text-gray-700 block mb-1.5">Item</label>
                   <input type="text" value={editForm.item} onChange={e => setEditForm(f => ({ ...f, item: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier</label>
                   <input type="text" value={editForm.supplier} onChange={e => setEditForm(f => ({ ...f, supplier: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
                     <input type="number" value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                     />
                   </div>
                   <div>
                     <label className="text-xs font-semibold text-gray-700 block mb-1.5">Unit</label>
                     <input type="text" value={editForm.unit} onChange={e => setEditForm(f => ({ ...f, unit: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                     />
                   </div>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-700 block mb-1.5">Price per unit (₹)</label>
                   <input type="number" value={editForm.price} onChange={e => setEditForm(f => ({ ...f, price: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                     onKeyDown={e => e.key === 'Enter' && handleSaveEdit()}
                   />
                 </div>
                 {editForm.quantity && editForm.price && (
                   <p className="text-sm text-gray-500">
                     New total:{' '}
-                    <span className="text-emerald-600 font-bold font-mono">₹{(parseFloat(editForm.quantity) * parseFloat(editForm.price)).toFixed(2)}</span>
+                    <span className="text-emerald-600 font-bold font-mono">₹{(parseFloat(editForm.quantity) * parseFloat(editForm.price)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </p>
                 )}
                 <div className="flex gap-3 pt-1">
                   <button onClick={() => setEditing(null)}
-                    className="flex-1 px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-bold text-gray-600 hover:bg-gray-50 transition-all cursor-pointer"
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-bold text-gray-600 hover:bg-gray-50 transition-all cursor-pointer"
                   >
                     Cancel
                   </button>

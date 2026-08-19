@@ -36,6 +36,7 @@ router.patch('/', requireRole('Owner', 'Manager'), validate({ body: patchSetting
 router.get('/history', requireRole('Owner', 'Manager'), validate({ query: historyQuerySchema }), settingsController.listHistory);
 router.post('/rollback', requireRole('Owner', 'Manager'), validate({ body: rollbackSchema }), settingsController.rollback);
 router.get('/audit', requireRole('Owner', 'Manager'), validate({ query: auditQuerySchema }), settingsController.listAudit);
+router.get('/restaurant-profile', requireAuth, settingsController.getRestaurantProfile);
 router.get('/health', requireAuth, settingsController.health);
 
 // ─── Printers ──────────────────────────────────────────────────

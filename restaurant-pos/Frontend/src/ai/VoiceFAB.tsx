@@ -59,6 +59,8 @@ interface ParsedItem {
   ambiguous?: boolean;
   /** Candidate inventory items to pick from (disambiguation). */
   candidates?: Array<{ name: string; unit?: string; currentStock?: number }>;
+  /** True when no product matched AND no candidates exist — offer Create. */
+  productNotFound?: boolean;
 }
 
 interface VoiceParseResult {
@@ -198,6 +200,11 @@ export default function VoiceFAB() {
   const [rowRates, setRowRates] = useState<Record<number, number | null>>({});
   // Resolved product name for ambiguous rows (keyed by row index).
   const [rowPicks, setRowPicks] = useState<Record<number, string>>({});
+  // Items the user removed via the delete button before confirming.
+  const [removedItems, setRemovedItems] = useState<Set<number>>(new Set());
+  // Product creation state for "product not found" fallback
+  const [creatingProduct, setCreatingProduct] = useState<{ index: number; name: string; quantity: number; unit: string } | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   // Purchase date shown in the confirm panel — editable so a misheard spoken
   // date (e.g. "kal" parsed as today) can be corrected before confirming.
   const [editableDate, setEditableDate] = useState('');
@@ -283,6 +290,7 @@ export default function VoiceFAB() {
     setRowQtys({});
     setRowRates({});
     setRowPicks({});
+    setRemovedItems(new Set());
     setEditableDate('');
     setEditableSupplier('');
     setEditableBrand('');
@@ -543,22 +551,70 @@ export default function VoiceFAB() {
   }, []);
 
   // ==================================================================
+  // PRODUCT CREATION (when product not found)
+  // ==================================================================
+
+  const handleCreateProduct = useCallback(async (index: number, name: string, quantity: number, unit: string) => {
+    setCreatingProduct({ index, name, quantity, unit });
+    setCreateError(null);
+    try {
+      // Create the product via the existing API — availability=false makes it an inventory item.
+      // IMPORTANT: currentStock is set to 0 here because the confirm endpoint will add
+      // the full quantity via InventoryService. If we set currentStock to `quantity` here,
+      // the confirm would add it again (previousStock + quantity), causing double-stock.
+      const result = await apiClient.post('/products', {
+        name,
+        code: name.toUpperCase().replace(/\s+/g, '-').slice(0, 20),
+        price: 0,
+        category: 'General',
+        availability: false, // inventory item, not menu item
+        unit,
+        currentStock: 0,
+        gstPercent: 0,
+      });
+      const created = result?.data || result;
+      if (!created?._id && !created?.id) {
+        setCreateError('Product creation failed — try again.');
+        return;
+      }
+      const productId = created._id || created.id;
+      // Update the parsed result to resolve this item to the new product
+      setParsedResult((prev) => {
+        if (!prev?.parsed) return prev;
+        const updatedItems = prev.parsed.items.map((it, i) =>
+          i === index
+            ? { ...it, canonicalName: name, productId, ambiguous: false, productNotFound: false, resolutionConfidence: 1.0 }
+            : it
+        );
+        return { ...prev, parsed: { ...prev.parsed, items: updatedItems } };
+      });
+      setCreatingProduct(null);
+    } catch (err: any) {
+      setCreateError(err?.response?.data?.error || err.message || 'Product creation failed.');
+    }
+  }, []);
+
+  // ==================================================================
   // CONFIRM / CANCEL
   // ==================================================================
 
   const handleConfirm = useCallback(async () => {
     if (!parsedResult?.parsed || !parsedResult.parsed.items.length) return;
 
-    // Resolve stepper/picked quantities into the final edited items.
-    const editedItems = parsedResult.parsed.items.map((item, i) => ({
-      name: rowPicks[i] || item.canonicalName || item.item,
-      quantity: rowQtys[i] ?? item.quantity,
-      unit: item.unit || 'pcs',
-      // Carry the spoken/average/edited rate so the server can apply it to
-      // the product's averageCost on add. (null → cleared → no rate.)
-      rate: rowRates[i] === undefined ? item.rate : rowRates[i] ?? undefined,
-      productId: item.productId,
-    }));
+    // Resolve stepper/picked quantities into the final edited items,
+    // filtering out any the user removed via the delete button.
+    const editedItems: Array<{ name: string; quantity: number; unit: string; rate?: number; productId?: string }> = [];
+    for (let i = 0; i < parsedResult.parsed.items.length; i++) {
+      if (removedItems.has(i)) continue;
+      const item = parsedResult.parsed.items[i];
+      editedItems.push({
+        name: rowPicks[i] || item.canonicalName || item.item,
+        quantity: rowQtys[i] ?? item.quantity,
+        unit: item.unit || 'pcs',
+        rate: rowRates[i] === undefined ? item.rate : rowRates[i] ?? undefined,
+        productId: item.productId,
+      });
+    }
     // Corrected purchase date — the server uses it for the purchase record.
     const confirmDate = editableDate || parsedResult.parsed.date;
     // Corrected supplier — trimmed; empty means "no supplier" (server records
@@ -613,6 +669,7 @@ export default function VoiceFAB() {
             setRowQtys({});
             setRowRates({});
             setRowPicks({});
+            setRemovedItems(new Set());
             setEditableDate('');
             setEditableSupplier('');
             setEditableBrand('');
@@ -665,6 +722,7 @@ export default function VoiceFAB() {
             setRowQtys({});
             setRowRates({});
             setRowPicks({});
+            setRemovedItems(new Set());
             setEditableDate('');
             setEditableSupplier('');
             setEditableBrand('');
@@ -701,6 +759,9 @@ const handleCancel = useCallback(() => {
   setRowQtys({});
   setRowRates({});
   setRowPicks({});
+  setRemovedItems(new Set());
+  setCreatingProduct(null);
+  setCreateError(null);
   setEditableDate('');
   setEditableSupplier('');
   setEditableBrand('');
@@ -724,6 +785,9 @@ const handleClose = () => {
   setRowQtys({});
   setRowRates({});
   setRowPicks({});
+  setRemovedItems(new Set());
+  setCreatingProduct(null);
+  setCreateError(null);
   setEditableDate('');
   setEditableSupplier('');
   setEditableBrand('');
@@ -791,7 +855,7 @@ const handleClose = () => {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 20 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className={`bg-white rounded-3xl shadow-2xl max-w-lg w-full mx-auto overflow-hidden transition-all duration-300 ${
+              className={`bg-[var(--color-bg-white)] rounded-3xl shadow-2xl max-w-lg w-full mx-auto overflow-hidden transition-all duration-300 ${
                 parsedResult?.parsed && !confirmResult?.success ? 'sm:max-w-3xl' : ''
               }`}
               onClick={e => e.stopPropagation()}
@@ -826,7 +890,7 @@ const handleClose = () => {
                         onClick={() => setLanguage(l.code)}
                         className={`px-2 py-1 rounded-[10px] text-[10px] font-bold transition-all cursor-pointer ${
                           language === l.code
-                            ? 'bg-white text-[var(--brand-color)] shadow-sm'
+                            ? 'bg-[var(--color-bg-white)] text-[var(--brand-color)] shadow-sm'
                             : 'text-gray-400 hover:text-gray-600'
                         }`}
                       >
@@ -848,7 +912,7 @@ const handleClose = () => {
                     </p>
                     <div className="space-y-2">
                       {confirmResult.data.updatedItems.map((item, i) => (
-                        <div key={i} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-emerald-100">
+                        <div key={i} className="flex items-center justify-between bg-[var(--color-bg-white)] rounded-xl px-3 py-2 border border-emerald-100">
                           <span className="text-sm font-semibold">{item.itemName}</span>
                           <span className="text-xs text-gray-500">
                             {item.previousStock} → <span className="text-emerald-600 font-bold">{item.newStock}</span> {item.unit}
@@ -867,14 +931,14 @@ const handleClose = () => {
                   get more room. */}
               {/* ================================================================ */}
               {!confirmResult?.success && (
-                <div className={`border-t border-[#e1e2ed] transition-all duration-300 ${parsedResult?.parsed ? 'sm:grid sm:grid-cols-5' : ''}`}>
-                <div className={`${parsedResult?.parsed ? 'sm:col-span-2 sm:border-r border-[#e1e2ed] px-5 py-5 flex flex-col items-center gap-4' : 'px-6 py-6 flex flex-col items-center gap-5'}`}>
+                <div className={`border-t border-[var(--color-border-default)] transition-all duration-300 ${parsedResult?.parsed ? 'sm:grid sm:grid-cols-5' : ''}`}>
+                <div className={`${parsedResult?.parsed ? 'sm:col-span-2 sm:border-r border-[var(--color-border-default)] px-5 py-5 flex flex-col items-center gap-4' : 'px-6 py-6 flex flex-col items-center gap-5'}`}>
                   {/* Mic button */}
                   <button
                     onClick={isListening ? stopListening : startListening}
                     className={`${parsedResult?.parsed ? 'w-20 h-20' : 'w-24 h-24'} rounded-full flex items-center justify-center transition-all cursor-pointer shadow-lg ${
                       isListening
-                        ? 'bg-red-500 scale-110 shadow-red-200 animate-pulse'
+                        ? 'bg-[var(--color-red-500-solid)] scale-110 shadow-red-200 animate-pulse'
                         : 'bg-gradient-to-br from-[var(--brand-color)] to-blue-600 hover:scale-105 hover:shadow-[var(--brand-color)]/30'
                     }`}
                     title={isListening ? 'Stop recording' : 'Start recording'}
@@ -942,14 +1006,14 @@ const handleClose = () => {
                               ? 'e.g. \"20 kg atta add karo\" or \"3 paneer waste\"'
                               : 'e.g. \"add 20L milk\" or \"log 3 bread expired\"'
                           }
-                          className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-[#e1e2ed] rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all"
+                          className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-[var(--color-border-default)] rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all"
                           autoFocus
                         />
                       </div>
                       <button
                         onClick={() => analyzeText(input)}
                         disabled={!input.trim() || isParsing}
-                        className="px-5 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        className="px-5 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                       >
                         {isParsing ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -979,7 +1043,7 @@ const handleClose = () => {
                         <button
                           key={i}
                           onClick={() => { setInput(ex.text); }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-[#e1e2ed] rounded-xl text-[10px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/30 hover:text-[var(--brand-color)] transition-all cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/30 hover:text-[var(--brand-color)] transition-all cursor-pointer"
                         >
                           <Volume2 className="w-3 h-3" />
                           {ex.text}
@@ -1163,7 +1227,9 @@ const handleClose = () => {
 
                       {/* Items list with steppers + stock preview */}
                       <div className="space-y-2 mb-4">
-                        {parsedResult.parsed.items.map((item, i) => {
+                        {parsedResult.parsed.items.map((item, origI) => {
+                          if (removedItems.has(origI)) return null;
+                          const i = origI; // keep original index for rowQtys/rowPicks/rowRates lookups
                           const pickedName = rowPicks[i] || item.canonicalName || item.item;
                           const existing = inventory.items.find(
                             inv => inv.name.toLowerCase() === pickedName.toLowerCase()
@@ -1180,7 +1246,7 @@ const handleClose = () => {
                           const diffColor = stockChange > 0 ? 'text-emerald-600' :
                             stockChange < 0 ? 'text-red-600' : 'text-gray-400';
 
-                          const isAmbiguous = !!item.ambiguous || (!item.canonicalName && (item.candidates?.length || 0) > 0);
+                          const isAmbiguous = !!item.ambiguous || !!item.productNotFound || (!item.canonicalName && (item.candidates?.length || 0) > 0);
                           const candidates = item.candidates && item.candidates.length > 1
                             ? item.candidates
                             : inventory.items.filter(
@@ -1201,14 +1267,24 @@ const handleClose = () => {
                                     {qty} {unit} × {INTENT_META[parsedResult.parsed!.intent].verb}
                                   </p>
                                 </div>
-                                {existing && (
-                                  <div className={`text-right text-xs font-bold ${diffColor}`}>
-                                    <span className="text-gray-400">{currentStock}</span>
-                                    <ArrowRight className="w-3 h-3 inline mx-1" />
-                                    <span>{newStock}</span>
-                                    <span className="text-gray-400 ml-1">{unit}</span>
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-2">
+                                  {existing && (
+                                    <div className={`text-right text-xs font-bold ${diffColor}`}>
+                                      <span className="text-gray-400">{currentStock}</span>
+                                      <ArrowRight className="w-3 h-3 inline mx-1" />
+                                      <span>{newStock}</span>
+                                      <span className="text-gray-400 ml-1">{unit}</span>
+                                    </div>
+                                  )}
+                                  <button
+                                    onClick={() => setRemovedItems(prev => new Set(prev).add(i))}
+                                    disabled={isConfirming}
+                                    className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer disabled:opacity-40"
+                                    title="Remove this item"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
 
                               {/* AMBIGUOUS / unresolved item — MUST be resolved before confirm */}
@@ -1229,16 +1305,35 @@ const handleClose = () => {
                                           className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
                                             rowPicks[i] === c.name
                                               ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]'
-                                              : 'bg-white text-gray-700 border-gray-200 hover:border-[var(--brand-color)]/40'
+                                              : 'bg-[var(--color-bg-white)] text-gray-700 border-gray-200 hover:border-[var(--brand-color)]/40'
                                           }`}
                                         >
                                           {c.name} {c.currentStock != null ? `(${c.currentStock} ${c.unit || 'pcs'})` : ''}
                                         </button>
                                       ))
                                     ) : (
-                                      <p className="text-[11px] text-amber-700">
-                                        No matching inventory item found. It may be a new product.
-                                      </p>
+                                      <div className="flex flex-col gap-1.5">
+                                        <p className="text-[11px] text-amber-700">
+                                          No matching inventory item found.
+                                        </p>
+                                        {creatingProduct?.index === i ? (
+                                          <p className="text-[11px] text-blue-600 font-bold">Creating…</p>
+                                        ) : (
+                                          <button
+                                            onClick={() => {
+                                              const productName = (item.item || '').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                                              handleCreateProduct(i, productName, qty, unit);
+                                            }}
+                                            disabled={isConfirming}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--brand-color)] text-white text-[11px] font-bold cursor-pointer hover:bg-[var(--color-primary-hover)] transition-all disabled:opacity-40"
+                                          >
+                                            <Plus className="w-3 h-3" /> Create {item.item || 'Product'}
+                                          </button>
+                                        )}
+                                        {createError && creatingProduct?.index === i && (
+                                          <p className="text-[10px] text-red-500 mt-1">{createError}</p>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                 </div>
@@ -1249,7 +1344,7 @@ const handleClose = () => {
                                 <div className="flex items-center gap-1">
                                   <button
                                     onClick={() => setRowQtys(q => ({ ...q, [i]: Math.max(0.05, (q[i] ?? item.quantity) - stepFor(unit)) }))}
-                                    className="w-7 h-7 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
+                                    className="w-7 h-7 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
                                     aria-label={`Decrease ${item.item}`}
                                   >
                                     <span className="text-sm leading-none font-bold">−</span>
@@ -1263,12 +1358,12 @@ const handleClose = () => {
                                       const v = parseFloat(e.target.value);
                                       if (!isNaN(v) && v >= 0) setRowQtys(q => ({ ...q, [i]: v }));
                                     }}
-                                    className="w-16 text-center text-sm font-bold bg-white border border-[#e1e2ed] rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
+                                    className="w-16 text-center text-sm font-bold bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
                                   />
                                   <button
                                     onClick={() => setRowQtys(q => ({ ...q, [i]: (q[i] ?? item.quantity) + stepOf(unit) }))}
                                     disabled={isConfirming}
-                                    className="w-7 h-7 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
+                                    className="w-7 h-7 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
                                     aria-label={`Increase ${rowPicks[i] || item.canonicalName || item.item}`}
                                   >
                                     <Plus className="w-3.5 h-3.5" />
@@ -1315,7 +1410,7 @@ const handleClose = () => {
                                         }}
                                         placeholder="—"
                                         disabled={isConfirming}
-                                        className="w-20 text-right text-sm font-bold bg-white border border-[#e1e2ed] rounded-lg py-1 px-2 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 disabled:opacity-50"
+                                        className="w-20 text-right text-sm font-bold bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg py-1 px-2 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 disabled:opacity-50"
                                         aria-label={`Rate for ${item.item}`}
                                       />
                                       <span className="text-[10px] text-gray-400">/{unit}</span>
@@ -1339,9 +1434,9 @@ const handleClose = () => {
                                 <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden mt-2">
                                   <div
                                     className={`h-full rounded-full transition-all ${
-                                      newStock > existing.maxStock * 0.8 ? 'bg-emerald-500' :
-                                      newStock < existing.minStock ? 'bg-red-500' :
-                                      'bg-amber-500'
+                                      newStock > existing.maxStock * 0.8 ? 'bg-[var(--color-emerald-500-solid)]' :
+                                      newStock < existing.minStock ? 'bg-[var(--color-red-500-solid)]' :
+                                      'bg-[var(--color-amber-500-solid)]'
                                     }`}
                                     style={{
                                       width: `${Math.min(100, (newStock / existing.maxStock) * 100)}%`,
@@ -1367,12 +1462,12 @@ const handleClose = () => {
                           onClick={handleConfirm}
                           disabled={
                             isConfirming
-                            || parsedResult.parsed.items.length === 0
+                            || parsedResult.parsed.items.filter((_, i) => !removedItems.has(i)).length === 0
                             || parsedResult.parsed.items.some((item, i) =>
-                                (!!item.ambiguous || (!item.canonicalName && (item.candidates?.length || 0) > 0)) && !rowPicks[i]
+                                !removedItems.has(i) && ((!!item.ambiguous || !item.canonicalName) && (item.candidates?.length || 0) > 0) && !rowPicks[i]
                               )
                           }
-                          className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 cursor-pointer transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="px-5 py-2.5 bg-[var(--color-emerald-600-solid)] text-white rounded-xl text-xs font-bold hover:bg-[var(--color-emerald-700-solid)] cursor-pointer transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {isConfirming ? (
                             <Loader2 className="w-4 h-4 animate-spin" />

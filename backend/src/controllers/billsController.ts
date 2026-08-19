@@ -76,6 +76,18 @@ export async function getNextInvoice(req: Request, res: Response): Promise<void>
   }
 }
 
+/** GET /api/bills/invoice-range?size=100 — Reserve an invoice-number range for a terminal (offline billing). */
+export async function reserveInvoiceRange(req: Request, res: Response): Promise<void> {
+  try {
+    const size = req.query.size ? parseInt(req.query.size as string, 10) : 100;
+    const range = await billService.reserveInvoiceRange(size);
+    res.json({ data: range });
+  } catch (error) {
+    console.error('[BillsController] reserveInvoiceRange error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 /** DELETE /api/bills/:id — Void a bill (soft-delete with reason) */
 export async function deleteBill(req: Request, res: Response): Promise<void> {
   try {
@@ -104,27 +116,41 @@ export async function deleteBill(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** POST /api/bills/:id/refund — Refund a bill (full or partial, manager PIN required) */
-export async function refundBill(req: Request, res: Response): Promise<void> {
+/** POST /api/bills/items-batch — Fetch line items for multiple bills (data integrity fallback). */
+export async function getBillItems(req: Request, res: Response): Promise<void> {
   try {
     const auth = (req as AuthenticatedRequest).user;
-    const bill = await billService.refundBill(
-      req.params.id,
-      {
-        items: req.body?.items,
-        reason: req.body?.reason || 'Refund',
-        refundedBy: req.body?.refundedBy || auth?.name || 'Unknown',
-        managerPin: req.body?.managerPin || '',
-      },
-      { restaurantId: auth?.restaurantId, branchId: auth?.branchIds?.[0] }
-    );
-    res.json({ success: true, data: bill });
-  } catch (error) {
-    if (error instanceof AppError) {
-      res.status(error.statusCode).json({ error: error.message });
+    const { billIds } = req.body;
+    if (!Array.isArray(billIds) || billIds.length === 0) {
+      res.status(400).json({ error: 'billIds array required' });
       return;
     }
-    console.error('[BillsController] refund error:', error);
+    const { default: BillItem } = await import('../models/BillItem');
+    const { default: mongoose } = await import('mongoose');
+    // Try both string and ObjectId matching for robustness
+    const stringIds = billIds.map((id: any) => String(id));
+    const objectIds = stringIds
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
+      .map((id: string) => new mongoose.Types.ObjectId(id));
+    const items = await BillItem.find({
+      billId: { $in: [...objectIds, ...stringIds] },
+    }).sort({ createdAt: 1 }).lean().exec();
+    // Group by billId
+    const byBill = new Map<string, any[]>();
+    for (const item of items) {
+      const key = String((item as any).billId);
+      const arr = byBill.get(key) || [];
+      arr.push(item);
+      byBill.set(key, arr);
+    }
+    const result: Record<string, any[]> = {};
+    for (const id of stringIds) {
+      result[id] = byBill.get(id) || [];
+    }
+    res.json({ data: result });
+  } catch (error: any) {
+    console.error('[BillsController] items-batch error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+

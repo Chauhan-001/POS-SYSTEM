@@ -104,6 +104,14 @@ interface Ctx {
   stack: string[];
   /** Price override source for margin math. */
   priceOverrides?: Map<string, number>;
+  /**
+   * Inventory-item cost overrides (inventoryItemId → ₹ per unit), used for
+   * deterministic historical costing — e.g. "what would this recipe have
+   * cost at last period's purchase prices?". Applied in place of
+   * Product.averageCost; sub-recipes inherit the same overrides via the
+   * shared ctx. Never persisted — purely a read-side what-if.
+   */
+  costOverrides?: Map<string, number>;
   /** Restaurant cost settings (layered model), loaded once per call graph. */
   costSettings?: {
     minorIngredientAllowance: number;
@@ -131,6 +139,7 @@ export class RecipeCostEngine {
       restaurantId: string;
       branchId?: string;
       priceOverrides?: Map<string, number>;
+      costOverrides?: Map<string, number>;
       channel?: CostChannel;
     } = { restaurantId: '' }
   ): Promise<RecipeCostResult> {
@@ -141,6 +150,7 @@ export class RecipeCostEngine {
       recipeCache: new Map(),
       stack: [],
       priceOverrides: opts.priceOverrides,
+      costOverrides: opts.costOverrides,
     };
     if (doc?._id) ctx.recipeCache.set(String(doc._id), doc);
 
@@ -325,7 +335,9 @@ export class RecipeCostEngine {
       }
       const theoretical = quantityInItemUnit;
       const effective = theoretical * (1 + (Number(comp.wastagePercent) || 0) / 100);
-      const costPerUnit = Number(item.averageCost) || 0;
+      const costPerUnit = ctx.costOverrides?.has(String(item._id))
+        ? Number(ctx.costOverrides.get(String(item._id))) || 0
+        : Number(item.averageCost) || 0;
       const lineCost = money(effective * costPerUnit);
       cost += lineCost;
       lines.push({

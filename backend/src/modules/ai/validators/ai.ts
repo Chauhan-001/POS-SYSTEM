@@ -123,6 +123,8 @@ export const weatherSchema = z.object({
 }).strict();
 
 export const offerRecommendationsSchema = z.object({
+  /** Phase 9 — optional branch scope for the recommendation (validated server-side). */
+  branchId: z.string().optional(),
   totalRevenue: z.number().min(0).optional(),
   orderCount: z.number().min(0).optional(),
   averageOrderValue: z.number().min(0).optional(),
@@ -142,6 +144,8 @@ export const offerRecommendationsSchema = z.object({
     condition: z.string(),
     temperature: z.number(),
   }).optional(),
+  /** Explicit user refresh → bypass the AI cache (Phase 3). */
+  bustCache: z.boolean().optional().default(false),
   employee: employeeSchema.optional(),
 }).strict();
 
@@ -158,6 +162,8 @@ export const marketingGenerateSchema = z.object({
   request: z.string().min(3, 'Describe your goal in a few words').max(500),
   tone: z.enum(['friendly', 'premium', 'exciting', 'simple', 'festive']).optional(),
   language: z.enum(['en', 'hi', 'hi-en']).optional(),
+  /** Explicit user "Regenerate" → bypass the AI cache (Phase 3). */
+  bustCache: z.boolean().optional().default(false),
 }).strict();
 
 /**
@@ -202,5 +208,21 @@ export const offerCopySchema = z.object({
   reason: z.string().max(500).optional().default('promotion'),
   minOrderValue: z.number().min(0).max(10_000_000).optional(),
   durationDays: z.number().int().min(1).max(365).optional().default(7),
-  language: z.enum(['en', 'hi']).optional().default('en'),
+  /** Phase 4 — the copy style + language the owner picked (Studio/Create/Promote). */
+  tone: z.enum(['friendly', 'funky', 'zomato', 'professional', 'premium', 'festive', 'genz', 'minimal']).optional().default('friendly'),
+  language: z.enum(['en', 'hi', 'hinglish']).optional().default('en'),
+  /** Explicit user action (Regenerate / Generate again) → bypass the AI cache. */
+  bustCache: z.boolean().optional().default(false),
+}).strict();
+
+/**
+ * Server-side contract for the ONE consolidated LLM copy response (Phase 2).
+ * All five fields are validated and bounded before they can reach the UI.
+ */
+export const offerCopyOutputSchema = z.object({
+  title: z.string().min(1).max(100),
+  description: z.string().min(1).max(500),
+  whatsapp: z.string().min(1).max(300),
+  sms: z.string().min(1).max(200),
+  push: z.string().min(1).max(160),
 }).strict();

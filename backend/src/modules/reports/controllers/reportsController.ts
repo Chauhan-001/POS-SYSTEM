@@ -31,6 +31,7 @@ function scopeOf(req: Request): ReportScope {
     branchId: q.branchId || user.branchId,
     startDate: q.startDate,
     endDate: q.endDate,
+    openingTime: q.openingTime,
   };
 }
 
@@ -116,6 +117,10 @@ export async function productLeast(req: Request, res: Response): Promise<void> {
 export async function productRevenue(req: Request, res: Response): Promise<void> {
   const limit = Number(req.query.limit) || 10;
   ok(res, await productReportService.revenue(scopeOf(req), limit));
+}
+export async function productConfigBreakdown(req: Request, res: Response): Promise<void> {
+  const limit = Number(req.query.limit) || 100;
+  ok(res, await productReportService.configBreakdown(scopeOf(req), limit));
 }
 export async function productCategories(req: Request, res: Response): Promise<void> {
   ok(res, await productReportService.categories(scopeOf(req)));

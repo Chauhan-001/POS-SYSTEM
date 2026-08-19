@@ -24,6 +24,7 @@ interface OffersManagerProps {
   settings?: SystemSettings;
   onUpdateSettings?: (updated: SystemSettings) => void;
   products?: Product[];
+  branches?: { id: string; name: string; isActive?: boolean }[];
 }
 
 export default function OffersManager(props: OffersManagerProps) {

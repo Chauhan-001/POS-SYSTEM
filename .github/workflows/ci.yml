@@ -1,0 +1,156 @@
+name: CI
+
+# Automated protection for critical business behavior:
+#   tenant/branch isolation, auth, billing, tax, payments, inventory,
+#   offline billing, sync, and production builds.
+#
+# A change that silently breaks one of these areas must fail CI.
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ------------------------------------------------------------------
+  # Lint, typecheck, unit/integration tests, dependency security audit
+  # ------------------------------------------------------------------
+  test:
+    name: Lint · Typecheck · Tests · Security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            admin-dashboard/package-lock.json
+            restaurant-pos/Frontend/package-lock.json
+            customer-site/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix backend install
+          npm --prefix admin-dashboard install
+          npm --prefix restaurant-pos/Frontend install
+          npm --prefix customer-site install
+
+      - name: Lint (POS frontend typecheck)
+        run: npm run lint
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Backend tests (unit + integration, in-memory MongoDB)
+        run: npm --prefix backend run test
+
+      - name: POS frontend tests
+        run: npm --prefix restaurant-pos/Frontend run test
+
+      - name: Dependency security audit (backend + POS frontend)
+        run: npm run test:security
+
+  # ------------------------------------------------------------------
+  # Production builds for every workspace
+  # ------------------------------------------------------------------
+  build:
+    name: Production builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            admin-dashboard/package-lock.json
+            restaurant-pos/Frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix backend install
+          npm --prefix admin-dashboard install
+          npm --prefix restaurant-pos/Frontend install
+
+      - name: Build backend
+        run: npm --prefix backend run build
+
+      - name: Smoke-test production backend artifact
+        # Launch the compiled bundle (NOT dev mode) and verify it boots, binds,
+        # and answers /api/health with a version. Catches crashes that only
+        # occur in the esbuild CJS bundle (e.g. import.meta.url misuse).
+        run: |
+          cd backend
+          PORT=3999 MONGODB_URI=mongodb://127.0.0.1:1/ci-smoke node dist/server.cjs > /tmp/api-smoke.log 2>&1 &
+          API_PID=$!
+          trap 'kill $API_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:3999/api/health > /tmp/api-health.json 2>/dev/null; then break; fi
+            sleep 1
+          done
+          grep -q '"status":"ok"' /tmp/api-health.json
+          grep -q '"version":' /tmp/api-health.json
+          echo "Artifact smoke test passed: $(cat /tmp/api-health.json)"
+
+      - name: Build admin dashboard
+        run: npm --prefix admin-dashboard run build
+
+      - name: Build POS frontend
+        run: npm --prefix restaurant-pos/Frontend run build
+
+  # ------------------------------------------------------------------
+  # POS terminal E2E (Playwright, mocked API routes — no live backend)
+  # ------------------------------------------------------------------
+  e2e:
+    name: POS E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: restaurant-pos/Frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix restaurant-pos/Frontend install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests (Vite dev server auto-started by Playwright)
+        run: npm --prefix restaurant-pos/Frontend run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: restaurant-pos/Frontend/playwright-report/
+          retention-days: 7

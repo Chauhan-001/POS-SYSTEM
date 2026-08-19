@@ -21,9 +21,10 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import type { Product, Customer, LoyaltyReward, Employee, SystemSettings, Bill, Order, TableInfo, TakeawayOrder, TimelineEvent, ActivityEntry, ExpenseEntry, Reservation, WaitingEntry, Branch, RolePermissions, Floor } from '../types';
 import { DEFAULT_ROLE_PERMISSIONS } from '../types';
-import { getDBData, setDBData, setCachedData, isCacheFresh, CACHE_TTL, DEFAULT_SETTINGS, computeDailySales, buildActivityFeed, getActivityFeed, saveActivityFeed } from '../data';
+import { getDBData, setDBData, setCachedData, isCacheFresh, CACHE_TTL, DEFAULT_SETTINGS, computeDailySales, buildActivityFeed, getActivityFeed, saveActivityFeed, todayBusinessKey, isInBusinessDay } from '../data';
 import { syncEngine } from '../lib/syncEngine';
 import * as api from '../api/client';
+import { mergeOrdersWithServer } from '../utils/orderMerge';
 import { WORKSPACE_PATHS } from '../routes';
 
 const voidReasons = [
@@ -189,6 +190,15 @@ export function mergeTablesById(local: TableInfo[], incoming: any[], liveOrderTa
       section: bt.section ?? localT.section,
       status,
       branchId: bt.branchId ?? localT.branchId,
+      // Carry the server-authoritative occupancy timestamp through the merge:
+      // a table that already exists locally must not lose occupiedSince when
+      // an online/QR order flips it to Occupied (the floor plan + table grid
+      // use it to show how long the table has been seated).
+      occupiedSince: bt.occupiedSince ?? localT.occupiedSince,
+      // Same for the customer's ACTIVE seat session — a table held by a QR
+      // scan must keep its session info (End-session button + countdown)
+      // across refreshes instead of dropping it on the first merge.
+      activeSession: bt.activeSession !== undefined ? bt.activeSession : (localT.activeSession ?? null),
     };
   });
   if (incoming.length > 0) {
@@ -328,9 +338,16 @@ function seedBranchVariantPrices(prev: Record<string, Record<string, Record<stri
  *  DB-backed menu items (Menu Availability renders these rows — a hardcoded
  *  product here would leak a fake item + fake category into the "More" page).
  */
+const LEGACY_PRODUCT_PLACEHOLDER = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80';
+
 function sanitizeProductCache(list: Product[] | null | undefined): Product[] {
   if (!Array.isArray(list)) return [];
-  return list.filter((p: any) => !String(p?.id || '').startsWith('demo_prod_'));
+  return list
+    .filter((p: any) => !String(p?.id || '').startsWith('demo_prod_'))
+    // Legacy installs have the old injected stock photo baked into the offline
+    // cache — treat it as "no image" so the billing grid shows the product
+    // initial placeholder instead of the same unrelated photo for every item.
+    .map((p: any) => (p?.image === LEGACY_PRODUCT_PLACEHOLDER ? { ...p, image: '' } : p));
 }
 
 function mergeProductsById(local: Product[], incoming: any[]): Product[] {
@@ -353,7 +370,12 @@ function mergeProductsById(local: Product[], incoming: any[]): Product[] {
       name: bp.name ?? localP?.name ?? '',
       price: bp.price ?? localP?.price ?? 0,
       category: bp.category ?? localP?.category,
-      image: bp.image || localP?.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=300&q=80',
+      // Keep the image EMPTY when the product has none — consumers (billing
+      // grid, catalog, cart) render their own placeholder. Injecting a generic
+      // stock photo here made every product in billing look like the same
+      // unrelated dish. The legacy placeholder URL this code used to inject is
+      // treated as "no image" so cached installs stop showing the stock photo.
+      image: bp.image || (localP?.image && localP.image !== LEGACY_PRODUCT_PLACEHOLDER ? localP.image : ''),
       gstPercent: bp.gstPercent ?? localP?.gstPercent ?? 0,
       availability: bp.availability ?? localP?.availability ?? true,
       favorite: bp.favorite ?? localP?.favorite,
@@ -363,6 +385,17 @@ function mergeProductsById(local: Product[], incoming: any[]): Product[] {
       variants: bp.variants && bp.variants.length ? bp.variants : (localP?.variants || []),
       branchId: bp.branchId ?? localP?.branchId,
       branchPrice: bp.branchPrice ?? localP?.branchPrice,
+      // Meal combo fields (server-authoritative; the POS resolves components
+      // against the current menu at add time).
+      isCombo: bp.isCombo ?? localP?.isCombo ?? false,
+      comboComponentIds: bp.comboComponentIds ?? localP?.comboComponentIds,
+      comboPrice: bp.comboPrice ?? localP?.comboPrice,
+      comboBranchPrice: bp.comboBranchPrice ?? localP?.comboBranchPrice,
+      linkedComboOfferId: bp.linkedComboOfferId ?? localP?.linkedComboOfferId,
+      // Reusable menu configuration refs (Phase 1/2) — server-authoritative;
+      // keeps the POS grid able to route configured products to the dynamic
+      // configuration modal instead of the legacy category add-on modal.
+      menuConfig: bp.menuConfig ?? localP?.menuConfig,
     });
     if (id) seenIds.add(id);
     seenNames.add(key);
@@ -672,6 +705,10 @@ export function usePOSState() {
   );
   const [heldOrders, setHeldOrders] = useState<any[]>(() => getDBData<any[]>('pos_held_orders', []));
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
+  // Table whose billing workspace is open but whose order has NOT been created
+  // yet — tapping an available table must not occupy it. The order (and the
+  // Occupied state) is born lazily on the first KOT with items.
+  const [pendingTableId, setPendingTableId] = useState<string | null>(null);
   const [isKOTOpen, setIsKOTOpen] = useState(false);
   const [kotOrder, setKotOrder] = useState<Order | null>(null);
   const [isKOTPreviewOpen, setIsKOTPreviewOpen] = useState(false);
@@ -1116,6 +1153,11 @@ export function usePOSState() {
     hydrateFromApi(true);
   }, [hydrateFromApi]);
 
+  /** Force a server refetch of orders (Kitchen Display manual refresh). */
+  const refreshOrders = useCallback(() => {
+    return fetchAndCache(api.fetchOrders, setOrders as any, CK.ORDERS);
+  }, []);
+
   // Branch switch = force a full backend re-pull (bypass the localStorage
   // cache). State is hydrated from the cache at boot, so switching branches
   // without this would render the new branch's views from stale cached rows
@@ -1168,17 +1210,35 @@ export function usePOSState() {
   }, [currentEmployee]);
 
   // ============ BACKGROUND POLLING FOR LIVE DATA ============
-  // Orders, tables, and takeaway refresh every 30s while online
-  // Skips poll when there's an active order to avoid overwriting pending local mutations
+  // Orders, tables, and takeaway refresh every 30s while online.
+  // Skips poll when there's an active order to avoid overwriting pending local
+  // mutations. The orders merge is MONOTONIC: a snapshot fetched before an
+  // in-flight KOT status PUT commits must never regress a Served KOT back to
+  // Accepted (the KDS would re-show the order under New Orders). The cache is
+  // still stamped with the raw server list (a same-shape, next-poll source).
   useEffect(() => {
     const interval = setInterval(() => {
       if (navigator.onLine && !activeOrder) {
-        fetchAndCache(api.fetchOrders, setOrders as any, CK.ORDERS);
-        refreshTables();
+        api.fetchOrders()
+          .then((list: any) => {
+            if (!Array.isArray(list) || list.length === 0) return;
+            setOrders((prev: any[]) => mergeOrdersWithServer(prev, list));
+            setCachedData(CK.ORDERS, list);
+          })
+          .catch(() => undefined);
         refreshTakeaway();
         refreshReservations();
         refreshWaiting();
         refreshFloors();
+      }
+      // Tables ALWAYS refresh while online — even when a billing workspace is
+      // open. A cashier mid-bill must still see a table flip to Occupied the
+      // moment a customer's QR/online order lands (the socket covers the
+      // happy path; this closes the window when the socket is down). Safe by
+      // design: refreshTables merges (never replaces) and mergeTablesById
+      // preserves manual states + tables bound to live local orders.
+      if (navigator.onLine) {
+        refreshTables();
       }
     }, 30000);
     return () => clearInterval(interval);
@@ -1368,17 +1428,63 @@ export function usePOSState() {
 
   // ============ SYNC ============
   const [syncState, setSyncState] = useState(() => syncEngine.getSyncState());
+  // Phase 5 — live view of the persisted offline queue so the Sync panel can
+  // surface stalled (max-retry) operations for manual Retry/Clear.
+  const [syncOperations, setSyncOperations] = useState<ReadonlyArray<import('../lib/syncEngine').PendingOperation>>(() => syncEngine.getQueue());
   // Derive isOnline from syncState to avoid double re-renders on online/offline events.
   // syncState.online and setIsOnline were previously two separate state variables
   // that both updated on the same event, causing 2 re-renders per transition.
   const isOnline = syncState.online;
 
+  const retrySyncOperation = useCallback((id: string) => {
+    syncEngine.retryNow(id);
+    setSyncOperations(syncEngine.getQueue());
+    // Replay immediately so the operator sees the result right away.
+    syncEngine.replayQueue(api.executePendingOperation).catch(() => {});
+  }, []);
+
+  const clearSyncOperation = useCallback((id: string) => {
+    syncEngine.clearOperation(id);
+    setSyncOperations(syncEngine.getQueue());
+  }, []);
+
   useEffect(() => {
+    // Sync the engine with the browser's actual network state on mount.
+    // navigator.onLine can be false when the page loads while already offline
+    // (the 'offline' event only fires on *transitions*, not on initial state).
+    if (!navigator.onLine) syncEngine.setOnline(false);
+
     const goOnline = () => syncEngine.setOnline(true);
     const goOffline = () => syncEngine.setOnline(false);
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
     return () => { window.removeEventListener('online', goOnline); window.removeEventListener('offline', goOffline); };
+  }, []);
+
+  // ─── Active backend connectivity probe ────────────────────────
+  // navigator.onLine is unreliable — it reports true when connected to WiFi
+  // without internet access (common on POS terminals). Periodically ping the
+  // backend to derive the real online state. A failed probe transitions to
+  // offline; a successful probe transitions back to online.
+  useEffect(() => {
+    let mounted = true;
+    const PROBE_INTERVAL_MS = 15_000;
+    const probe = async () => {
+      if (!mounted) return;
+      try {
+        const res = await fetch('/api/health', { method: 'HEAD', signal: AbortSignal.timeout(5_000) });
+        if (mounted && res.ok && !syncEngine.getSyncState().online) {
+          syncEngine.setOnline(true);
+        }
+      } catch {
+        if (mounted && navigator.onLine && syncEngine.getSyncState().online) {
+          syncEngine.setOnline(false);
+        }
+      }
+    };
+    probe(); // immediate check on mount
+    const id = setInterval(probe, PROBE_INTERVAL_MS);
+    return () => { mounted = false; clearInterval(id); };
   }, []);
 
   useEffect(() => {
@@ -1397,6 +1503,7 @@ export function usePOSState() {
         if (cancelled) return;
         debounceScheduled = false;
         setSyncState(syncEngine.getSyncState());
+        setSyncOperations(syncEngine.getQueue());
         // Re-fetch only what's stale — consumer calls syncEngine.sync() or markStale()
         const staleKeys = syncEngine.consumeStaleKeys();
         if (staleKeys.length === 0) {
@@ -1440,10 +1547,36 @@ export function usePOSState() {
   }, []);
 
   // ============ BACKEND-FIRST SETTINGS LOAD (Phase 1.9) ============
-  // The backend (RestaurantSettings) is the source of truth. On mount and on
-  // reconnect, fetch the effective settings and merge server-known keys over
-  // the local snapshot. Local-only keys are preserved for backward
-  // compatibility until the next save pushes them to the server.
+  // The backend (RestaurantSettings) is the source of truth. Fetch the
+  // effective settings and merge server-known keys over the local snapshot.
+  // Local-only keys are preserved for backward compatibility until the next
+  // save pushes them to the server. Exposed as a callback so it also runs
+  // after resetSessionData() (restaurant switch) — otherwise the new tenant's
+  // real settings would never load and DEFAULT_SETTINGS would stick.
+  const refreshServerSettings = useCallback(async () => {
+    const effective = await api.fetchEffectiveSettings(currentBranchId || undefined, undefined);
+    if (!effective || !effective.settings) return;
+    const server = effective.settings;
+    setSettings((prev) => {
+      // Only apply keys the server actually knows about.
+      const hasRealKeys = Object.keys(server).some((k) => server[k] !== undefined && server[k] !== null);
+      if (!hasRealKeys) return prev;
+      const merged: SystemSettings = { ...prev };
+      for (const k of Object.keys(server)) {
+        const sv = server[k];
+        if (sv === undefined || sv === null) continue;
+        const pv = (prev as any)[k];
+        if (pv && typeof pv === 'object' && !Array.isArray(pv) && typeof sv === 'object' && !Array.isArray(sv)) {
+          (merged as any)[k] = { ...pv, ...sv };
+        } else {
+          (merged as any)[k] = sv;
+        }
+      }
+      return merged;
+    });
+  }, [currentBranchId, setSettings]);
+
+  // On mount and on reconnect, pull the effective settings from the backend.
   useEffect(() => {
     let cancelled = false;
     const loadServerSettings = async () => {
@@ -1451,7 +1584,6 @@ export function usePOSState() {
       if (cancelled || !effective || !effective.settings) return;
       const server = effective.settings;
       setSettings((prev) => {
-        // Only apply keys the server actually knows about.
         const hasRealKeys = Object.keys(server).some((k) => server[k] !== undefined && server[k] !== null);
         if (!hasRealKeys) return prev;
         const merged: SystemSettings = { ...prev };
@@ -1530,7 +1662,7 @@ export function usePOSState() {
   }, [ordersViewMode]);
 
   // ============ DERIVED STATE ============
-  const dailySales = useMemo(() => computeDailySales(bills, settings.currencySymbol), [bills, settings.currencySymbol]);
+  const dailySales = useMemo(() => computeDailySales(bills, settings.currencySymbol, settings.openingTime), [bills, settings.currencySymbol, settings.openingTime]);
   const [activityFeed, setActivityFeed] = useState<ActivityEntry[]>(() => getActivityFeed());
 
   // ============ ROLE PERMISSIONS ============
@@ -1546,9 +1678,18 @@ export function usePOSState() {
     saveActivityFeed(feed);
   }, [bills]);
 
+  // Rebuild the activity feed whenever bills change (e.g. after restaurant
+  // switch or API fetch). This ensures the feed always reflects the CURRENT
+  // restaurant's data, not a stale in-memory state from the previous tenant.
+  useEffect(() => {
+    const feed = buildActivityFeed(bills, 20);
+    setActivityFeed(feed);
+    saveActivityFeed(feed);
+  }, [bills]);
+
   const zReportData = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const todayBills = bills.filter(b => b.date === today);
+    const today = todayBusinessKey(settings.openingTime);
+    const todayBills = bills.filter(b => isInBusinessDay(b, today, settings.openingTime));
     return {
       totalSales: todayBills.reduce((s, b) => s + b.grandTotal, 0),
       totalDiscounts: todayBills.reduce((s, b) => s + b.discount, 0),
@@ -1623,6 +1764,19 @@ export function usePOSState() {
       if (currentBranchId && branchProductPrices[currentBranchId]?.[p.id] !== undefined) {
         updated.price = branchProductPrices[currentBranchId][p.id];
       }
+      // Meal-combo pricing: a combo's sell price IS its comboPrice — derive
+      // the tile price from it everywhere, applying the per-branch override
+      // when present (the backing offer carries comboBranchPrices so the
+      // server resolves the same number at billing).
+      if (p.isCombo) {
+        let combo = Number(p.comboPrice) || 0;
+        if (currentBranchId) {
+          const branchCombo = (p as any).comboBranchPrice?.[currentBranchId];
+          if (branchCombo !== undefined && Number(branchCombo) > 0) combo = Number(branchCombo);
+        }
+        updated.comboPrice = combo;
+        updated.price = combo;
+      }
       if (currentBranchId && branchVariantPrices[currentBranchId]?.[p.id] && p.variants && p.variants.length > 0) {
         const variantOverrides = branchVariantPrices[currentBranchId][p.id];
         updated.variants = p.variants.map(v => ({
@@ -1658,6 +1812,65 @@ export function usePOSState() {
       setTables(valueOrFn);
     }
   }, [isMultiBranchEnabled, currentBranchId, branchTables, setTables, setBranchTables]);
+
+  // ═══════════════════════════════════════════════════════════════
+  // SESSION RESET — called when the LOGGED-IN RESTAURANT changes
+  // ═══════════════════════════════════════════════════════════════
+  // The hook lives at App level and does NOT remount between logins, so every
+  // collection below would otherwise keep the PREVIOUS restaurant's data in
+  // memory (and re-persist it to localStorage via the persist effects below).
+  // Clearing all in-memory state here — right before the employee-change
+  // effect fires hydrateFromApi(true) — guarantees a device switching
+  // restaurants never renders or re-caches the previous tenant's data.
+  const resetSessionData = useCallback(() => {
+    // Branch state
+    setBranches([]);
+    setCurrentBranchId('branch_main');
+    setBranchSettings({});
+    setBranchProductPrices({});
+    setBranchTables({});
+    setBranchVariantPrices({});
+    // Core data
+    setProducts([]);
+    setCustomers([]);
+    setRewards([]);
+    setEmployees([]);
+    setSettings(DEFAULT_SETTINGS);
+    setBills([]);
+    setExpenses([]);
+    setReservations([]);
+    setWaitingList([]);
+    setFloors([]);
+    setCategories([]);
+    setCategoryColors({});
+    // Order state
+    setTables([]);
+    setOrders([]);
+    setTakeawayOrders([]);
+    setHeldOrders([]);
+    setActiveOrder(null);
+    setPendingTableId(null);
+    // Billing state
+    setCartItems([]);
+    setCustomerPhone('');
+    // Activity feed — must be cleared on restaurant switch so the previous
+    // tenant's transaction history never appears in the new tenant's feed.
+    setActivityFeed([]);
+    setSearchedCustomer(null);
+    setAppliedReward(null);
+    setAppliedOffer(null);
+    // Pull the NEW restaurant's real settings (resetSessionData sets
+    // DEFAULT_SETTINGS; without this the merged settings would never load and
+    // the dashboard/settings would show empty defaults until a reconnect).
+    void refreshServerSettings();
+  }, [
+    setBranches, setCurrentBranchId, setBranchSettings, setBranchProductPrices, setBranchTables, setBranchVariantPrices,
+    setProducts, setCustomers, setRewards, setEmployees, setSettings, setBills, setExpenses,
+    setReservations, setWaitingList, setFloors, setCategories, setCategoryColors,
+    setTables, setOrders, setTakeawayOrders, setHeldOrders, setActiveOrder, setPendingTableId,
+    setCartItems, setCustomerPhone, setSearchedCustomer, setAppliedReward, setAppliedOffer,
+    refreshServerSettings,
+  ]);
 
   // ═══════════════════════════════════════════════════════════════
   // MEMOIZED RETURN VALUE
@@ -1704,6 +1917,7 @@ export function usePOSState() {
     takeawayOrders: filteredTakeawayOrders, setTakeawayOrders,
     heldOrders, setHeldOrders,
     activeOrder, setActiveOrder,
+    pendingTableId, setPendingTableId,
     isKOTOpen, setIsKOTOpen,
     kotOrder, setKotOrder,
     isKOTPreviewOpen, setIsKOTPreviewOpen,
@@ -1760,6 +1974,9 @@ export function usePOSState() {
     hasAnalytics,
     hasAdvancedReports,
     syncState,
+    syncOperations,
+    retrySyncOperation,
+    clearSyncOperation,
     isOnline,
     voidReasons,
     rolePermissions,
@@ -1774,11 +1991,14 @@ export function usePOSState() {
     zReportData,
     refreshDailyStats,
     refreshAllFromApi,
+    refreshOrders,
+    refreshProducts,
 
     startResizeCart,
 
     // Sync
     runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors, refreshTables,
+    resetSessionData,
   }), [
     // Core data
     currentEmployee, branches, currentBranchId, currentBranch, isHeadBranch, isMultiBranchEnabled, shouldFilterByBranch,
@@ -1803,6 +2023,7 @@ export function usePOSState() {
     filteredTakeawayOrders, setTakeawayOrders,
     heldOrders, setHeldOrders,
     activeOrder, setActiveOrder,
+    pendingTableId, setPendingTableId,
     isKOTOpen, setIsKOTOpen,
     kotOrder, setKotOrder,
     isKOTPreviewOpen, setIsKOTPreviewOpen,
@@ -1854,13 +2075,14 @@ export function usePOSState() {
     isOnboardingOpen, setIsOnboardingOpen,
 
     moduleSettings, subscriptionFeatures, hasInventory, hasAnalytics, hasAdvancedReports,
-    syncState, isOnline, voidReasons, rolePermissions,
+    syncState, syncOperations, retrySyncOperation, clearSyncOperation, isOnline, voidReasons, rolePermissions,
 
     billingSearchRef, loyaltyPhoneRef, quickFireRef, tourArtifactRef,
 
-    dailySales, activityFeed, zReportData, refreshDailyStats, refreshAllFromApi, startResizeCart,
+    dailySales, activityFeed, zReportData, refreshDailyStats, refreshAllFromApi, refreshOrders, startResizeCart,
 
     // Sync
     runPullSync, refreshRewards, refreshHeldOrders, refreshWaiting, refreshFloors, refreshTables,
+    resetSessionData,
   ]);
 }

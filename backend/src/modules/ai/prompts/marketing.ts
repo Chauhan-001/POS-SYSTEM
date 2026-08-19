@@ -24,6 +24,21 @@ export interface MarketingContext {
   segments: Array<{ name: string; customerCount: number }>;
   topCategories: string[];
   lowStockItems: string[];
+  /**
+   * Deterministic surplus inventory (same rule as the offer prompt): ONLY
+   * these products may be proposed as excess-stock/clearance promotions — the
+   * model must never infer surplus on its own, and never clear a low-stock
+   * item. Empty/undefined means the deterministic layer found nothing.
+   */
+  surplusStockItems?: Array<{
+    productName: string;
+    category?: string;
+    currentStock: number;
+    maxStock: number;
+    surplusQuantity: number;
+    unit?: string;
+    expiryRisk: boolean;
+  }>;
   activeOffers: string[];
   recentCampaigns: number;
   festivals: string[];
@@ -49,6 +64,12 @@ export function buildMarketingPrompt(input: MarketingRequestInput, ctx: Marketin
 
   const cats = ctx.topCategories.length ? ctx.topCategories.join(', ') : 'all categories';
   const low = ctx.lowStockItems.length ? ctx.lowStockItems.join(', ') : '(none)';
+  const surplus = (ctx.surplusStockItems || [])
+    .slice()
+    .sort((a, b) => b.surplusQuantity - a.surplusQuantity)
+    .slice(0, 5)
+    .map((i) => `  - ${i.productName}${i.category ? ` (${i.category})` : ''}: stock ${i.currentStock} of max ${i.maxStock}, surplus ~${i.surplusQuantity} ${i.unit || 'units'}${i.expiryRisk ? ', EXPIRY RISK' : ''}`)
+    .join('\n');
   const offers = ctx.activeOffers.length ? ctx.activeOffers.map((o) => `  - ${o}`).join('\n') : '  (none active)';
   const festivals = ctx.festivals.length ? ctx.festivals.join(', ') : '(none in the next 30 days)';
 
@@ -62,7 +83,9 @@ Trusted business context (aggregate only):
 - Total customers: ${fmt(ctx.customerCount)} | Active (visited at least once): ${fmt(ctx.activeCustomers)} | New today: ${fmt(ctx.newCustomersToday)}
 - Dormant 30+ days: ${fmt(ctx.dormant30d)} | Birthdays this week: ${fmt(ctx.birthdaysThisWeek)} | VIP customers: ${fmt(ctx.vipCount)}
 - Top selling categories: ${cats}
-- Low stock items: ${low}
+- Low stock items (do NOT propose clearing these): ${low}
+- Surplus stock (ONLY these products may be proposed as excess-stock/clearance promotions — never infer surplus for anything else, and never propose clearing an item from the low-stock list):
+${surplus || '  (none — no deterministic surplus detected)'}
 - Active offers:
 ${offers}
 - Recent campaigns sent: ${fmt(ctx.recentCampaigns)}

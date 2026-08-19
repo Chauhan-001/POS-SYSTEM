@@ -97,6 +97,13 @@ export class PublicStoreService {
       store: {
         token: publicToken,
         name: restaurant.brandName || restaurant.name,
+        capabilities: {
+          homepageBanner: true,
+          offerCard: true,
+          menuHighlight: true,
+          popup: true,
+          floatingOffer: true,
+        },
         tagline: restaurant.description || '',
         phone: restaurant.phone || restaurant.altPhone || '',
         currency: restaurant.currency || 'INR',

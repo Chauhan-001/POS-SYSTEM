@@ -66,7 +66,11 @@ export default function ThermalKOT({ order, kot, settings, className }: ThermalK
         <td style={{ width: 38, padding: '2px 0', verticalAlign: 'top', fontWeight: 700 }}>{item.quantity}x</td>
         <td style={{ padding: '2px 0', verticalAlign: 'top', fontWeight: 600 }}>
           {item.product?.name || 'Item'}
-          {showModifiers && item.selectedVariant?.name ? ` [${item.selectedVariant.name}]` : ''}
+          {/* Configured items carry the resolved summary ("Large • Cheese Burst")
+              — selectedVariant alone only covers simple variant products. */}
+          {showModifiers && (item.configSummary || item.selectedVariant?.name)
+            ? ` [${item.configSummary || item.selectedVariant?.name}]`
+            : ''}
         </td>
       </tr>
       {showModifiers && item.notes ? (

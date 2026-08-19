@@ -163,20 +163,24 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onCancel}>
       <div
-        className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in duration-200"
+        className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gray-100 overflow-hidden flex-shrink-0">
-              <img
-                src={product.image}
-                alt={product.name}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
+            <div className="w-10 h-10 rounded-lg bg-gray-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+              {product.image ? (
+                <img
+                  src={product.image}
+                  alt={product.name}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              ) : (
+                <span className="text-base font-black text-gray-400">{(product.name || '?').charAt(0).toUpperCase()}</span>
+              )}
             </div>
             <div>
               <h3 className="text-sm font-bold text-gray-900 leading-tight">{product.name}</h3>
@@ -243,7 +247,7 @@ export default function AddOnModal({ product, selectedVariant: initialVariant, c
                   className={`flex items-center justify-between px-3 py-2 rounded-lg text-[11px] font-medium transition-all cursor-pointer border ${
                     selectedAddOns.includes(opt.id)
                       ? 'bg-blue-50 border-[var(--brand-color)] text-[var(--brand-color)]'
-                      : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                      : 'bg-[var(--color-bg-white)] border-gray-200 text-gray-600 hover:border-gray-300'
                   }`}
                 >
                   <span>{opt.label}</span>

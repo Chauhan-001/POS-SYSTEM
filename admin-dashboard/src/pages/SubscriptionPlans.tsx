@@ -43,8 +43,24 @@ const AVAILABLE_FEATURES = FEATURE_CATALOG.map((f) => f.key)
 
 const DEFAULT_LIMITS = {
   maxBranches: 1,
-  maxDevices: 3,
-  maxEmployees: 10,
+  maxDevicesPerBranch: 3,
+}
+
+/**
+ * Best-available error message from the backend. Validation middleware returns
+ * { error, details: [...] } (no message), auth returns { error }, controllers
+ * return { message } — so try them all instead of showing a generic toast.
+ */
+function planErrorMessage(err: any): string {
+  const data = err?.response?.data
+  if (data?.message) return data.message
+  if (Array.isArray(data?.details) && data.details.length > 0) {
+    return data.details
+      .map((d: any) => `${d.path ? `${d.path}: ` : ''}${d.message}`)
+      .join('; ')
+  }
+  if (data?.error) return data.error
+  return err?.message || 'Failed to save plan'
 }
 
 const emptyForm = {
@@ -52,8 +68,8 @@ const emptyForm = {
   name: '',
   description: '',
   price: 0,
+  yearlyPrice: 0,
   maxUsers: 5,
-  maxDevices: 1,
   features: ['core_pos', 'basic_reports'],
   aiEnabled: false,
   trialDays: 14,
@@ -85,8 +101,21 @@ export default function SubscriptionPlans() {
       setFormData({ ...emptyForm })
       toast.success('Plan created')
     },
-    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to create plan'),
+    onError: (err: any) => toast.error(planErrorMessage(err)),
   })
+
+  // Client-side guard so the backend's required fields are never hit blank.
+  const handleCreate = () => {
+    if (!formData.planId?.trim()) {
+      toast.error('Plan ID is required')
+      return
+    }
+    if (!formData.name?.trim()) {
+      toast.error('Display Name is required')
+      return
+    }
+    createMutation.mutate()
+  }
 
   const editMutation = useMutation({
     mutationFn: () => updatePlan(editingPlan!.id, formData as any),
@@ -96,7 +125,7 @@ export default function SubscriptionPlans() {
       setEditingPlan(null)
       toast.success('Plan updated')
     },
-    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update plan'),
+    onError: (err: any) => toast.error(planErrorMessage(err)),
   })
 
   const deleteMutation = useMutation({
@@ -106,7 +135,7 @@ export default function SubscriptionPlans() {
       setDeleteTarget(null)
       toast.success('Plan deleted')
     },
-    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to delete plan'),
+    onError: (err: any) => toast.error(planErrorMessage(err)),
   })
 
   const handleEdit = useCallback((plan: SubscriptionPlan) => {
@@ -116,15 +145,19 @@ export default function SubscriptionPlans() {
       name: plan.name,
       description: plan.description,
       price: plan.price,
+      yearlyPrice: plan.yearlyPrice ?? 0,
       maxUsers: plan.maxUsers,
-      maxDevices: plan.maxDevices,
       features: plan.features,
       aiEnabled: plan.aiEnabled,
       trialDays: plan.trialDays,
       sortOrder: plan.sortOrder,
       isActive: plan.isActive,
       isDefault: plan.isDefault,
-      limits: plan.limits || { ...DEFAULT_LIMITS },
+      limits: {
+        maxBranches: plan.limits?.maxBranches ?? DEFAULT_LIMITS.maxBranches,
+        // Legacy plans may still carry the device limit under the old names.
+        maxDevicesPerBranch: plan.limits?.maxDevicesPerBranch ?? (plan.limits as any)?.maxDevices ?? plan.maxDevices ?? DEFAULT_LIMITS.maxDevicesPerBranch,
+      },
     })
     setShowEditModal(true)
   }, [])
@@ -143,7 +176,7 @@ export default function SubscriptionPlans() {
       <div className="grid grid-cols-3 gap-4">
         <Input label="Plan ID (key)" value={formData.planId} onChange={(e) => setFormData({ ...formData, planId: e.target.value })} placeholder="e.g. premium" disabled={!!editingPlan} />
         <Input label="Display Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Premium Plan" />
-        <Input label="Price (monthly)" type="number" value={formData.price} onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} />
+        <Input label="Monthly Price" type="number" value={formData.price} onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} />
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -159,14 +192,13 @@ export default function SubscriptionPlans() {
 
       <div className="grid grid-cols-3 gap-4">
         <Input label="Max Users" type="number" value={formData.maxUsers} onChange={(e) => setFormData({ ...formData, maxUsers: parseInt(e.target.value) || 1 })} />
-        <Input label="Max Devices" type="number" value={formData.maxDevices} onChange={(e) => setFormData({ ...formData, maxDevices: parseInt(e.target.value) || 1 })} />
         <Input label="Trial Days" type="number" value={formData.trialDays} onChange={(e) => setFormData({ ...formData, trialDays: parseInt(e.target.value) || 0 })} />
+        <Input label="Yearly Price" type="number" value={formData.yearlyPrice} onChange={(e) => setFormData({ ...formData, yearlyPrice: parseFloat(e.target.value) || 0 })} />
       </div>
 
       <div className="grid grid-cols-3 gap-4">
         <Input label="Max Branches (0=unlimited)" type="number" value={formData.limits?.maxBranches ?? 1} onChange={(e) => setFormData({ ...formData, limits: { ...formData.limits, maxBranches: parseInt(e.target.value) || 0 } })} />
-        <Input label="Max Devices (limit)" type="number" value={formData.limits?.maxDevices ?? 3} onChange={(e) => setFormData({ ...formData, limits: { ...formData.limits, maxDevices: parseInt(e.target.value) || 1 } })} />
-        <Input label="Max Employees" type="number" value={formData.limits?.maxEmployees ?? 10} onChange={(e) => setFormData({ ...formData, limits: { ...formData.limits, maxEmployees: parseInt(e.target.value) || 1 } })} />
+        <Input label="Max Devices per Branch (0=unlimited)" type="number" value={formData.limits?.maxDevicesPerBranch ?? 3} onChange={(e) => setFormData({ ...formData, limits: { ...formData.limits, maxDevicesPerBranch: parseInt(e.target.value) || 0 } })} />
       </div>
 
       <div className="space-y-3">
@@ -227,8 +259,13 @@ export default function SubscriptionPlans() {
   const columns: Column<SubscriptionPlan>[] = [
     { key: 'name', header: 'Name', render: (p) => <span className="font-medium">{p.name}</span> },
     { key: 'planId', header: 'Plan ID', render: (p) => <code className="text-xs text-surface-500">{p.planId}</code>, hideOnMobile: true },
-    { key: 'price', header: 'Price', render: (p) => formatCurrency(p.price), hideOnMobile: true },
-    { key: 'maxDevices', header: 'Devices', render: (p) => `${p.maxUsers} users / ${p.maxDevices} devices`, hideOnMobile: true },
+    { key: 'price', header: 'Pricing', render: (p) => (
+      <div className="text-xs text-surface-500">
+        <span>{formatCurrency(p.price)}/mo</span>
+        {p.yearlyPrice > 0 && <><span className="mx-1">·</span><span>{formatCurrency(p.yearlyPrice)}/yr</span></>}
+      </div>
+    ), hideOnMobile: true },
+    { key: 'maxUsers', header: 'Users', render: (p) => p.maxUsers, hideOnMobile: true },
     { key: 'features', header: 'Features', render: (p) => (
       <div className="flex flex-wrap gap-1">
         {p.features.slice(0, 3).map((f) => <Badge key={f} variant="info">{f.replace(/_/g, ' ')}</Badge>)}
@@ -240,11 +277,11 @@ export default function SubscriptionPlans() {
       key: 'limits', header: 'Limits', hideOnMobile: true,
       render: (p) => (
         <div className="flex flex-wrap gap-1 text-[11px] text-surface-500">
+          <span>{p.maxUsers} users</span>
+          <span className="mx-1">·</span>
           <span>{p.limits?.maxBranches === 0 ? 'Unlimited' : `${p.limits?.maxBranches || 1}`} branches</span>
           <span className="mx-1">·</span>
-          <span>{p.limits?.maxDevices || p.maxDevices} devices</span>
-          <span className="mx-1">·</span>
-          <span>{p.limits?.maxEmployees || p.maxUsers} employees</span>
+          <span>{p.limits?.maxDevicesPerBranch ?? (p.limits as any)?.maxDevices ?? p.maxDevices ?? 3} devices / branch</span>
         </div>
       ),
     },
@@ -294,7 +331,7 @@ export default function SubscriptionPlans() {
         {planForm}
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setShowCreateModal(false)}>Cancel</Button>
-          <Button onClick={() => createMutation.mutate()} loading={createMutation.isPending}>Create Plan</Button>
+          <Button onClick={handleCreate} loading={createMutation.isPending}>Create Plan</Button>
         </div>
       </Modal>
 

@@ -31,8 +31,8 @@ export default function SplitPaymentModal({
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 border border-[#e1e2ed]" onClick={(e) => e.stopPropagation()}>
-        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center">
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full mx-4 border border-[var(--color-border-default)]" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-[var(--color-border-default)] flex justify-between items-center">
           <h3 className="font-bold text-sm flex items-center gap-1.5">
             <ArrowLeftRight className="w-4 h-4 text-[var(--brand-color)]" />
             Split Payment
@@ -43,9 +43,9 @@ export default function SplitPaymentModal({
         </div>
 
         <div className="p-4 space-y-3">
-          <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3 border border-[#e1e2ed]">
+          <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3 border border-[var(--color-border-default)]">
             <span className="text-xs font-semibold text-gray-600">Grand Total</span>
-            <span className="text-sm font-bold font-mono text-[#191b23]">{currencySymbol}{grandTotal.toFixed(2)}</span>
+            <span className="text-sm font-bold font-mono text-[var(--color-text-primary)]">{currencySymbol}{grandTotal.toFixed(2)}</span>
           </div>
 
           {/* Cash */}
@@ -60,7 +60,7 @@ export default function SplitPaymentModal({
                 type="number"
                 value={splitDetails.cashAmount || 0}
                 onChange={(e) => updateSplit('cashAmount', parseFloat(e.target.value) || 0)}
-                className="flex-1 px-3 py-1.5 border border-[#e1e2ed] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
+                className="flex-1 px-3 py-1.5 border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
                 placeholder="0.00"
                 step="0.01"
                 min="0"
@@ -80,7 +80,7 @@ export default function SplitPaymentModal({
                 type="number"
                 value={splitDetails.cardAmount || 0}
                 onChange={(e) => updateSplit('cardAmount', parseFloat(e.target.value) || 0)}
-                className="flex-1 px-3 py-1.5 border border-[#e1e2ed] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                className="flex-1 px-3 py-1.5 border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
                 placeholder="0.00"
                 step="0.01"
                 min="0"
@@ -100,7 +100,7 @@ export default function SplitPaymentModal({
                 type="number"
                 value={splitDetails.upiAmount || 0}
                 onChange={(e) => updateSplit('upiAmount', parseFloat(e.target.value) || 0)}
-                className="flex-1 px-3 py-1.5 border border-[#e1e2ed] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
+                className="flex-1 px-3 py-1.5 border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
                 placeholder="0.00"
                 step="0.01"
                 min="0"
@@ -120,7 +120,7 @@ export default function SplitPaymentModal({
                 type="number"
                 value={splitDetails.walletAmount || 0}
                 onChange={(e) => updateSplit('walletAmount', parseFloat(e.target.value) || 0)}
-                className="flex-1 px-3 py-1.5 border border-[#e1e2ed] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+                className="flex-1 px-3 py-1.5 border border-[var(--color-border-default)] rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
                 placeholder="0.00"
                 step="0.01"
                 min="0"
@@ -151,8 +151,8 @@ export default function SplitPaymentModal({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-[#e1e2ed] flex gap-3 justify-end bg-gray-50/50">
-          <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white hover:text-[#191b23] transition-all cursor-pointer">
+        <div className="p-4 border-t border-[var(--color-border-default)] flex gap-3 justify-end bg-gray-50/50">
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-[var(--color-bg-white)] hover:text-[var(--color-text-primary)] transition-all cursor-pointer">
             Cancel
           </button>
           <button
@@ -160,7 +160,7 @@ export default function SplitPaymentModal({
             disabled={!isBalanced}
             className={`px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer ${
               isBalanced
-                ? 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8] hover:shadow-md'
+                ? 'bg-[var(--brand-color)] text-white hover:bg-[var(--color-primary-hover)] hover:shadow-md'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
           >

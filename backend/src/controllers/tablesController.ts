@@ -9,6 +9,7 @@
 
 import { Request, Response } from 'express';
 import { tableService } from '../services';
+import QROrderingSession from '../modules/qr-ordering/models/QROrderingSession';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 function authCtx(req: Request) {
@@ -34,7 +35,33 @@ export async function listTables(req: Request, res: Response): Promise<void> {
       floorId: floorId as string,
       restaurantId: authCtx(req).restaurantId,
     });
-    res.json({ data: result.data, total: result.total });
+    // Attach the customer's ACTIVE seat-session (table QR scan) to each table
+    // so the POS can show "session active" + an End-session action. The
+    // session is derived, never persisted on the Table — it expires on its
+    // own TTL (no activity) or when the restaurant ends it.
+    const rows: any[] = result.data as any[];
+    const tableIds = rows.map((t) => t._id).filter(Boolean);
+    const sessions = tableIds.length
+      ? await QROrderingSession.find({
+          restaurantId: authCtx(req).restaurantId,
+          status: 'ACTIVE',
+          tableId: { $in: tableIds },
+        })
+          .select({ sessionId: 1, tableId: 1, expiresAt: 1 })
+          .lean()
+          .exec()
+      : [];
+    const sessionByTable = new Map(
+      sessions.map((s: any) => [
+        String(s.tableId),
+        { sessionId: s.sessionId, expiresAt: s.expiresAt.toISOString() },
+      ])
+    );
+    const data = rows.map((t: any) => {
+      const obj = typeof t.toObject === 'function' ? t.toObject() : t;
+      return { ...obj, activeSession: sessionByTable.get(String(obj._id)) || null };
+    });
+    res.json({ data, total: result.total });
   } catch (error) {
     console.error('[TablesController] list error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -116,6 +143,19 @@ export async function deleteTable(req: Request, res: Response): Promise<void> {
       return;
     }
     console.error('[TablesController] delete error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** POST /api/tables/:id/expire-session — End a customer's QR seat-session (not the QR). */
+export async function expireTableSession(req: Request, res: Response): Promise<void> {
+  try {
+    const table = await tableService.expireTableSession(req.params.id, authCtx(req));
+    if (!table) { res.status(404).json({ error: 'Table not found' }); return; }
+    res.json({ data: table });
+  } catch (error: any) {
+    if (error.statusCode === 409) { res.status(409).json({ error: error.message }); return; }
+    console.error('[TablesController] expire-session error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

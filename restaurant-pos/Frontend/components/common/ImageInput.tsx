@@ -15,7 +15,7 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { Upload, Link2, Loader2, Trash2, Image as ImageIcon, AlertCircle } from 'lucide-react';
+import { Upload, Link2, Loader2, Trash2, Image as ImageIcon, AlertCircle, Copy, Check } from 'lucide-react';
 import { uploadImage } from '../../src/api/client';
 
 interface ImageInputProps {
@@ -28,15 +28,52 @@ interface ImageInputProps {
 }
 
 function looksLikeUploaded(value: string): boolean {
-  return value.startsWith('data:image/') || value.startsWith('/uploads/');
+  return value.startsWith('data:image/') || value.startsWith('/uploads/') || value.includes('/uploads/');
 }
 
 export default function ImageInput({ value, onChange, label, previewClass, hint }: ImageInputProps) {
   const [tab, setTab] = useState<'upload' | 'link'>(value && !looksLikeUploaded(value) ? 'link' : 'upload');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
   const [linkDraft, setLinkDraft] = useState(value && !looksLikeUploaded(value) ? value : '');
   const fileRef = useRef<HTMLInputElement>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Copy the current image URL so it can be reused on another item without re-uploading. */
+  const copyUrl = async () => {
+    if (!value) return;
+    const done = () => {
+      setCopied(true);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1600);
+    };
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        done();
+        return;
+      }
+      throw new Error('clipboard API unavailable');
+    } catch {
+      // Fallback for non-secure contexts (e.g. LAN IP over HTTP):
+      // select the value into a hidden textarea and execCommand('copy').
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (!ok) throw new Error('execCommand copy failed');
+        done();
+      } catch {
+        setError('Could not copy — select the URL manually and copy it.');
+      }
+    }
+  };
 
   const pick = async (file: File | undefined | null) => {
     if (!file) return;
@@ -78,29 +115,39 @@ export default function ImageInput({ value, onChange, label, previewClass, hint 
       {/* Preview */}
       {value ? (
         <div className="flex items-start gap-3">
-          <div className={`${previewClass || 'w-20 h-20'} rounded-xl overflow-hidden border border-[#e1e2ed] bg-gray-50 flex items-center justify-center shrink-0`}>
+          <div className={`${previewClass || 'w-20 h-20'} rounded-xl overflow-hidden border border-[var(--color-border-default)] bg-gray-50 flex items-center justify-center shrink-0`}>
             <img src={value} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
           </div>
           <div className="flex flex-col gap-1.5 items-start">
             <span className="text-[9px] text-gray-400 font-medium">{looksLikeUploaded(value) ? 'Uploaded image' : 'Image link'}</span>
-            <button
-              type="button"
-              onClick={() => { onChange(''); setLinkDraft(''); setError(''); }}
-              className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 cursor-pointer"
-            >
-              <Trash2 className="w-2.5 h-2.5" /> Remove image
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={copyUrl}
+                title="Copy image URL so you can reuse it on another item"
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold cursor-pointer transition-all ${copied ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-[var(--brand-color)] hover:bg-blue-100'}`}
+              >
+                {copied ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />} {copied ? 'Copied!' : 'Copy URL'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { onChange(''); setLinkDraft(''); setError(''); setCopied(false); }}
+                className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 cursor-pointer"
+              >
+                <Trash2 className="w-2.5 h-2.5" /> Remove image
+              </button>
+            </div>
           </div>
         </div>
       ) : (
         /* Tab switcher */
         <div className="bg-gray-100 rounded-xl p-1 flex gap-1 w-fit">
           <button type="button" onClick={() => { setTab('upload'); setError(''); }}
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${tab === 'upload' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${tab === 'upload' ? 'bg-[var(--color-bg-white)] text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
             <Upload className="w-3 h-3" /> Upload
           </button>
           <button type="button" onClick={() => { setTab('link'); setError(''); }}
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${tab === 'link' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${tab === 'link' ? 'bg-[var(--color-bg-white)] text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
             <Link2 className="w-3 h-3" /> Use link
           </button>
         </div>
@@ -111,7 +158,7 @@ export default function ImageInput({ value, onChange, label, previewClass, hint 
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); }}
           onClick={() => fileRef.current?.click()}
-          className="border-2 border-dashed border-[#c3c6d7] rounded-xl px-4 py-5 text-center cursor-pointer hover:border-[var(--brand-color)] hover:bg-blue-50/40 transition-all"
+          className="border-2 border-dashed border-[var(--color-border-input)] rounded-xl px-4 py-5 text-center cursor-pointer hover:border-[var(--brand-color)] hover:bg-blue-50/40 transition-all"
         >
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
             onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
@@ -135,10 +182,10 @@ export default function ImageInput({ value, onChange, label, previewClass, hint 
             value={linkDraft}
             onChange={(e) => { setLinkDraft(e.target.value); setError(''); }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyLink(); } }}
-            className="flex-1 px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+            className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
           />
           <button type="button" onClick={applyLink}
-            className="px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-black hover:bg-[#003ea8] transition-all cursor-pointer">
+            className="px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-black hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer">
             Apply
           </button>
         </div>

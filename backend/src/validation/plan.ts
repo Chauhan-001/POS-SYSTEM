@@ -29,8 +29,9 @@ export const planIdParamsSchema = z.object({
 export const planLimitsSchema = z.object({
   maxRestaurants: z.number().int().min(0).optional(),
   maxBranches: z.number().int().min(0).optional(),
+  maxDevicesPerBranch: z.number().int().min(0).optional(),
+  // Legacy alias — accepted but normalized to maxDevicesPerBranch by planService.
   maxDevices: z.number().int().min(0).optional(),
-  maxEmployees: z.number().int().min(0).optional(),
   maxProducts: z.number().int().min(0).optional(),
   maxCustomers: z.number().int().min(0).optional(),
   maxMonthlyOrders: z.number().int().min(0).optional(),
@@ -60,6 +61,7 @@ export const planCreateSchema = z.object({
   name: z.string().min(1).max(120).trim(),
   description: z.string().max(1000).optional().default(''),
   price: z.number().min(0).max(10_000_000).optional().default(0),
+  yearlyPrice: z.number().min(0).max(10_000_000).optional().default(0),
   maxUsers: z.number().int().min(0).optional().default(5),
   maxDevices: z.number().int().min(0).optional().default(6),
   features: featureListSchema,
@@ -79,6 +81,7 @@ export const planUpdateSchema = z.object({
   name: z.string().min(1).max(120).trim().optional(),
   description: z.string().max(1000).optional(),
   price: z.number().min(0).max(10_000_000).optional(),
+  yearlyPrice: z.number().min(0).max(10_000_000).optional(),
   maxUsers: z.number().int().min(0).optional(),
   maxDevices: z.number().int().min(0).optional(),
   features: featureListSchema,
@@ -126,6 +129,7 @@ export const planRollbackSchema = z.object({
 export const planAssignSchema = z.object({
   restaurantId: objectId,
   planId: z.string().min(1).max(60),
+  billingPeriod: z.enum(['monthly', 'yearly']).optional(),
   effectiveDate: z.string().datetime().optional(),
   note: z.string().max(500).optional(),
 }).strict();

@@ -10,12 +10,15 @@
 
 import { Request, Response } from 'express';
 import { employeeService } from '../services';
+import type { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 /** GET /api/employees — List employees with optional branch/role filter */
 export async function listEmployees(req: Request, res: Response): Promise<void> {
   try {
     const { branchId, role } = req.query;
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
     const result = await employeeService.list({
+      restaurantId,
       branchId: branchId as string,
       role: role as string,
     });
@@ -29,7 +32,8 @@ export async function listEmployees(req: Request, res: Response): Promise<void> 
 /** GET /api/employees/:id — Get single employee (without PIN) */
 export async function getEmployee(req: Request, res: Response): Promise<void> {
   try {
-    const employee = await employeeService.getById(req.params.id);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const employee = await employeeService.getById(req.params.id, restaurantId);
     if (!employee) {
       res.status(404).json({ error: 'Employee not found' });
       return;
@@ -57,7 +61,12 @@ export async function createEmployee(req: Request, res: Response): Promise<void>
       restaurantId: (req as any).user?.restaurantId,
     });
     res.status(201).json({ data: employee });
-  } catch (error) {
+  } catch (error: any) {
+    // User-limit / capacity errors carry a meaningful status (e.g. 403).
+    if (error?.statusCode && [400, 403, 404, 409].includes(error.statusCode)) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('[EmployeesController] create error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -66,7 +75,8 @@ export async function createEmployee(req: Request, res: Response): Promise<void>
 /** PUT /api/employees/:id — Update employee details */
 export async function updateEmployee(req: Request, res: Response): Promise<void> {
   try {
-    const employee = await employeeService.update(req.params.id, req.body);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const employee = await employeeService.update(req.params.id, req.body, restaurantId);
     if (!employee) {
       res.status(404).json({ error: 'Employee not found' });
       return;
@@ -81,7 +91,8 @@ export async function updateEmployee(req: Request, res: Response): Promise<void>
 /** DELETE /api/employees/:id — Soft-delete an employee */
 export async function deleteEmployee(req: Request, res: Response): Promise<void> {
   try {
-    const deleted = await employeeService.delete(req.params.id);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const deleted = await employeeService.delete(req.params.id, restaurantId);
     if (!deleted) {
       res.status(404).json({ error: 'Employee not found' });
       return;

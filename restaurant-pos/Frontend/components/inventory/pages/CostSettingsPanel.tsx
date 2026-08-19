@@ -18,7 +18,7 @@ import {
 import { fetchCostSettings, updateCostSettings, calibrateCostSettings } from '../../../src/api/client';
 import { useNotify } from '../InventoryManager';
 
-const fmt = (n: number) => '₹' + Math.round(n * 100) / 100;
+const fmt = (n: number) => '₹' + (Math.round(n * 100) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function CostSettingsPanel() {
   const notify = useNotify();
@@ -92,7 +92,7 @@ export default function CostSettingsPanel() {
     notify(`Suggested ${key === 'cookingAllowance' ? 'cooking' : 'minor ingredient'} allowance applied to the form — press Save to use it`, 'info');
   };
 
-  const inputCls = "w-full px-3 py-2.5 bg-gray-50 border border-[#e1e2ed] rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20";
+  const inputCls = "w-full px-3 py-2.5 bg-gray-50 border border-[var(--color-border-default)] rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20";
 
   return (
     <div className="space-y-4">
@@ -106,20 +106,20 @@ export default function CostSettingsPanel() {
         <button
           onClick={() => void handleSave()}
           disabled={saving || !synced}
-          className="px-4 py-2 bg-[var(--brand-color)] text-white rounded-xl text-xs font-bold hover:bg-[#003ea8] transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+          className="px-4 py-2 bg-[var(--brand-color)] text-white rounded-xl text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
         >
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save Settings
         </button>
       </div>
 
       {!synced && settings === null && (
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] p-10 text-center text-sm text-gray-400">Loading cost settings…</div>
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 text-center text-sm text-gray-400">Loading cost settings…</div>
       )}
 
       {synced && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Allowances */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 space-y-4">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 space-y-4">
             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Per-serving allowances</p>
 
             <div className="flex items-center gap-3">
@@ -154,14 +154,14 @@ export default function CostSettingsPanel() {
               </div>
             </div>
 
-            <p className="text-[10px] text-gray-400 leading-relaxed pt-2 border-t border-[#e1e2ed]">
+            <p className="text-[10px] text-gray-400 leading-relaxed pt-2 border-t border-[var(--color-border-default)]">
               Fixed costs (rent, salaries, subscriptions) are <b>not</b> part of recipe variable cost — they are modeled separately at restaurant level.
             </p>
           </div>
 
           {/* Packaging + calibration */}
           <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5">
               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3 flex items-center gap-1.5">
                 <Package className="w-3.5 h-3.5" /> Packaging by channel (₹ per order)
               </p>
@@ -181,7 +181,7 @@ export default function CostSettingsPanel() {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5" /> Calculate from recent data
@@ -217,8 +217,8 @@ export default function CostSettingsPanel() {
                             </p>
                           </div>
                           <div className="flex gap-1.5">
-                            <button onClick={() => applySuggestion('cookingAllowance')} className="px-2.5 py-1.5 bg-orange-600 text-white rounded-lg text-[10px] font-bold hover:bg-orange-700 transition-all cursor-pointer">Use {fmt(calibration.suggestions.cookingAllowance.suggested)}</button>
-                            <button onClick={() => setCalibration(null)} className="px-2.5 py-1.5 bg-white border border-orange-200 text-orange-700 rounded-lg text-[10px] font-bold hover:bg-orange-50 transition-all cursor-pointer">Keep {fmt(calibration.suggestions.cookingAllowance.current)}</button>
+                            <button onClick={() => applySuggestion('cookingAllowance')} className="px-2.5 py-1.5 bg-[var(--color-orange-600-solid)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-orange-700-solid)] transition-all cursor-pointer">Use {fmt(calibration.suggestions.cookingAllowance.suggested)}</button>
+                            <button onClick={() => setCalibration(null)} className="px-2.5 py-1.5 bg-[var(--color-bg-white)] border border-orange-200 text-orange-700 rounded-lg text-[10px] font-bold hover:bg-orange-50 transition-all cursor-pointer">Keep {fmt(calibration.suggestions.cookingAllowance.current)}</button>
                           </div>
                         </div>
                       )}
@@ -232,8 +232,8 @@ export default function CostSettingsPanel() {
                             </p>
                           </div>
                           <div className="flex gap-1.5">
-                            <button onClick={() => applySuggestion('minorIngredientAllowance')} className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-bold hover:bg-amber-700 transition-all cursor-pointer">Use {fmt(calibration.suggestions.minorIngredientAllowance.suggested)}</button>
-                            <button onClick={() => setCalibration(null)} className="px-2.5 py-1.5 bg-white border border-amber-200 text-amber-700 rounded-lg text-[10px] font-bold hover:bg-amber-50 transition-all cursor-pointer">Keep {fmt(calibration.suggestions.minorIngredientAllowance.current)}</button>
+                            <button onClick={() => applySuggestion('minorIngredientAllowance')} className="px-2.5 py-1.5 bg-[var(--color-amber-600-solid)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-amber-700-solid)] transition-all cursor-pointer">Use {fmt(calibration.suggestions.minorIngredientAllowance.suggested)}</button>
+                            <button onClick={() => setCalibration(null)} className="px-2.5 py-1.5 bg-[var(--color-bg-white)] border border-amber-200 text-amber-700 rounded-lg text-[10px] font-bold hover:bg-amber-50 transition-all cursor-pointer">Keep {fmt(calibration.suggestions.minorIngredientAllowance.current)}</button>
                           </div>
                         </div>
                       )}
@@ -241,7 +241,7 @@ export default function CostSettingsPanel() {
                   )}
 
                   <p className="text-[10px] text-gray-400 flex items-center gap-1">
-                    <IndianRupee className="w-3 h-3" /> {calibration.itemsSold.toLocaleString('en-IN')} items sold · ₹{(calibration.operatingExpenses || 0).toLocaleString('en-IN')} operating expenses in the window.
+                    <IndianRupee className="w-3 h-3" /> {calibration.itemsSold.toLocaleString('en-IN')} items sold · ₹{Number(calibration.operatingExpenses || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} operating expenses in the window.
                   </p>
                 </div>
               )}

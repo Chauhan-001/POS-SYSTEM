@@ -28,17 +28,12 @@ import Offer from '../models/Offer';
 import Campaign from '../models/Campaign';
 import { getUpcomingFestivals } from './festivalService';
 import { generateRecommendations } from './offerEngine';
-import { executeAiCall, executeAiText } from '../modules/ai/services/aiService';
+import { executeAiCall } from '../modules/ai/services/aiService';
+import { deriveSurplusItems } from './recommendationContext';
 import { buildMarketingPrompt, type MarketingContext, type MarketingRequestInput } from '../modules/ai/prompts/marketing';
-import { marketingPlanSchema } from '../modules/ai/validators/ai';
+import { marketingPlanSchema, offerCopyOutputSchema } from '../modules/ai/validators/ai';
 import type { OfferCopyInput } from '../modules/ai/prompts/offerCopy';
-import {
-  buildTitlePrompt,
-  buildDescriptionPrompt,
-  buildWhatsAppPrompt,
-  buildSmsPrompt,
-  buildAppNotificationPrompt,
-} from '../modules/ai/prompts/offerCopy';
+import { buildOfferCopyPrompt } from '../modules/ai/prompts/offerCopy';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
@@ -122,7 +117,7 @@ export async function buildMarketingContext(restaurantId: string): Promise<Marke
       }),
       Customer.countDocuments({ restaurantId: oid, isDeleted: { $ne: true }, visits: { $gte: 20 }, points: { $gte: 500 } }),
       Product.find({ restaurantId: oid, isDeleted: { $ne: true } })
-        .select('name category currentStock minStock')
+        .select('name category currentStock minStock maxStock unit expiryDate')
         .lean()
         .exec(),
       Offer.find({ restaurantId: oid, isDeleted: { $ne: true }, status: 'active' }).select('title').limit(10).lean().exec(),
@@ -153,6 +148,10 @@ export async function buildMarketingContext(restaurantId: string): Promise<Marke
     .filter((p) => p.minStock > 0 && p.currentStock <= p.minStock)
     .slice(0, 5)
     .map((p) => p.name);
+  // Same deterministic surplus rule as the offer-recommendation context — the
+  // AI marketing planner may only propose clearance for these exact products
+  // (never inferred, never low-stock items).
+  const surplusStockItems = (deriveSurplusItems(products) || []).slice(0, 5);
 
   const segmentsFull = segments.map((s: any) => ({ id: s._id.toString(), name: s.name, customerCount: s.customerCount || 0 }));
 
@@ -168,6 +167,7 @@ export async function buildMarketingContext(restaurantId: string): Promise<Marke
     segments: segmentsFull.map(({ name, customerCount }) => ({ name, customerCount })),
     topCategories,
     lowStockItems,
+    surplusStockItems,
     activeOffers: offers.map((o: any) => o.title),
     recentCampaigns: campaignCount || 0,
     festivals: getUpcomingFestivals(30).slice(0, 3).map((f) => f.name),
@@ -185,14 +185,16 @@ export async function buildMarketingContext(restaurantId: string): Promise<Marke
 export async function generateMarketingPlan(
   restaurantId: string,
   input: MarketingRequestInput,
+  opts: { bustCache?: boolean } = {},
 ): Promise<GeneratePlanResult> {
   const start = Date.now();
   const ctx = await buildMarketingContext(restaurantId);
 
   const prompt = buildMarketingPrompt(input, ctx);
   // cacheKeyVariant = restaurantId: one restaurant can never receive another's
-  // cached AI plan (Phase 25).
-  const result = await executeAiCall({ prompt, feature: 'marketing', cacheKeyVariant: restaurantId, tenantId: restaurantId });
+  // cached AI plan (Phase 25). Phase 3: an explicit "Regenerate" passes
+  // bustCache=true so the LLM is called fresh and the cache is replaced.
+  const result = await executeAiCall({ prompt, feature: 'marketing', cacheKeyVariant: restaurantId, tenantId: restaurantId, bustCache: opts.bustCache });
 
   if (result.success && !result.fallback) {
     const parsed = marketingPlanSchema.safeParse(result.data);
@@ -345,15 +347,22 @@ export interface OfferCopyResult {
   latency: number;
 }
 
-const FIELD_LIMITS = { whatsapp: 200, sms: 120, push: 100, emailSubject: 60, emailBody: 500 };
+const FIELD_LIMITS: Record<string, number> = { title: 100, description: 500, whatsapp: 200, sms: 120, push: 100, emailSubject: 60, emailBody: 500 };
 
 /**
- * Generate all copy fields via the EXISTING offerCopy prompts (one LLM call
- * per field, executed in parallel). Falls back to deterministic templates when
- * AI is unavailable or a field comes back empty. cacheKeyVariant is the
- * restaurant id so copy is never shared across tenants.
+ * Generate all copy fields with ONE consolidated LLM call (Phase 2) — the five
+ * separate per-field calls (title/description/whatsapp/sms/push) are replaced
+ * by a single structured request validated against offerCopyOutputSchema.
+ * Falls back to deterministic templates when AI is unavailable, the response
+ * fails schema validation, or a field comes back empty. cacheKeyVariant is the
+ * restaurant id so copy is never shared across tenants; bustCache=true is used
+ * for explicit "Regenerate" actions (Phase 3).
  */
-export async function generateOfferCopy(restaurantId: string, input: OfferCopyInput): Promise<OfferCopyResult> {
+export async function generateOfferCopy(
+  restaurantId: string,
+  input: OfferCopyInput,
+  opts: { bustCache?: boolean } = {},
+): Promise<OfferCopyResult> {
   const start = Date.now();
   const inputWithDefaults: OfferCopyInput = {
     ...input,
@@ -362,39 +371,48 @@ export async function generateOfferCopy(restaurantId: string, input: OfferCopyIn
     reason: input.reason || 'promotion',
     durationDays: input.durationDays || 7,
     language: input.language || 'en',
+    tone: input.tone || 'friendly',
   };
 
-  const builders = [
-    ['title', buildTitlePrompt],
-    ['description', buildDescriptionPrompt],
-    ['whatsapp', buildWhatsAppPrompt],
-    ['sms', buildSmsPrompt],
-    ['push', buildAppNotificationPrompt],
-  ] as const;
-
-  const results = await Promise.all(
-    builders.map(async ([key, builder]) => {
-      const prompt = builder(inputWithDefaults);
-      const r = await executeAiText({ prompt, feature: 'offer-copy', cacheKeyVariant: restaurantId, tenantId: restaurantId });
-      return { key, text: String(r.text || '').trim(), fallback: r.fallback, cached: r.cached };
-    }),
-  );
+  // ONE prompt → ONE LLM call → structured JSON (Zod-validated).
+  const prompt = buildOfferCopyPrompt(inputWithDefaults);
+  const r = await executeAiCall({ prompt, feature: 'offer-copy', cacheKeyVariant: restaurantId, tenantId: restaurantId, bustCache: opts.bustCache });
 
   const fallback = buildFallbackCopy(inputWithDefaults);
   const out: Record<string, string> = { title: '', description: '', whatsapp: '', sms: '', push: '', emailSubject: '', emailBody: '' };
+  let usedFallback = r.fallback || false;
 
-  for (const { key, text, fallback: f } of results) {
-    const limit = FIELD_LIMITS[key as keyof typeof FIELD_LIMITS];
-    const raw = text && text.length > 0 ? text : fallback[key];
-    out[key] = limit ? truncate(raw, limit) : truncate(raw, 200);
-    if (f) out[key] = limit ? truncate(fallback[key], limit) : truncate(fallback[key], 200);
+  if (r.success && r.data && !r.fallback) {
+    const parsed = offerCopyOutputSchema.safeParse(r.data);
+    if (parsed.success) {
+      const copy = parsed.data;
+      out.title = truncate(copy.title || fallback.title, FIELD_LIMITS.title || 200);
+      out.description = truncate(copy.description || fallback.description, FIELD_LIMITS.description || 500);
+      out.whatsapp = truncate(copy.whatsapp || fallback.whatsapp, FIELD_LIMITS.whatsapp);
+      out.sms = truncate(copy.sms || fallback.sms, FIELD_LIMITS.sms);
+      out.push = truncate(copy.push || fallback.push, FIELD_LIMITS.push);
+      // Empty individual fields fall back to the deterministic template.
+      if (!copy.title || !copy.description || !copy.whatsapp || !copy.sms || !copy.push) usedFallback = true;
+    } else {
+      console.warn('[Marketing] LLM copy failed schema validation — using deterministic fallback');
+      usedFallback = true;
+    }
+  } else {
+    usedFallback = true;
   }
 
   // Email subject/body are generated deterministically (no dedicated prompt).
   out.emailSubject = truncate(fallback.emailSubject, FIELD_LIMITS.emailSubject);
   out.emailBody = truncate(fallback.emailBody, FIELD_LIMITS.emailBody);
 
-  const anyFallback = results.some((r) => r.fallback) || results.some((r) => !r.text);
+  // Any field still empty after the LLM path → deterministic template.
+  for (const key of ['title', 'description', 'whatsapp', 'sms', 'push'] as const) {
+    if (!out[key]) {
+      out[key] = truncate(fallback[key], FIELD_LIMITS[key] || 200);
+      usedFallback = true;
+    }
+  }
+
   return {
     title: out.title,
     description: out.description,
@@ -403,8 +421,8 @@ export async function generateOfferCopy(restaurantId: string, input: OfferCopyIn
     push: out.push,
     emailSubject: out.emailSubject,
     emailBody: out.emailBody,
-    fallback: anyFallback,
-    cached: results.length > 0 && results.every((r) => r.cached),
+    fallback: usedFallback,
+    cached: r.cached,
     latency: Date.now() - start,
   };
 }
@@ -416,7 +434,11 @@ function truncate(text: string, max: number): string {
   return cleaned.slice(0, max - 1).trimEnd() + '…';
 }
 
-/** Deterministic copy templates — used when the LLM is unavailable (Phase 11). */
+/**
+ * Deterministic copy templates — used when the LLM is unavailable (Phase 11).
+ * Phase 4: the fallback honours the owner's chosen tone + language so even a
+ * no-AI moment returns copy in the style they asked for (never English-only).
+ */
 function buildFallbackCopy(
   input: Partial<OfferCopyInput>,
 ): MarketingPlan['messages'] & { title: string; description: string } {
@@ -426,13 +448,49 @@ function buildFallbackCopy(
     type === 'percentage' ? `${value}% OFF` : type === 'flat' ? `Rs.${value} OFF` : type === 'reward_points' ? `${value} points` : String(value);
   const on = input.applicableCategories && input.applicableCategories.length > 0 ? ` on ${input.applicableCategories.slice(0, 3).join(', ')}` : '';
   const min = input.minOrderValue ? ` above Rs.${input.minOrderValue}` : '';
+  const tone = input.tone || 'friendly';
+  const language = input.language || 'en';
+  const funky = tone === 'funky' || tone === 'genz' || tone === 'zomato';
 
+  // Hinglish / Hindi fallbacks — same offer facts, local voice.
+  if (language === 'hinglish') {
+    const emoji = funky ? '🔥' : '🎉';
+    return {
+      title: `${offerText}${on ? ` · ${input.applicableCategories![0]}` : ''}`.slice(0, 60),
+      description: `Craving ho ya nahi, ${offerText}${on}${min} hai aapke liye. Treat yourself — order karo aur miss mat karo!`,
+      whatsapp: `${emoji} ${offerText}${on}${min}! Counter pe message dikhao aur offer lo. Jaldi aao, bhookh ka intezaar nahi hota!`,
+      sms: `Offer: ${offerText}${on}${min}. Ye SMS counter pe dikhao.`,
+      push: `${offerText}${on} aaj hi! ${emoji}`,
+      emailSubject: `${offerText}${on ? ' ' + on : ''} — bas aapke liye`,
+      emailBody: `Hi! Aapke liye khaas offer hai: ${offerText}${on}${min}. Ye email counter pe dikhate hi claim ho jayega. Hum aapka intezaar karenge!`,
+    };
+  }
+  if (language === 'hi') {
+    const emoji = funky ? '🔥' : '🎉';
+    return {
+      title: `${offerText}${on ? ` · ${input.applicableCategories![0]}` : ''}`.slice(0, 60),
+      description: `आपके लिए खास ऑफर: ${offerText}${on}${min}। जल्दी करें, यह ऑफर सीमित समय के लिए है!`,
+      whatsapp: `${emoji} ${offerText}${on}${min}! काउंटर पर यह मैसेज दिखाएं और ऑफर पाएं। जल्दी आएं!`,
+      sms: `ऑफर: ${offerText}${on}${min}। काउंटर पर यह SMS दिखाएं।`,
+      push: `${offerText}${on} आज ही! ${emoji}`,
+      emailSubject: `${offerText}${on ? ' ' + on : ''} — सिर्फ आपके लिए`,
+      emailBody: `नमस्ते! आपके लिए खास ऑफर है: ${offerText}${on}${min}। यह ईमेल काउंटर पर दिखाते ही क्लेम करें। हम आपका इंतज़ार करेंगे!`,
+    };
+  }
+
+  const emoji = funky ? '🔥' : '🎉';
+  const opener = funky
+    ? `Big news! ${offerText}${on}${min} — yes, for real.`
+    : `Enjoy ${offerText}${on}${min} at our restaurant. A limited-time treat for you — don't miss it!`;
+  const wa = funky
+    ? `${emoji} ${offerText}${on}${min}! Show this at the counter and thank us later. See you soon!`
+    : `${emoji} ${offerText}${on}${min}! Show this message at the counter to claim your treat. See you soon!`;
   return {
     title: `${offerText}${on ? ` · ${input.applicableCategories![0]}` : ''}`.slice(0, 60),
-    description: `Enjoy ${offerText}${on}${min} at our restaurant. A limited-time treat for you — don't miss it!`,
-    whatsapp: `🎉 ${offerText}${on}${min}! Show this message at the counter to claim your treat. See you soon!`,
+    description: opener,
+    whatsapp: wa,
     sms: `Special offer: ${offerText}${on}${min}. Show this SMS at the counter.`,
-    push: `${offerText}${on} today! 🎉`,
+    push: `${offerText}${on} today! ${emoji}`,
     emailSubject: `${offerText}${on ? ' ' + on : ''} — just for you`,
     emailBody: `Hi! We have a special offer for you: ${offerText}${on}${min}. Show this email at the counter to claim it. We can't wait to serve you!`,
   };

@@ -12,7 +12,8 @@
  *   4. Tapping a takeaway card opens Billing for that order.
  *   5. Closing a takeaway order redirects back to /orders AND restores the
  *      Takeaway tab the operator came from, with the row cleaned up.
- *   6. The table view mode (grid vs floor plan) is restored after close.
+ *   6. The Orders tables view stays on grid after close (the floor plan module
+ *      is isolated and no longer rendered).
  *
  * Screenshots are captured at each critical step under e2e/screenshots/.
  */
@@ -205,27 +206,25 @@ test.describe('Close-order redirect + card state integrity', () => {
     await shot(page, '32-T1-order-intact-after-T2-close');
   });
 
-  test('view mode (floor plan) restored after close', async ({ page }) => {
+  test('floor plan module is isolated — grid view is the only table view', async ({ page }) => {
     await loginAsOwner(page);
     await goToOrders(page);
 
-    // Switch to floor plan view.
-    await page.locator('button[title="Floor plan view"]').click();
+    // The floor plan toggle must NOT exist — the module is isolated and the
+    // tables view is always the grid.
+    await expect(page.locator('button[title="Floor plan view"]')).toHaveCount(0);
+    await expect(page.locator('button[title="Grid view"]')).toBeVisible({ timeout: 5_000 });
 
-    // Tap the first available table inside the floor plan (seats a guest).
-    // force: the auto-laid-out floor cards are small and their inner label
-    // span can intercept the pointer during Playwright's actionability check.
+    // Tap the first available table card (grid view) to open billing.
     await page.locator('[data-tour="table-card"]').first().click({ force: true });
     await expect(page).toHaveURL(/\/billing/, { timeout: 8_000 });
     await expect(page.locator('[data-tour="product-grid"]')).toBeVisible({ timeout: 8_000 });
 
     await closeOrderAndConfirm(page);
 
-    // Floor plan view must still be active (its toggle keeps the active style).
-    const floorToggle = page.locator('button[title="Floor plan view"]');
-    await expect(floorToggle).toBeVisible({ timeout: 5_000 });
-    const cls = await floorToggle.getAttribute('class');
-    expect(cls).toContain('bg-emerald-700');
-    await shot(page, '20-floorplan-restored-after-close');
+    // Back on Orders, the grid view remains the only view — still no toggle.
+    await expect(page.locator('button[title="Floor plan view"]')).toHaveCount(0);
+    await expect(page.locator('[data-tour="table-card"]').first()).toBeVisible({ timeout: 8_000 });
+    await shot(page, '20-grid-only-after-close');
   });
 });

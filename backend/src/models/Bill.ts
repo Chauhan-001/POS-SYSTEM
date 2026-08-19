@@ -48,6 +48,17 @@ export interface IBill extends Document {
   pointsRedeemed: number;
   redeemedRewardTitle?: string;
   milestoneRewardAwarded?: string;
+  /**
+   * Receipt QR capability — opaque token baked into the printed receipt QR.
+   * Resolves (via the public-store receipt endpoint) to a SANITIZED bill
+   * summary: reward earned + today's line items only. NEVER exposes customer
+   * name / phone / cashier PII. Expires 12h after minting so a scanned receipt
+   * link can't linger forever.
+   */
+  receiptToken?: string;
+  receiptTokenExpiresAt?: Date;
+  /** Full scannable URL ({qrBaseUrl}/#/r/{receiptToken}) baked at mint time. */
+  receiptUrl?: string;
   isVoided: boolean;
   voidReason?: string;
   voidedAt?: Date;
@@ -101,6 +112,9 @@ const BillSchema = new Schema<IBill>(
     pointsRedeemed: { type: Number, default: 0, min: 0 },
     redeemedRewardTitle: { type: String, trim: true },
     milestoneRewardAwarded: { type: String, trim: true },
+    receiptToken: { type: String, trim: true, index: true },
+    receiptTokenExpiresAt: { type: Date, default: null },
+    receiptUrl: { type: String, trim: true },
     isVoided: { type: Boolean, default: false },
     voidReason: { type: String, trim: true },
     voidedAt: { type: Date, default: null },

@@ -509,17 +509,17 @@ export default function ReportsManager({ bills, customers, products, currencySym
     <div id="reports_workspace" className="p-6 h-full overflow-y-auto space-y-6 font-sans pb-12">
       
       {/* 1. Header & Date Search Filters Panel */}
-      <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm space-y-4">
+      <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 flex-wrap">
-              <h2 className="text-xl font-bold tracking-tight text-[#191b23]">Executive Sales & Loyalty Analytics</h2>
+              <h2 className="text-xl font-bold tracking-tight text-[var(--color-text-primary)]">Executive Sales & Loyalty Analytics</h2>
               
               {/* Auto-refresh indicator */}
               <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-green-50 border border-green-200/60 text-[10px] font-semibold text-green-700 select-none">
                 <span className="relative flex h-2 w-2">
                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75 ${isAutoRefresh ? '' : 'hidden'}`}></span>
-                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isAutoRefresh ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isAutoRefresh ? 'bg-[var(--color-green-500-solid)]' : 'bg-gray-400'}`}></span>
                 </span>
                 <span>Auto-refresh</span>
                 <span className="text-green-500 font-mono">| {lastRefreshed}</span>
@@ -551,7 +551,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
           </div>
 
           {/* Quick Preset Buttons */}
-          <div className="flex flex-wrap gap-1.5 bg-[#f3f3fe] border border-[#c3c6d7] p-1 rounded-lg select-none shrink-0">
+          <div className="flex flex-wrap gap-1.5 bg-[var(--color-primary-light)] border border-[var(--color-border-input)] p-1 rounded-lg select-none shrink-0">
             {[
               { id: 'Today', label: "Today's Bills" },
               { id: 'Yesterday', label: 'Yesterday' },
@@ -572,7 +572,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                   className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
                     isSelected 
                       ? 'bg-[var(--brand-color)] text-white shadow-sm' 
-                      : 'text-gray-600 hover:bg-[#e7e7f3]'
+                      : 'text-gray-600 hover:bg-[var(--color-surface-muted)]'
                   }`}
                 >
                   {preset.label}
@@ -598,7 +598,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="px-3 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer"
+                className="px-3 py-1.5 border border-[var(--color-border-input)] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer"
               />
             </div>
 
@@ -608,7 +608,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="px-3 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer"
+                className="px-3 py-1.5 border border-[var(--color-border-input)] rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer"
               />
             </div>
 
@@ -632,14 +632,14 @@ export default function ReportsManager({ bills, customers, products, currencySym
           <div className="flex items-start gap-2.5">
             <CalendarDays className="w-5 h-5 text-[var(--brand-color)] shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-bold text-[#191b23]">No receipts recorded for today ({todayStr}) yet.</p>
+              <p className="text-xs font-bold text-[var(--color-text-primary)]">No receipts recorded for today ({todayStr}) yet.</p>
               <p className="text-[10px] text-gray-500 mt-0.5">By default, the report shows today's receipts. You can check pre-seeded transaction histories or switch ranges below.</p>
             </div>
           </div>
           <button
             type="button"
             onClick={() => handlePreset('ThisWeek')}
-            className="px-3 py-1.5 text-[10px] font-bold bg-[var(--brand-color)] text-white hover:bg-[#003ea8] rounded-lg shadow-sm cursor-pointer transition-all shrink-0"
+            className="px-3 py-1.5 text-[10px] font-bold bg-[var(--brand-color)] text-white hover:bg-[var(--color-primary-hover)] rounded-lg shadow-sm cursor-pointer transition-all shrink-0"
           >
             Show Last 7 Days Logs
           </button>
@@ -650,49 +650,49 @@ export default function ReportsManager({ bills, customers, products, currencySym
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
         {/* Metric 1: Revenue */}
-        <div className="bg-white p-4 rounded-xl border border-[#e1e2ed] shadow-sm flex items-center gap-4">
+        <div className="bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm flex items-center gap-4">
           <div className="w-10 h-10 rounded-lg bg-blue-50 text-[var(--brand-color)] flex items-center justify-center shrink-0">
             <DollarSign className="w-5 h-5" />
           </div>
           <div>
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Gross Revenue</span>
-            <span className="text-lg font-bold text-[#191b23] font-mono">{currencySymbol}{totalRevenue.toFixed(2)}</span>
+            <span className="text-lg font-bold text-[var(--color-text-primary)] font-mono">{currencySymbol}{totalRevenue.toFixed(2)}</span>
             <span className="text-[9px] text-green-600 font-semibold block mt-0.5">Range Selected Total</span>
           </div>
         </div>
 
         {/* Metric 2: Total Invoices */}
-        <div className="bg-white p-4 rounded-xl border border-[#e1e2ed] shadow-sm flex items-center gap-4">
+        <div className="bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm flex items-center gap-4">
           <div className="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center shrink-0">
             <ShoppingBag className="w-5 h-5" />
           </div>
           <div>
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total Invoices</span>
-            <span className="text-lg font-bold text-[#191b23] font-mono">{totalOrders} bills</span>
+            <span className="text-lg font-bold text-[var(--color-text-primary)] font-mono">{totalOrders} bills</span>
             <span className="text-[9px] text-green-600 font-semibold block mt-0.5">Tickets checked out</span>
           </div>
         </div>
 
         {/* Metric 3: Average Ticket */}
-        <div className="bg-white p-4 rounded-xl border border-[#e1e2ed] shadow-sm flex items-center gap-4">
+        <div className="bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm flex items-center gap-4">
           <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
             <TrendingUp className="w-5 h-5" />
           </div>
           <div>
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Average Ticket</span>
-            <span className="text-lg font-bold text-[#191b23] font-mono">{currencySymbol}{avgOrderValue.toFixed(2)}</span>
+            <span className="text-lg font-bold text-[var(--color-text-primary)] font-mono">{currencySymbol}{avgOrderValue.toFixed(2)}</span>
             <span className="text-[9px] text-[var(--brand-color)] font-semibold block mt-0.5">Avg spending value</span>
           </div>
         </div>
 
         {/* Metric 4: Repeat Guest Rate */}
-        <div className="bg-white p-4 rounded-xl border border-[#e1e2ed] shadow-sm flex items-center gap-4">
+        <div className="bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm flex items-center gap-4">
           <div className="w-10 h-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
             <Users className="w-5 h-5" />
           </div>
           <div>
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Repeat Guest Rate</span>
-            <span className="text-lg font-bold text-[#191b23] font-mono">{repeatGuestRate.toFixed(1)}%</span>
+            <span className="text-lg font-bold text-[var(--color-text-primary)] font-mono">{repeatGuestRate.toFixed(1)}%</span>
             <span className="text-[9px] text-green-600 font-semibold block mt-0.5">{repeatGuests} frequent patrons</span>
           </div>
         </div>
@@ -703,9 +703,9 @@ export default function ReportsManager({ bills, customers, products, currencySym
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Area sales trend (left 2/3) */}
-        <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm flex flex-col justify-between">
+        <div className="lg:col-span-2 bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm flex flex-col justify-between">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider flex items-center gap-1">
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider flex items-center gap-1">
               <TrendingUp className="w-4 h-4 text-[var(--brand-color)]" />
               Gross Billing Revenue Trend ({startDate && startDate === endDate ? "Hourly Breakdown" : "Daily Breakdown"})
             </h3>
@@ -740,9 +740,9 @@ export default function ReportsManager({ bills, customers, products, currencySym
         </div>
 
         {/* Payment Methods split (right 1/3) */}
-        <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm flex flex-col justify-between">
+        <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider mb-4 flex items-center gap-1">
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider mb-4 flex items-center gap-1">
               <CreditCard className="w-4 h-4 text-[var(--brand-color)]" />
               Payment Method Breakdown
             </h3>
@@ -784,7 +784,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
                     <span>{item.name}</span>
                   </div>
-                  <strong className="text-[#191b23] font-mono">{currencySymbol}{item.value.toFixed(2)}</strong>
+                  <strong className="text-[var(--color-text-primary)] font-mono">{currencySymbol}{item.value.toFixed(2)}</strong>
                 </div>
               ))
             )}
@@ -797,8 +797,8 @@ export default function ReportsManager({ bills, customers, products, currencySym
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         
         {/* Top items leaderboard */}
-        <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
-          <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider mb-4 flex items-center gap-1.5">
+        <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm">
+          <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider mb-4 flex items-center gap-1.5">
             <ArrowUpRight className="w-4.5 h-4.5 text-[var(--brand-color)]" />
             Fast-Selling Dishes (Leaderboard)
           </h3>
@@ -812,11 +812,11 @@ export default function ReportsManager({ bills, customers, products, currencySym
               topSellingProducts.map((p, idx) => (
                 <div key={idx} className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                   <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded bg-[#f3f3fe] text-[var(--brand-color)] border border-[#c3c6d7] flex items-center justify-center font-bold font-mono text-xs shadow-sm">
+                    <span className="w-6 h-6 rounded bg-[var(--color-primary-light)] text-[var(--brand-color)] border border-[var(--color-border-input)] flex items-center justify-center font-bold font-mono text-xs shadow-sm">
                       #{idx + 1}
                     </span>
                     <div>
-                      <strong className="text-xs text-[#191b23] block leading-tight">{p.name}</strong>
+                      <strong className="text-xs text-[var(--color-text-primary)] block leading-tight">{p.name}</strong>
                       <span className="text-[9px] text-gray-400 uppercase tracking-wider block mt-0.5">{p.category}</span>
                     </div>
                   </div>
@@ -830,9 +830,9 @@ export default function ReportsManager({ bills, customers, products, currencySym
         </div>
 
         {/* Loyalty Program analytics */}
-        <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm flex flex-col justify-between">
+        <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider mb-4 flex items-center gap-1.5">
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider mb-4 flex items-center gap-1.5">
               <Award className="w-4.5 h-4.5 text-[var(--brand-color)]" />
               Loyalty Points Ledger Audit
             </h3>
@@ -872,10 +872,10 @@ export default function ReportsManager({ bills, customers, products, currencySym
       {/* ===== ANALYTICS SECTION: Peak Hours + Category Performance ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Peak Hours */}
-        <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
+        <div className="lg:col-span-2 bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-4 h-4 text-amber-500" />
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider">Peak Hours</h3>
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider">Peak Hours</h3>
             {peakHour.orders > 0 && (
               <span className="text-[9px] text-amber-600 font-bold ml-auto">{peakHour.hour} busiest</span>
             )}
@@ -911,10 +911,10 @@ export default function ReportsManager({ bills, customers, products, currencySym
         </div>
 
         {/* Order Type Distribution */}
-        <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
+        <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <ShoppingBag className="w-4 h-4 text-purple-500" />
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider">Order Channels</h3>
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider">Order Channels</h3>
           </div>
           {orderTypeData.length === 0 ? (
             <div className="h-48 flex items-center justify-center text-xs text-gray-400">No orders</div>
@@ -948,10 +948,10 @@ export default function ReportsManager({ bills, customers, products, currencySym
       {/* ===== ANALYTICS SECTION: Category Performance + Cashier Performance ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Category Performance */}
-        <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
+        <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Layers className="w-4 h-4 text-indigo-500" />
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider">Category Performance</h3>
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider">Category Performance</h3>
             <span className="text-[9px] text-gray-400 ml-auto">{categoryData.length} categories</span>
           </div>
           {categoryData.length === 0 ? (
@@ -986,10 +986,10 @@ export default function ReportsManager({ bills, customers, products, currencySym
 
         {/* Cashier Performance */}
         {moduleSettings.showCashierPerformance !== false && (
-          <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
+          <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm">
             <div className="flex items-center gap-2 mb-4">
               <Users className="w-4 h-4 text-blue-500" />
-              <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider">Cashier Performance</h3>
+              <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider">Cashier Performance</h3>
               <span className="text-[9px] text-gray-400 ml-auto">{cashierData.length} cashiers</span>
             </div>
             {cashierData.length === 0 ? (
@@ -1045,10 +1045,10 @@ export default function ReportsManager({ bills, customers, products, currencySym
 
       {/* ===== ANALYTICS SECTION: Period-over-Period Comparison ===== */}
       {startDate && endDate && (
-        <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm">
+        <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Activity className="w-4 h-4 text-indigo-500" />
-            <h3 className="font-bold text-[#191b23] text-xs uppercase tracking-wider">Period vs Previous Period</h3>
+            <h3 className="font-bold text-[var(--color-text-primary)] text-xs uppercase tracking-wider">Period vs Previous Period</h3>
             <span className="text-[9px] text-gray-400 ml-auto">{startDate} → {endDate} vs {prevStartStr} → {prevEndStr}</span>
           </div>
           <div className="overflow-x-auto">
@@ -1096,12 +1096,12 @@ export default function ReportsManager({ bills, customers, products, currencySym
       )}
 
       {/* 5. Receipts & Bills Ledger Section */}
-      <div className="bg-white p-5 rounded-xl border border-[#e1e2ed] shadow-sm space-y-4">
+      <div className="bg-[var(--color-bg-white)] p-5 rounded-xl border border-[var(--color-border-default)] shadow-sm space-y-4">
         
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
           <div className="flex items-center justify-between xl:justify-start gap-4 w-full xl:w-auto">
             <div>
-              <h3 className="font-bold text-[#191b23] text-sm uppercase tracking-wider flex items-center gap-1.5">
+              <h3 className="font-bold text-[var(--color-text-primary)] text-sm uppercase tracking-wider flex items-center gap-1.5">
                 <FileText className="w-4.5 h-4.5 text-[var(--brand-color)]" />
                 Receipts & Bills Ledger
               </h3>
@@ -1112,7 +1112,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
             <button
               onClick={exportToCSV}
               disabled={exporting}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#c3c6d7] hover:border-[var(--brand-color)] text-gray-700 hover:text-[var(--brand-color)] text-xs font-bold rounded-lg transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-input)] hover:border-[var(--brand-color)] text-gray-700 hover:text-[var(--brand-color)] text-xs font-bold rounded-lg transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-50"
             >
               <Download className="w-3.5 h-3.5" />
               {exporting ? 'Exporting…' : 'Export CSV'}
@@ -1128,7 +1128,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 placeholder="Search invoice, cashier, guest..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)]"
               />
             </div>
 
@@ -1138,7 +1138,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
               <select
                 value={paymentFilter}
                 onChange={(e) => setPaymentFilter(e.target.value)}
-                className="px-2 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-bold text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] cursor-pointer"
+                className="px-2 py-1.5 border border-[var(--color-border-input)] rounded-lg text-xs font-bold text-gray-700 bg-[var(--color-bg-white)] focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] cursor-pointer"
               >
                 <option value="All">All Modes</option>
                 <option value="Cash">Cash</option>
@@ -1155,7 +1155,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
               <select
                 value={channelFilter}
                 onChange={(e) => setChannelFilter(e.target.value)}
-                className="px-2 py-1.5 border border-[#c3c6d7] rounded-lg text-xs font-bold text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] cursor-pointer"
+                className="px-2 py-1.5 border border-[var(--color-border-input)] rounded-lg text-xs font-bold text-gray-700 bg-[var(--color-bg-white)] focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] cursor-pointer"
               >
                 <option value="All">All Channels</option>
                 <option value="Dine In">Dine In</option>
@@ -1171,10 +1171,10 @@ export default function ReportsManager({ bills, customers, products, currencySym
         </div>
 
         {/* Datatable */}
-        <div className="overflow-x-auto border border-[#e1e2ed] rounded-xl">
+        <div className="overflow-x-auto border border-[var(--color-border-default)] rounded-xl">
           <table className="w-full text-left border-collapse min-w-[850px]">
             <thead>
-              <tr className="bg-gray-50 border-b border-[#e1e2ed] text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+              <tr className="bg-gray-50 border-b border-[var(--color-border-default)] text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 <th className="p-3 pl-4">Invoice No</th>
                 <th className="p-3">Ticket No</th>
                 <th className="p-3">Date & Time</th>
@@ -1189,7 +1189,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                 <th className="p-3 text-center pr-4">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 text-xs text-gray-700 bg-white">
+            <tbody className="divide-y divide-gray-100 text-xs text-gray-700 bg-[var(--color-bg-white)]">
               {ledgerBills.length === 0 ? (
                 <tr>
                   <td colSpan={11} className="p-12 text-center text-gray-400 font-semibold">
@@ -1205,7 +1205,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                           setPaymentFilter('All');
                           setChannelFilter('All');
                         }}
-                        className="mt-3 px-3 py-1.5 bg-[#f3f3fe] text-[var(--brand-color)] border border-[#c3c6d7] hover:bg-[#e7e7f3] text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1 transition-all"
+                        className="mt-3 px-3 py-1.5 bg-[var(--color-primary-light)] text-[var(--brand-color)] border border-[var(--color-border-input)] hover:bg-[var(--color-surface-muted)] text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1 transition-all"
                       >
                         Reset to Today's Default
                       </button>
@@ -1226,7 +1226,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
                       <span className="block text-[10px] text-gray-400 font-mono mt-0.5">{bill.time}</span>
                     </td>
                     <td className="p-3">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#faf8ff] border border-[#c3c6d7] text-gray-700">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--color-bg-page)] border border-[var(--color-border-input)] text-gray-700">
                         {bill.orderType}
                       </span>
                     </td>
@@ -1292,7 +1292,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
             <button
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               disabled={safePage <= 1}
-              className="px-3 py-1.5 text-[10px] font-bold rounded-lg border border-[#c3c6d7] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
+              className="px-3 py-1.5 text-[10px] font-bold rounded-lg border border-[var(--color-border-input)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
             >
               Previous
             </button>
@@ -1324,7 +1324,7 @@ export default function ReportsManager({ bills, customers, products, currencySym
             <button
               onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
               disabled={safePage >= totalPages}
-              className="px-3 py-1.5 text-[10px] font-bold rounded-lg border border-[#c3c6d7] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
+              className="px-3 py-1.5 text-[10px] font-bold rounded-lg border border-[var(--color-border-input)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
             >
               Next
             </button>

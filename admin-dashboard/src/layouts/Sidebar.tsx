@@ -16,8 +16,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Building2,
-  Mic,
-  ListOrdered,
   Wallet,
   PieChart,
   BadgePercent,
@@ -42,8 +40,6 @@ const navItems = [
   { label: 'Security', icon: Shield, to: '/security' },
   { label: 'Audit Log', icon: ScrollText, to: '/audit-log' },
   { label: 'AI Usage', icon: Cpu, to: '/ai-usage' },
-  { label: 'Voice Alias Mgr', icon: Mic, to: '/voice-aliases' },
-  { label: 'Voice Inventory', icon: ListOrdered, to: '/voice-inventory' },
   { label: 'Profile', icon: UserCircle, to: '/profile' },
 ]
 

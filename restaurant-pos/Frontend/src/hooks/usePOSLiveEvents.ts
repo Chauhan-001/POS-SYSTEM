@@ -5,7 +5,13 @@
  *   - `order:created`  → toast for every new online/QR order (the order list
  *                        already polls, this makes it feel instant)
  *   - `order:updated`  → toast when a customer-tracked order hits Ready
- *   - `waiter:call`    → toast for customer service requests (water/bill/…)
+ *   - `waiter:call`    → toast for customer service requests (water/bill/…)   * - `waiter:call:seen`       → another terminal silenced a call (SEEN) —
+   *                        stop the repeating reminder here instantly
+   * - `waiter:call:completed`   → another terminal resolved a call — move it
+   *                        from pending to Acknowledged here too
+   * - `waiter:call:reactivated` → a closed (COMPLETED) online-order call was
+   *                        re-opened with its bill — move it from Acknowledged
+   *                        back to Pending here too
  *
  * Fully best-effort: if the backend has no socket layer, the socket fails to
  * connect and the POS simply falls back to its existing polling — nothing here
@@ -28,7 +34,24 @@ export function usePOSLiveEvents(
   /** Fired after a new online/QR order is created (refetch orders + tables). */
   onOrderCreated?: () => void,
   /** Fired for every customer service call (bell badge increment). */
-  onWaiterCall?: (payload: any) => void
+  onWaiterCall?: (payload: any) => void,
+  /** Fired when ANOTHER terminal silences a call (status → SEEN) — this
+   *  terminal must stop its repeating reminder for that call instantly. */
+  onWaiterCallSeen?: (payload: any) => void,
+  /** Fired when another terminal completes a call — drop it from the pending
+   *  list and move it to Acknowledged here too. */
+  onWaiterCallCompleted?: (payload: any) => void,
+  /** Fired when a COMPLETED online-order call is re-activated because its
+   *  order was reopened — move it from Acknowledged back to Pending here. */
+  onWaiterCallReactivated?: (payload: any) => void,
+  /** Fired when a product is created/updated/deleted on another terminal. */
+  onProductChanged?: () => void,
+  /** Fired when a table state changes on another terminal. */
+  onTableUpdated?: () => void,
+  /** Fired when settings are updated on another terminal. */
+  onSettingsUpdated?: () => void,
+  /** Fired when a bill is created or voided on another terminal. */
+  onBillChanged?: () => void
 ) {
   const toastRef = useRef(showToast);
   toastRef.current = showToast;
@@ -38,6 +61,20 @@ export function usePOSLiveEvents(
   orderCreatedRef.current = onOrderCreated;
   const waiterCallRef = useRef(onWaiterCall);
   waiterCallRef.current = onWaiterCall;
+  const waiterCallSeenRef = useRef(onWaiterCallSeen);
+  waiterCallSeenRef.current = onWaiterCallSeen;
+  const waiterCallCompletedRef = useRef(onWaiterCallCompleted);
+  waiterCallCompletedRef.current = onWaiterCallCompleted;
+  const waiterCallReactivatedRef = useRef(onWaiterCallReactivated);
+  waiterCallReactivatedRef.current = onWaiterCallReactivated;
+  const onProductChangedRef = useRef(onProductChanged);
+  onProductChangedRef.current = onProductChanged;
+  const onTableUpdatedRef = useRef(onTableUpdated);
+  onTableUpdatedRef.current = onTableUpdated;
+  const onSettingsUpdatedRef = useRef(onSettingsUpdated);
+  onSettingsUpdatedRef.current = onSettingsUpdated;
+  const onBillChangedRef = useRef(onBillChanged);
+  onBillChangedRef.current = onBillChanged;
   const lastReadyOrderRef = useRef<string | null>(null);
   const branchRef = useRef<string | null>(currentBranchId ?? null);
   branchRef.current = currentBranchId ?? null;
@@ -153,6 +190,75 @@ export function usePOSLiveEvents(
         // Bump the sidebar bell badge instantly (persistent notification that
         // can't be missed even if the toast auto-dismisses).
         waiterCallRef.current?.(payload);
+      });
+
+      // ANOTHER terminal silenced this call (SEEN) — stop the repeating
+      // reminder here too, on every connected terminal at the same instant.
+      socket.on('waiter:call:seen', (payload: any) => {
+        if (!inBranchScope(payload?.branchId)) return;
+        waiterCallSeenRef.current?.(payload);
+      });
+
+      // ANOTHER terminal completed this call — drop it from the pending list
+      // and move it to Acknowledged here too (no waiting for the 15s poll).
+      socket.on('waiter:call:completed', (payload: any) => {
+        if (!inBranchScope(payload?.branchId)) return;
+        waiterCallCompletedRef.current?.(payload);
+      });
+
+      // A COMPLETED online-order call was re-activated because its order was
+      // reopened (bill open again) — move the card from Acknowledged back to
+      // Pending on every terminal instantly, so the reminder re-rings and
+      // acknowledgment is re-gated for the new bill cycle.
+      socket.on('waiter:call:reactivated', (payload: any) => {
+        if (!inBranchScope(payload?.branchId)) return;
+        waiterCallReactivatedRef.current?.(payload);
+      });
+
+      // ─── Live product changes ────────────────────────────────────
+      // Another terminal created/updated/deleted a product or toggled availability.
+      socket.on('product:created', () => {
+        onProductChangedRef.current?.();
+      });
+      socket.on('product:updated', (payload: any) => {
+        onProductChangedRef.current?.();
+        // Stock-level change — toast so the cashier knows inventory moved.
+        if (payload?.stockUpdate && payload?.productId) {
+          const delta = payload.stockUpdate.delta;
+          if (typeof delta === 'number' && delta !== 0) {
+            toastRef.current?.(
+              delta > 0 ? `📦 Stock +${delta} (product updated)` : `📦 Stock ${delta} (product sold)`,
+              'info'
+            );
+          }
+        }
+      });
+      socket.on('product:deleted', () => {
+        onProductChangedRef.current?.();
+      });
+
+      // ─── Live table state changes ────────────────────────────────
+      socket.on('table:updated', (payload: any) => {
+        if (payload?.tableId) onTableUpdatedRef.current?.();
+      });
+
+      // ─── Live settings changes ───────────────────────────────────
+      socket.on('settings:updated', () => {
+        onSettingsUpdatedRef.current?.();
+      });
+
+      // ─── Live bill changes ───────────────────────────────────────
+      socket.on('bill:created', (payload: any) => {
+        onBillChangedRef.current?.();
+        if (payload?.invoiceNumber) {
+          toastRef.current?.(`🧾 Bill #${payload.invoiceNumber} created`, 'info');
+        }
+      });
+      socket.on('bill:voided', (payload: any) => {
+        onBillChangedRef.current?.();
+        if (payload?.invoiceNumber) {
+          toastRef.current?.(`⚠️ Bill #${payload.invoiceNumber} voided by ${payload.voidedBy || 'unknown'}`, 'warning');
+        }
       });
     };
 

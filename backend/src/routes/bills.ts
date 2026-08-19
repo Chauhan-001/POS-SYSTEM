@@ -11,13 +11,14 @@ import {
   getBill,
   createBill,
   deleteBill,
-  refundBill,
   getNextInvoice,
+  reserveInvoiceRange,
+  getBillItems,
 } from '../controllers/billsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireSubscription } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';
-import { createBillSchema, billQuerySchema, billParamsSchema, voidBillSchema, refundBillSchema } from '../validation';
+import { createBillSchema, billQuerySchema, billParamsSchema, voidBillSchema } from '../validation';
 
 const router = Router();
 
@@ -27,13 +28,17 @@ router.get('/', requireAuth, requireSubscription, validate({ query: billQuerySch
 // Get next invoice number (atomic counter) — MUST be before /:id to avoid route conflict
 router.get('/next-invoice', requireAuth, requireSubscription, getNextInvoice);
 
+// Reserve a contiguous invoice-number range for a terminal (offline billing)
+// — MUST be before /:id to avoid route conflict
+router.get('/invoice-range', requireAuth, requireSubscription, reserveInvoiceRange);
+
 router.get('/:id', requireAuth, requireSubscription, validate({ params: billParamsSchema }), getBill);
 router.post('/', requireAuth, requireSubscription, validate({ body: createBillSchema }), createBill);
 
+// Batch-fetch line items for multiple bills (dashboard data integrity fallback)
+router.post('/items-batch', requireAuth, requireSubscription, getBillItems);
+
 // Only Owner and Manager can void bills
 router.delete('/:id', requireRole('Owner', 'Manager'), requireSubscription, validate({ body: voidBillSchema, params: billParamsSchema }), deleteBill);
-
-// Refund a bill (full or partial) — Owner/Manager only, manager PIN required
-router.post('/:id/refund', requireRole('Owner', 'Manager'), requireSubscription, validate({ body: refundBillSchema, params: billParamsSchema }), refundBill);
 
 export default router;

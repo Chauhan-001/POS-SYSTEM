@@ -25,7 +25,49 @@ import QrToken from '../models/QrToken';
 import Table from '../../../models/Table';
 import Branch from '../../../models/Branch';
 import { genQrToken, resolvePublicToken, buildQrUrl, upsertTableSticker } from '../services/qrTokenService';
+import { restaurantRepo, userRepo, employeeRepo } from '../../../repositories';
+import { verifyPin } from '../../../utils/bcrypt';
 import type { AuthenticatedRequest } from '../../../middleware/authMiddleware';
+
+/**
+ * Verify the CURRENT user's password/PIN before a destructive QR action
+ * (regenerating a table sticker invalidates the printed one, so it must be
+ * an explicit, credential-confirmed owner/manager action).
+ *
+ * Resolution order:
+ *   1. Employee login (JWT carries employeeId) → the employee's own PIN, or
+ *      their password hash when a password-mode login is set.
+ *   2. Restaurant-identity login (owner) → restaurant.ownerPin, falling back
+ *      to the owner User doc's password hash.
+ *
+ * Returns true only when the supplied credential verifies against the logged
+ * in user — never against a caller-supplied identity.
+ */
+async function verifyCurrentUserPassword(auth: AuthenticatedRequest, password: string): Promise<boolean> {
+  if (!password) return false;
+  const rid = auth.user?.restaurantId;
+  if (!rid) return false;
+
+  // 1. Employee / staff login — verify against their own PIN (or password).
+  const employeeId = auth.user?.employeeId;
+  if (employeeId) {
+    const emp = await employeeRepo.findById(String(employeeId));
+    const hash = emp ? ((emp as any).password || (emp as any).pin) : null;
+    if (hash) return verifyPin(password, hash);
+  }
+
+  // 2. Owner / restaurant-identity login.
+  const restaurant = await restaurantRepo.findById(String(rid));
+  if (restaurant && (restaurant as any).ownerPin) {
+    const ok = await verifyPin(password, (restaurant as any).ownerPin);
+    if (ok) return true;
+  }
+  const ownerUser = await userRepo.findOne({ restaurantId: rid, role: 'owner', isDeleted: { $ne: true } } as any);
+  if (ownerUser && (ownerUser as any).password) {
+    return verifyPin(password, (ownerUser as any).password);
+  }
+  return false;
+}
 
 /** GET /api/qr-tokens — list this restaurant's stickers (newest first). */
 export async function listQrTokens(req: Request, res: Response): Promise<void> {
@@ -90,6 +132,22 @@ export async function createQrToken(req: Request, res: Response): Promise<void> 
       if (!table) {
         res.status(404).json({ error: 'Table not found' });
         return;
+      }
+      // REGENERATION GATE — replacing an existing sticker invalidates the
+      // printed QR, so it requires the current user's password/PIN. Creating
+      // a sticker for a table that has none (backfill / seed / auto-gen on
+      // table creation) stays password-free — it only ADDS a QR.
+      const existingSticker = await QrToken.findOne({
+        restaurantId: rid,
+        type: 'table',
+        tableId: table._id,
+      }).lean().exec();
+      if (existingSticker) {
+        const passwordOk = await verifyCurrentUserPassword(auth, String(req.body?.password || ''));
+        if (!passwordOk) {
+          res.status(403).json({ error: 'Enter the current user password to regenerate this QR' });
+          return;
+        }
       }
       // The table's own branch is the source of truth; a caller-supplied
       // branchId wins when provided (QR Studio lets an owner pin a sticker

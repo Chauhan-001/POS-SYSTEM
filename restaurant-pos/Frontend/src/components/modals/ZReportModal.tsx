@@ -59,8 +59,8 @@ export default function ZReportModal({ isOpen, zReportData, settings, moduleSett
 
   return (
     <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 border border-[#e1e2ed] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center">
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-2xl w-full mx-4 border border-[var(--color-border-default)] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-[var(--color-border-default)] flex justify-between items-center">
           <h3 className="font-bold text-sm flex items-center gap-1.5"><FileText className="w-4 h-4 text-purple-600" /> End-of-Day Z-Report</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
@@ -92,7 +92,7 @@ export default function ZReportModal({ isOpen, zReportData, settings, moduleSett
 
           {/* AI Closing Assistant */}
           {moduleSettings.enableAIClosingAssistant !== false && (
-          <div className="pt-4 border-t border-[#e1e2ed]">
+          <div className="pt-4 border-t border-[var(--color-border-default)]">
             <ClosingAssistant
               totalRevenue={zReportData.totalSales}
               orderCount={zReportData.orderCount}

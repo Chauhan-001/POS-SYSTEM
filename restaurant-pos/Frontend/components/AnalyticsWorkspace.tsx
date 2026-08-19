@@ -28,6 +28,7 @@ import {
   fetchSalesCashiers, fetchSalesPeakHours, fetchProductTop, fetchProductLeast,
   fetchProductCategories, fetchFinancePnl,
 } from '../src/api/client';
+import { localDateKey } from '../src/data';
 import type {
   SalesSummaryReport, SalesTrendPoint, SalesPaymentRow, SalesOrderTypeRow,
   SalesCashierRow, SalesHourRow, ProductReportRow,
@@ -46,11 +47,11 @@ function formatCurrency(amount: number, symbol: string): string {
 }
 
 function getTodayString(): string {
-  return new Date().toISOString().split('T')[0];
+  return localDateKey();
 }
 
 function daysAgo(days: number): string {
-  return new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
+  return localDateKey(new Date(Date.now() - days * 86400000));
 }
 
 function formatShort(n: number): string {
@@ -359,8 +360,8 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
   // whose local bills array is empty.
   if (currentBills.length === 0 && !report) {
     return (
-      <div className="flex flex-col h-full bg-[#faf8ff] items-center justify-center">
-        <BarChart3 className="w-20 h-20 text-gray-200 mb-4" />
+      <div className="flex flex-col h-full bg-[var(--color-bg-page)] items-center justify-center">
+        <BarChart3 className="w-20 h-20 text-gray-500 mb-4" />
         <h2 className="text-lg font-bold text-gray-300">No Data for This Period</h2>
         <p className="text-sm text-gray-300 mt-1">Try selecting a different date range or process some orders first.</p>
       </div>
@@ -368,7 +369,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#faf8ff]">
+    <div className="h-full overflow-y-auto bg-[var(--color-bg-page)]">
       <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
 
         {/* ===== HEADER ===== */}
@@ -383,11 +384,11 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
             </div>
           </div>
           {/* Period presets */}
-          <div className="flex items-center gap-1.5 bg-white rounded-xl border border-[#e1e2ed] p-1 shadow-xs">
+          <div className="flex items-center gap-1.5 bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-1 shadow-xs">
             {(['7d', '30d', '90d'] as PeriodPreset[]).map(p => (
               <button key={p} onClick={() => handlePreset(p)}
                 className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                  preset === p ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  preset === p ? 'bg-[var(--color-indigo-600-solid)] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}>
                 {p === '7d' ? '7 Days' : p === '30d' ? '30 Days' : '90 Days'}
               </button>
@@ -415,7 +416,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
         {/* ===== KPI CARDS WITH % CHANGE ===== */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Revenue */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Revenue</p>
               <div className={`flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
@@ -430,7 +431,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
 
           {/* Orders */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Orders</p>
               <div className={`flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
@@ -445,7 +446,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
 
           {/* Net Profit */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider mb-2">Net Profit</p>
             <p className={`text-2xl font-black font-mono ${currentNetProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {formatCurrency(currentNetProfit, currencySymbol)}
@@ -456,7 +457,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
 
           {/* Avg Order Value */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Avg Order</p>
               <div className={`flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
@@ -474,7 +475,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
         {/* ===== CHARTS ROW 1: Revenue Trend + Peak Hours ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Revenue Trend - 2/3 */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="lg:col-span-2 bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <TrendingUp className="w-4 h-4 text-indigo-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Revenue Trend</h3>
@@ -505,13 +506,13 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
               </ResponsiveContainer>
             )}
             <div className="flex items-center gap-4 mt-2 text-[9px] text-gray-400">
-              <div className="flex items-center gap-1"><div className="w-3 h-0.5 rounded bg-indigo-500" /> Revenue</div>
-              <div className="flex items-center gap-1"><div className="w-3 h-0.5 rounded bg-emerald-500 dashed" style={{ borderTop: '1.5px dashed #10b981', height: 0 }} /> Orders</div>
+              <div className="flex items-center gap-1"><div className="w-3 h-0.5 rounded bg-[var(--color-indigo-500-solid)]" /> Revenue</div>
+              <div className="flex items-center gap-1"><div className="w-3 h-0.5 rounded bg-[var(--color-emerald-500-solid)] dashed" style={{ borderTop: '1.5px dashed #10b981', height: 0 }} /> Orders</div>
             </div>
           </div>
 
           {/* Peak Hours - 1/3 */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <Clock className="w-4 h-4 text-amber-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Peak Hours</h3>
@@ -547,7 +548,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
         {/* ===== CHARTS ROW 2: Top Items + Category Performance ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Top Selling Items */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <Award className="w-4 h-4 text-emerald-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Popular Items</h3>
@@ -588,7 +589,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
 
           {/* Category Performance */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <Layers className="w-4 h-4 text-indigo-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Category Performance</h3>
@@ -631,7 +632,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
         {/* ===== CHARTS ROW 3: Slow Movers + Payment Methods + Order Type ===== */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {/* Slow Movers */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <TrendingDown className="w-4 h-4 text-red-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Slow Movers</h3>
@@ -659,7 +660,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
 
           {/* Payment Methods */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <DollarSign className="w-4 h-4 text-blue-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Payment Methods</h3>
@@ -696,7 +697,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
 
           {/* Order Type Distribution */}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-4">
               <ShoppingBag className="w-4 h-4 text-purple-500" />
               <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Order Channels</h3>
@@ -734,7 +735,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
         </div>
 
         {/* ===== CASHIER PERFORMANCE ===== */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-4 h-4 text-blue-500" />
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Cashier Performance</h3>
@@ -779,7 +780,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
         </div>
 
         {/* ===== PERIOD OVER PERIOD COMPARISON TABLE ===== */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
           <div className="flex items-center gap-2 mb-4">
             <Activity className="w-4 h-4 text-indigo-500" />
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Period vs Previous Period</h3>
@@ -831,7 +832,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
           </div>
         </div>
 
-        <div className="text-[9px] text-gray-400 text-center py-2 border-t border-[#e1e2ed]">
+        <div className="text-[9px] text-gray-400 text-center py-2 border-t border-[var(--color-border-default)]">
           Reports computed server-side by the backend reporting engine · Period: {getRangeLabel()}
         </div>
       </div>

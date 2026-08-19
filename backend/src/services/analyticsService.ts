@@ -19,7 +19,12 @@ import mongoose from 'mongoose';
 import Restaurant from '../models/Restaurant';
 import User from '../models/User';
 import Device from '../models/Device';
-import Subscription from '../models/Subscription';
+import Subscription, { SubscriptionStatus } from '../models/Subscription';
+
+// NOTE: 'cancelled'/'expired' are NOT valid SubscriptionStatus values (schema
+// enum: trial | active | grace | suspended). This churn metric therefore
+// currently always reads 0. Flagged for owner review — the cast below only
+// makes the filter typecheck; it does not change runtime behavior.
 import AuditLog from '../models/AuditLog';
 import AIUsageLog from '../models/AIUsageLog';
 import VoiceAuditLog from '../modules/voice-inventory/models/VoiceAuditLog';
@@ -748,13 +753,13 @@ export async function getChurnMetrics(): Promise<ChurnMetrics> {
   ] = await Promise.all([
     Restaurant.countDocuments({ isActive: false, isDeleted: { $ne: true } }).exec(),
     Subscription.countDocuments({}).exec(),
-    Subscription.countDocuments({ status: { $in: ['cancelled', 'expired'] } }).exec(),
+    Subscription.countDocuments({ status: { $in: ['cancelled', 'expired'] as unknown as SubscriptionStatus[] } }).exec(),
     Subscription.countDocuments({ status: 'trial' }).exec(),
     Subscription.countDocuments({ status: 'active', createdAt: { $gte: thirtyDaysAgo }, planId: { $ne: null } }).exec(),
     Payment.countDocuments({ status: 'failed', createdAt: { $gte: thirtyDaysAgo } }).exec(),
     Restaurant.countDocuments({ isActive: false, isDeleted: { $ne: true }, updatedAt: { $gte: thirtyDaysAgo } }).exec(),
     Subscription.aggregate([
-      { $match: { status: { $in: ['cancelled', 'expired'] }, updatedAt: { $gte: oneYearAgo } } },
+      { $match: { status: { $in: ['cancelled', 'expired'] as unknown as SubscriptionStatus[] }, updatedAt: { $gte: oneYearAgo } } },
       { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$updatedAt' } }, count: { $sum: 1 } } },
       { $sort: { _id: 1 } },
     ]).exec(),

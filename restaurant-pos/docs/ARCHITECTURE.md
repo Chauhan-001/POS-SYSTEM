@@ -5,6 +5,15 @@
 **Status:** Draft  
 **Last Updated:** July 27, 2026
 
+> **Note:** The authoritative, consolidated system architecture is
+> [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) at the repository root.
+> This workspace document adds POS-specific depth. Configured ordering
+> (menu configuration domain, resolver/validator, deterministic pricing,
+> configured cart items + snapshots, offline billing + idempotent sync,
+> recipe/inventory consumption, KOT, and the customer website/QR surface) is
+> covered by that document plus [`docs/POS_ARCHITECTURE.md`](../../docs/POS_ARCHITECTURE.md)
+> and the `menu-config` module under `backend/src/modules/menu-config/`.
+
 ---
 
 ## Table of Contents

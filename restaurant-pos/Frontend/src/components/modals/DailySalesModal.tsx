@@ -18,8 +18,8 @@ export default function DailySalesModal({ isOpen, dailySales, settings, onClose 
 
   return (
     <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 border border-[#e1e2ed] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center bg-sticky">
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-2xl w-full mx-4 border border-[var(--color-border-default)] max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-[var(--color-border-default)] flex justify-between items-center bg-sticky">
           <h3 className="font-bold text-sm flex items-center gap-1.5"><DollarSign className="w-4 h-4 text-green-600" /> Daily Sales Summary</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>

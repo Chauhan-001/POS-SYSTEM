@@ -162,8 +162,8 @@ export default function OffersPopup({
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 border border-[#e1e2ed] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center bg-white sticky top-0">
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-md w-full mx-4 border border-[var(--color-border-default)] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-[var(--color-border-default)] flex justify-between items-center bg-[var(--color-bg-white)] sticky top-0">
           <h3 className="font-bold text-sm flex items-center gap-1.5">
             <Award className="w-4 h-4 text-amber-500" />
             Offers & Rewards
@@ -215,8 +215,8 @@ export default function OffersPopup({
             {loadingOffers ? (
               <div className="text-center py-6 text-xs text-gray-400 animate-pulse">Loading offers…</div>
             ) : offers.length === 0 ? (
-              <div className="text-center py-6 text-gray-400 border border-dashed border-[#e1e2ed] rounded-lg">
-                <Tag className="w-8 h-8 mx-auto mb-1.5 text-gray-200" />
+              <div className="text-center py-6 text-gray-400 border border-dashed border-[var(--color-border-default)] rounded-lg">
+                <Tag className="w-8 h-8 mx-auto mb-1.5 text-gray-500" />
                 <p className="text-xs font-semibold">No active offers</p>
                 <p className="text-[10px]">Create a promotion in the Marketing workspace</p>
               </div>
@@ -225,10 +225,10 @@ export default function OffersPopup({
                 {offers.map((o: any) => {
                   const isApplied = appliedOffer?.offer?.id === o._id;
                   return (
-                    <div key={o._id} className={`border rounded-lg p-3 transition-all ${isApplied ? 'border-green-300 bg-green-50' : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/40 bg-white'}`}>
+                    <div key={o._id} className={`border rounded-lg p-3 transition-all ${isApplied ? 'border-green-300 bg-green-50' : 'border-[var(--color-border-default)] hover:border-[var(--brand-color)]/40 bg-[var(--color-bg-white)]'}`}>
                       <div className="flex justify-between items-start gap-2">
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-[#191b23] truncate">{o.title}</p>
+                          <p className="text-xs font-bold text-[var(--color-text-primary)] truncate">{o.title}</p>
                           <p className="text-[10px] text-gray-500 mt-0.5">{offerSummary(o, currencySymbol)}</p>
                           {o.minOrderValue > 0 && (
                             <p className="text-[9px] text-gray-400 mt-0.5">Min. order {currencySymbol}{o.minOrderValue}</p>
@@ -245,7 +245,7 @@ export default function OffersPopup({
                               ? 'bg-red-100 text-red-700 hover:bg-red-200 border border-red-200'
                               : validatingId === o._id
                                 ? 'bg-gray-200 text-gray-500'
-                                : 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8] shadow-sm'
+                                : 'bg-[var(--brand-color)] text-white hover:bg-[var(--color-primary-hover)] shadow-sm'
                           }`}
                         >
                           {validatingId === o._id ? 'Checking…' : isApplied ? 'Remove' : 'Apply'}
@@ -259,7 +259,7 @@ export default function OffersPopup({
           </div>
 
           {/* Coupon code */}
-          <div className="bg-gray-50 border border-[#e1e2ed] rounded-lg p-3">
+          <div className="bg-gray-50 border border-[var(--color-border-default)] rounded-lg p-3">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Have a coupon?</p>
             <div className="flex gap-2">
               <input
@@ -268,14 +268,14 @@ export default function OffersPopup({
                 onKeyDown={(e) => e.key === 'Enter' && submitCoupon()}
                 placeholder="Enter coupon code"
                 disabled={validatingId !== null}
-                className="flex-1 px-3 py-2 text-xs font-mono font-semibold uppercase border border-[#e1e2ed] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30"
+                className="flex-1 px-3 py-2 text-xs font-mono font-semibold uppercase border border-[var(--color-border-default)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30"
               />
               <button
                 onClick={submitCoupon}
                 disabled={validatingId !== null || !couponCode.trim()}
                 className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   validatingId === 'coupon' ? 'bg-gray-200 text-gray-500'
-                  : 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8] shadow-sm disabled:opacity-50'
+                  : 'bg-[var(--brand-color)] text-white hover:bg-[var(--color-primary-hover)] shadow-sm disabled:opacity-50'
                 }`}
               >
                 {validatingId === 'coupon' ? 'Checking…' : 'Apply'}
@@ -297,7 +297,7 @@ export default function OffersPopup({
           {rewards.length === 0 ? (
             searchedCustomer && (
               <div className="text-center py-5 text-gray-400">
-                <Award className="w-10 h-10 mx-auto mb-1.5 text-gray-200" />
+                <Award className="w-10 h-10 mx-auto mb-1.5 text-gray-500" />
                 <p className="text-xs font-semibold">No rewards configured</p>
                 <p className="text-[10px]">Add rewards in Marketing → Settings</p>
               </div>
@@ -306,7 +306,7 @@ export default function OffersPopup({
             <div className="space-y-2">
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Available Reward Tiers</p>
               {rewards.filter(r => !searchedCustomer || r.pointsRequired <= (searchedCustomer.points || 0)).map((reward) => (
-                <div key={reward.id} className={`border rounded-lg p-3 transition-all ${appliedReward?.id === reward.id ? 'border-green-300 bg-green-50' : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/30 bg-white'}`}>
+                <div key={reward.id} className={`border rounded-lg p-3 transition-all ${appliedReward?.id === reward.id ? 'border-green-300 bg-green-50' : 'border-[var(--color-border-default)] hover:border-[var(--brand-color)]/30 bg-[var(--color-bg-white)]'}`}>
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
                       <p className="text-xs font-bold">{reward.title}</p>
@@ -327,7 +327,7 @@ export default function OffersPopup({
                         className={`mt-1 px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
                           appliedReward?.id === reward.id
                             ? 'bg-red-100 text-red-700 hover:bg-red-200 border border-red-200'
-                            : 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8] shadow-sm'
+                            : 'bg-[var(--brand-color)] text-white hover:bg-[var(--color-primary-hover)] shadow-sm'
                         }`}
                       >
                         {appliedReward?.id === reward.id ? 'Remove' : 'Apply'}
@@ -341,7 +341,7 @@ export default function OffersPopup({
 
           {/* Visit milestones */}
           {searchedCustomer && settings.visitMilestones && settings.visitMilestones.length > 0 && (
-            <div className="mt-1 pt-3 border-t border-[#e1e2ed]">
+            <div className="mt-1 pt-3 border-t border-[var(--color-border-default)]">
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Visit Milestones</p>
               <div className="space-y-1.5">
                 {settings.visitMilestones.map((m) => {

@@ -178,7 +178,9 @@ export async function updateInventory(
               name: item.itemName,
               code: `V${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
               category: 'Voice Added',
-              availability: true,
+              // Raw materials added by voice are INVENTORY items (hidden from
+              // the billing menu), not sellable menu items.
+              availability: false,
               price: 0,
               currentStock: Math.max(0, item.quantity || 0),
               unit: item.unit || 'pcs',

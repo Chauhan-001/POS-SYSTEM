@@ -166,6 +166,16 @@ const REG: Record<string, ActionMeta> = {
   'plan.status_changed': { module: 'plan', category: 'configuration', severity: 'high', label: 'Plan status changed' },
   'plan.rollback': { module: 'plan', category: 'configuration', severity: 'high', label: 'Plan rolled back' },
 
+  // ── Menu configuration (reusable templates) ─────────────────────
+  'menu-config.template_created': { module: 'menu-config', category: 'configuration', severity: 'low', label: 'Menu configuration template created' },
+  'menu-config.template_updated': { module: 'menu-config', category: 'configuration', severity: 'medium', label: 'Menu configuration template updated' },
+  'menu-config.template_archived': { module: 'menu-config', category: 'configuration', severity: 'medium', label: 'Menu configuration template archived' },
+  'menu-config.template_copied': { module: 'menu-config', category: 'configuration', severity: 'low', label: 'Menu configuration template copied' },
+  'menu-config.config_attached': { module: 'menu-config', category: 'configuration', severity: 'low', label: 'Menu configuration attached to product' },
+  'menu-config.config_updated': { module: 'menu-config', category: 'configuration', severity: 'low', label: 'Product menu configuration updated' },
+  'menu-config.config_detached': { module: 'menu-config', category: 'configuration', severity: 'low', label: 'Menu configuration detached from product' },
+  'menu-config.override_reset': { module: 'menu-config', category: 'configuration', severity: 'low', label: 'Product configuration overrides reset' },
+
   // ── Devices ─────────────────────────────────────────────────────
   'device.registered': { module: 'device', category: 'security', severity: 'medium', label: 'Device registered' },
   'device.approved': { module: 'device', category: 'security', severity: 'medium', label: 'Device approved' },

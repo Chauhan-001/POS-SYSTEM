@@ -3,7 +3,8 @@ import mongoose, { Schema, Document } from 'mongoose';
 export type UserRole = 'super_admin' | 'owner' | 'manager' | 'cashier' | 'waiter' | 'kitchen' | 'inventory';
 
 export interface IUser extends Document {
-  restaurantId: mongoose.Types.ObjectId;
+  /** Tenant restaurant. Nullable: the platform super_admin has no restaurant. */
+  restaurantId: mongoose.Types.ObjectId | null;
   /** Unique user identifier for login (e.g. "admin") */
   userId: string;
   phone: string;
@@ -38,7 +39,7 @@ export interface IUser extends Document {
 
 const UserSchema = new Schema<IUser>(
   {
-    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true, index: true },
+    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', default: null, index: true },
     userId: { type: String, required: true, trim: true, lowercase: true },
     phone: { type: String, required: true, trim: true },
     name: { type: String, required: true, trim: true },

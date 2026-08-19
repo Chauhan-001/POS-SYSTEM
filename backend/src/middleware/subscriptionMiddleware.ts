@@ -17,6 +17,7 @@
 import { Request, Response, NextFunction } from 'express';
 import Subscription from '../models/Subscription';
 import SubscriptionPlan from '../models/SubscriptionPlan';
+import { effectiveFeatures } from '../utils/subscriptionFeatures';
 
 /**
  * Middleware to reject requests from restaurants with suspended subscriptions.
@@ -96,7 +97,7 @@ export function requireFeature(feature: string) {
         return;
       }
 
-      if (!sub.features.includes(feature)) {
+      if (!effectiveFeatures(sub.features, sub.grantedFeatures).includes(feature)) {
         const plan = await SubscriptionPlan.findOne({ planId: sub.plan }).exec();
         res.status(403).json({
           error: 'Feature not available',

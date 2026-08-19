@@ -43,7 +43,21 @@ export async function getSubscriptionByRestaurant(restaurantId: string): Promise
   return data
 }
 
-export async function renewSubscription(id: string, payload?: { amount?: number; notes?: string; paymentMethod?: string }): Promise<any> {
+/**
+ * PUT /api/admin/restaurants/:id/subscription/features
+ * Grant or revoke add-on features on the restaurant's CURRENT plan.
+ * Grants apply immediately everywhere (server-side gates, POS status, admin UI)
+ * and survive plan changes. Revoking a feature the plan itself includes has no effect.
+ */
+export async function updateGrantedFeatures(
+  restaurantId: string,
+  payload: { grant?: string[]; revoke?: string[] }
+): Promise<Subscription> {
+  const { data } = await apiClient.put(`/api/admin/restaurants/${restaurantId}/subscription/features`, payload)
+  return data.subscription
+}
+
+export async function renewSubscription(id: string, payload?: { amount?: number; notes?: string; paymentMethod?: string; billingPeriod?: 'monthly' | 'yearly' }): Promise<any> {
   const { data } = await apiClient.post(`/api/admin/subscriptions/${id}/renew`, payload || {})
   return data
 }
@@ -58,13 +72,13 @@ export async function resumeSubscription(id: string): Promise<Subscription> {
   return data
 }
 
-export async function upgradeSubscription(id: string, planId: string): Promise<any> {
-  const { data } = await apiClient.put(`/api/admin/subscriptions/${id}/upgrade`, { plan: planId })
+export async function upgradeSubscription(id: string, planId: string, billingPeriod?: 'monthly' | 'yearly'): Promise<any> {
+  const { data } = await apiClient.put(`/api/admin/subscriptions/${id}/upgrade`, { plan: planId, billingPeriod })
   return data
 }
 
-export async function downgradeSubscription(id: string, planId: string): Promise<any> {
-  const { data } = await apiClient.put(`/api/admin/subscriptions/${id}/downgrade`, { plan: planId })
+export async function downgradeSubscription(id: string, planId: string, billingPeriod?: 'monthly' | 'yearly'): Promise<any> {
+  const { data } = await apiClient.put(`/api/admin/subscriptions/${id}/downgrade`, { plan: planId, billingPeriod })
   return data
 }
 

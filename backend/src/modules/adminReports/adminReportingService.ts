@@ -20,6 +20,7 @@ import { getGrowthReport, GrowthReport } from './aggregations/growth';
 import { getRevenueReport, RevenueReport, recordRevenueEvent } from './aggregations/revenue';
 import { getSubscriptionReport, SubscriptionReport, recordSubscriptionHistory } from './aggregations/subscriptions';
 import { getAiRevenueReport, AiRevenueReport } from './aggregations/ai';
+import { getAiUsageMetrics, AiUsageMetricsReport } from './aggregations/aiUsage';
 import { getSupportReport, SupportReport } from './aggregations/support';
 import { getDeviceReport, DeviceReport } from './aggregations/devices';
 import { getUsageReport, UsageReport } from './aggregations/usage';
@@ -53,6 +54,11 @@ export class AdminReportingService {
 
   async aiRevenue(options: ReportOptions = {}): Promise<AiRevenueReport> {
     return cachedReport('ai-revenue', signatureOf(options), () => getAiRevenueReport(options));
+  }
+
+  /** Phase 8 — AI usage & reliability telemetry (cache/fallback/validation/latency/cost). */
+  async aiUsageMetrics(options: ReportOptions = {}): Promise<AiUsageMetricsReport> {
+    return cachedReport('ai-usage-metrics', signatureOf(options), () => getAiUsageMetrics(options));
   }
 
   async support(options: ReportOptions = {}): Promise<SupportReport> {

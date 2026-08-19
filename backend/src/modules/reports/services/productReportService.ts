@@ -13,7 +13,7 @@ import mongoose from 'mongoose';
 import Bill from '../../../models/Bill';
 import BillItem from '../../../models/BillItem';
 import Product from '../../../models/Product';
-import { dateRange, ReportScope } from './salesReportService';
+import { dateClause, ReportScope } from './salesReportService';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
@@ -21,12 +21,11 @@ function objectId(v: string): mongoose.Types.ObjectId {
 
 export class ProductReportService {
   private validBillMatch(scope: ReportScope): Record<string, any> {
-    const { start, end } = dateRange(scope.startDate, scope.endDate);
     const match: Record<string, any> = {
       restaurantId: objectId(scope.restaurantId),
-      date: { $gte: start, $lte: end },
       isVoided: { $ne: true },
       isRefunded: { $ne: true },
+      ...dateClause(scope),
     };
     if (scope.branchId) match.branchId = objectId(scope.branchId);
     return match;
@@ -68,6 +67,50 @@ export class ProductReportService {
       ...r,
       revenue: Math.round(r.revenue * 100) / 100,
       discount: Math.round(r.discount * 100) / 100,
+      averagePrice: Math.round(r.averagePrice * 100) / 100,
+    }));
+  }
+
+  /**
+   * Phase 5 — configured-sales breakdown.
+   *
+   * Groups BillItems by (itemName, configSummary) using the IMMUTABLE
+   * snapshot stored at sale time — never today's menu — so the owner can
+   * see "Margherita Pizza — Large • Cheese Burst" as its own row, plus
+   * plain/legacy lines (configSummary null). This is the variant / modifier
+   * / add-on reporting dimension on top of the canonical transaction data.
+   */
+  async configBreakdown(scope: ReportScope, limit = 100) {
+    const bills = await Bill.find(this.validBillMatch(scope)).select('_id').lean().exec();
+    const billIds = bills.map((b: any) => b._id);
+    if (!billIds.length) return [];
+    const rows = await BillItem.aggregate([
+      { $match: { billId: { $in: billIds } } },
+      {
+        $group: {
+          _id: { name: '$itemName', configSummary: { $ifNull: ['$configSummary', null] } },
+          qty: { $sum: '$quantity' },
+          revenue: { $sum: { $multiply: ['$priceAtSale', '$quantity'] } },
+          orders: { $sum: 1 },
+        },
+      },
+      { $sort: { qty: -1, revenue: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          name: '$_id.name',
+          configSummary: '$_id.configSummary',
+          qty: 1,
+          revenue: 1,
+          orders: 1,
+          averagePrice: { $cond: [{ $gt: ['$qty', 0] }, { $divide: ['$revenue', '$qty'] }, 0] },
+        },
+      },
+    ]).exec();
+    return rows.map((r: any) => ({
+      ...r,
+      revenue: Math.round(r.revenue * 100) / 100,
       averagePrice: Math.round(r.averagePrice * 100) / 100,
     }));
   }

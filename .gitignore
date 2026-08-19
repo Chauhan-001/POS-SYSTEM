@@ -17,6 +17,13 @@ Thumbs.db
 .vscode/
 *.code-workspace
 
+# ─── Agent tool runtime state ───────────────────────────────────
+.freebuff/
+
+# ─── One-off scripts / data backups ─────────────────────────────
+backend/scripts/*backup*/
+backend/scripts/*backup*.json
+
 # ─── Logs ───────────────────────────────────────────────────────
 logs/
 *.log
@@ -34,6 +41,7 @@ release/
 coverage/
 .nyc_output/
 test-results/
+playwright-report*/
 *.tsbuildinfo
 
 # ─── Env / secrets ──────────────────────────────────────────────

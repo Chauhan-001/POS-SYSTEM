@@ -58,6 +58,10 @@ export {
   getAiRevenueReport,
 } from './aggregations/ai';
 export {
+  getAiUsageMetrics,
+} from './aggregations/aiUsage';
+export type { AiUsageMetricsReport } from './aggregations/aiUsage';
+export {
   getSupportReport,
 } from './aggregations/support';
 export {

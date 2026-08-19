@@ -49,8 +49,6 @@ const Analytics = lazy(() => import('../pages/Analytics'))
 const AIUsage = lazy(() => import('../pages/AIUsage'))
 const Support = lazy(() => import('../pages/Support'))
 const AuditLog = lazy(() => import('../pages/AuditLog'))
-const VoiceAliasManager = lazy(() => import('../pages/VoiceAliasManager'))
-const VoiceInventoryDashboard = lazy(() => import('../pages/VoiceInventoryDashboard'))
 const Security = lazy(() => import('../pages/Security'))
 const Settings = lazy(() => import('../pages/Settings'))
 const Profile = lazy(() => import('../pages/Profile'))
@@ -141,14 +139,6 @@ export const router = createBrowserRouter([
       {
         path: 'devices',
         element: <Suspense fallback={<LazyFallback />}><Devices /></Suspense>,
-      },
-      {
-        path: 'voice-aliases',
-        element: <Suspense fallback={<LazyFallback />}><VoiceAliasManager /></Suspense>,
-      },
-      {
-        path: 'voice-inventory',
-        element: <Suspense fallback={<LazyFallback />}><VoiceInventoryDashboard /></Suspense>,
       },
       {
         path: 'analytics',

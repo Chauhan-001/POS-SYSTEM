@@ -16,9 +16,15 @@ import Offer from '../models/Offer';
 import Customer from '../models/Customer';
 import CustomerSegment from '../models/CustomerSegment';
 import CouponRedemption from '../models/CouponRedemption';
+import Product from '../models/Product';
+import ProductVariant from '../models/ProductVariant';
 import { AppError } from '../utils/AppError';
 import { couponRedemptionRepo, customerActivityRepo, auditLogRepo } from '../repositories';
 import { recordOfferRedemption } from './offerAnalyticsService';
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
@@ -29,6 +35,33 @@ export interface OfferValidationResult {
   offer?: any;
   reason?: string;
   discount?: number;
+}
+
+/**
+ * Convert a terse validation `reason` into plain, customer-friendly language
+ * (Phase 17 — the customer should never see rule jargon). Falls back to the
+ * raw reason for reasons that are already human-readable.
+ */
+export function friendlyOfferReason(reason?: string): string {
+  if (!reason) return 'This offer cannot be applied right now.';
+  const r = reason.toLowerCase();
+  if (r.includes('not found')) return 'This offer is no longer available.';
+  if (r.includes('has not started')) return 'This offer starts later — check back soon.';
+  if (r.includes('expired')) return 'Sorry, this offer has expired.';
+  if (r.includes('not available today')) return 'This offer is only available on select days.';
+  if (r.includes('valid ')) return `This offer is only available ${reason.split('Offer valid ')[1]}.`;
+  if (r.includes('minimum order')) return `This offer needs a minimum order of ${reason.replace(/[^0-9₹.]/g, '')}.`;
+  if (r.includes('not available at this branch')) return 'This offer is not available at this location.';
+  if (r.includes('per-customer') || r.includes('per customer')) return 'You have already used this offer.';
+  if (r.includes('usage limit')) return 'This offer has reached its usage limit.';
+  if (r.includes('members only')) return 'This offer is available to loyalty members only.';
+  if (r.includes('segment')) return 'This offer is not available for you right now.';
+  if (r.includes('qualifying')) return 'Add an eligible item to your order to use this offer.';
+  if (r.includes('offer is ')) {
+    const status = reason.split('Offer is ')[1];
+    return `This offer is currently ${status}.`;
+  }
+  return reason;
 }
 
 export class OfferValidationService {
@@ -132,20 +165,24 @@ export class OfferValidationService {
     if ((offer.applicableCategories?.length || offer.applicableProductIds?.length) && Array.isArray(opts.billItems)) {
       const applicable = opts.billItems.some((item: any) => {
         const cat = item?.product?.category || item?.category;
-        const pid = item?.product?.id || item?.menuItemId;
+        const pid = item?.product?.id || item?.productId || item?.menuItemId;
         return (offer.applicableCategories || []).includes(cat) || (offer.applicableProductIds || []).includes(pid);
       });
       if (!applicable) return { valid: false, reason: 'No qualifying items in this bill' };
     }
 
     // ── Compute discount (server-side, never client-computed) ─
-    const discount = this.computeDiscount(offer, subtotal);
+    const discount = this.computeDiscount(offer, subtotal, opts.billItems, opts.branchId);
 
     return { valid: true, offer: this.sanitize(offer), discount };
   }
 
-  /** Compute the discount amount for an offer against a subtotal. */
-  private computeDiscount(offer: any, subtotal: number): number {
+  /**
+   * Compute the discount amount for an offer against a subtotal. For combo
+   * offers the discount is the gap between the authoritative combo-item total
+   * (server-resolved prices) and the combo price — never a client number.
+   */
+  private computeDiscount(offer: any, subtotal: number, billItems?: any[], branchId?: string): number {
     if (offer.type === 'percentage') {
       const raw = subtotal * (offer.value / 100);
       return offer.maxDiscount ? Math.min(raw, offer.maxDiscount) : raw;
@@ -153,9 +190,122 @@ export class OfferValidationService {
     if (offer.type === 'flat' || offer.type === 'cashback' || offer.type === 'coupon') {
       return Math.min(offer.value, subtotal);
     }
+    if (offer.type === 'combo') {
+      const comboIds = new Set((offer.comboProductIds || []).map((id: any) => String(id)));
+      let comboTotal = 0;
+      for (const it of Array.isArray(billItems) ? billItems : []) {
+        const pid = it?.product?.id || it?.productId || it?.menuItemId;
+        if (!pid || !comboIds.has(String(pid))) continue;
+        comboTotal += (Number(it?.price) || 0) * (Number(it?.quantity) || 1);
+      }
+      // Per-branch combo pricing: a branch-level combo price (if set on the
+      // offer) wins over the default comboPrice. The discount is the gap
+      // between the authoritative item total and that branch's combo price.
+      let comboPrice = Number(offer.comboPrice) || 0;
+      if (branchId) {
+        const branchPrice = Number(offer.comboBranchPrices?.[branchId]) || 0;
+        if (branchPrice > 0) comboPrice = branchPrice;
+      }
+      return comboPrice > 0 ? Math.max(0, round2(comboTotal - comboPrice)) : 0;
+    }
     if (offer.type === 'reward_points') return 0;
-    // bogo / free_item / combo handled at line level by the POS
+    // bogo / free_item handled at line level by the POS
     return 0;
+  }
+
+  /**
+   * PHASE B SECURITY FIX — derive the AUTHORITATIVE bill subtotal server-side
+   * from the bill's line items (tenant-scoped products + current prices,
+   * branch overrides and variant prices). The client-submitted billSubtotal is
+   * never trusted for eligibility or discount math when line items are present.
+   * Returns { subtotal, items } where `items` carries the server-resolved
+   * prices (productId, name, price, quantity, category, variantName) so combo
+   * discounts and applicability checks use the same authoritative numbers.
+   */
+  async deriveSubtotal(
+    restaurantId: string,
+    billItems: any[],
+    branchId?: string,
+  ): Promise<{ subtotal: number; items: any[] }> {
+    if (!Array.isArray(billItems) || billItems.length === 0) return { subtotal: 0, items: [] };
+    if (!mongoose.Types.ObjectId.isValid(restaurantId)) return { subtotal: 0, items: [] };
+
+    const entries: Array<{ productId: string; quantity: number; variantName?: string }> = [];
+    for (const it of billItems) {
+      const productId = it?.product?.id || it?.id || it?.productId || it?.menuItemId;
+      if (!productId || !mongoose.Types.ObjectId.isValid(productId)) continue;
+      const quantity = Math.max(0, Number(it?.quantity) || 1);
+      if (quantity <= 0) continue;
+      const variantName = it?.variantName || it?.variant || it?.selectedVariant?.name;
+      entries.push({ productId: String(productId), quantity, variantName: variantName ? String(variantName) : undefined });
+    }
+    if (entries.length === 0) return { subtotal: 0, items: [] };
+
+    const ids = [...new Set(entries.map((e) => e.productId))];
+    const oid = new mongoose.Types.ObjectId(restaurantId);
+    const products = await Product.find({
+      _id: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
+      restaurantId: oid,
+      isDeleted: { $ne: true },
+    }).lean().exec();
+    const byId = new Map(products.map((p: any) => [String(p._id), p]));
+
+    // Batch-load variants for any line that names one (variant-aware pricing).
+    const variantNamesByProduct = new Map<string, string[]>();
+    for (const e of entries) {
+      if (!e.variantName) continue;
+      const names = variantNamesByProduct.get(e.productId) || [];
+      if (!names.includes(e.variantName)) names.push(e.variantName);
+      variantNamesByProduct.set(e.productId, names);
+    }
+    const variantQuery = Array.from(variantNamesByProduct.entries()).map(([pid, names]) => ({
+      productId: new mongoose.Types.ObjectId(pid),
+      name: { $in: names },
+      isDeleted: { $ne: true },
+    }));
+    const variants = variantQuery.length > 0
+      ? await ProductVariant.find({ $or: variantQuery }).lean().exec()
+      : [];
+    const variantByKey = new Map<string, any>();
+    for (const v of variants) variantByKey.set(`${String((v as any).productId)}::${(v as any).name}`, v);
+
+    const branchOid = branchId && mongoose.Types.ObjectId.isValid(branchId)
+      ? new mongoose.Types.ObjectId(branchId)
+      : null;
+
+    const items: any[] = [];
+    let subtotal = 0;
+    for (const e of entries) {
+      const product = byId.get(e.productId);
+      if (!product) continue; // not this restaurant's product — never trusted
+      let price: number;
+      const variant = e.variantName ? variantByKey.get(`${e.productId}::${e.variantName}`) : null;
+      if (variant) {
+        price = Number((variant as any).price) || 0;
+        if (branchOid && (variant as any).branchPrice) {
+          const override = (variant as any).branchPrice.get?.(String(branchOid)) ?? (variant as any).branchPrice[String(branchOid)];
+          if (Number.isFinite(override) && override > 0) price = Number(override);
+        }
+      } else {
+        price = Number(product.price) || 0;
+        if (branchOid && product.branchPrice) {
+          const override = product.branchPrice.get?.(String(branchOid)) ?? product.branchPrice[String(branchOid)];
+          if (Number.isFinite(override) && override > 0) price = Number(override);
+        }
+      }
+      const lineTotal = round2(price * e.quantity);
+      subtotal = round2(subtotal + lineTotal);
+      items.push({
+        productId: e.productId,
+        name: product.name,
+        price,
+        quantity: e.quantity,
+        lineTotal,
+        category: product.category,
+        variantName: e.variantName,
+      });
+    }
+    return { subtotal, items };
   }
 
   /**
@@ -178,6 +328,8 @@ export class OfferValidationService {
       billId?: string;
       branchId?: string;
       discountAmount: number;
+      /** Authoritative sales subtotal the discount applied to (analytics). */
+      salesAmount?: number;
       redeemedBy?: string;
     },
   ): Promise<any> {
@@ -251,8 +403,20 @@ export class OfferValidationService {
       details: { code: opts.code, customerPhone: opts.customerPhone, discount: opts.discountAmount },
     } as any);
 
-    // 5. Populate OfferAnalytics from the real redemption event (Phase 23).
-    await recordOfferRedemption(restaurantId, opts.offerId, opts.discountAmount);
+    // 5. Populate OfferAnalytics from the REAL redemption event (Phase B).
+    //    Passes the full event (billId/branch/customer/sales) so the daily
+    //    snapshot records revenue, not just a counter. recordOfferRedemption
+    //    never throws — analytics can never block billing.
+    await recordOfferRedemption({
+      restaurantId,
+      offerId: opts.offerId,
+      discountAmount: opts.discountAmount,
+      salesAmount: opts.salesAmount,
+      billId: opts.billId,
+      branchId: opts.branchId,
+      customerId: opts.customerId,
+      customerPhone: opts.customerPhone,
+    });
 
     return redemption?.toObject();
   }

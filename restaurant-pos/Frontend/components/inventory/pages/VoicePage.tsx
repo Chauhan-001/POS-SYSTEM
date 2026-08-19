@@ -684,7 +684,7 @@ export default function VoicePage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-white border border-[#e1e2ed] rounded-xl p-0.5 shadow-xs">
+          <div className="flex items-center gap-1 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-xl p-0.5 shadow-xs">
             {LANGUAGES.map(l => (
               <button
                 key={l.code}
@@ -702,7 +702,7 @@ export default function VoicePage() {
           <button
             onClick={() => setLog([])}
             disabled={log.length === 0}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#e1e2ed] rounded-xl text-[10px] font-bold text-gray-500 hover:border-red-300 hover:text-red-600 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-3 py-2 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-xl text-[10px] font-bold text-gray-500 hover:border-red-300 hover:text-red-600 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title="Clear action history"
           >
             <Trash2 className="w-3 h-3" /> Clear log
@@ -727,7 +727,7 @@ export default function VoicePage() {
             <span className="text-[10px] font-black text-gray-700 uppercase tracking-wider">Voice Input</span>
             {isListening && (
               <span className="ml-auto flex items-center gap-1 text-[9px] font-bold text-red-500">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-red-500-solid)] animate-pulse" />
                 REC
               </span>
             )}
@@ -738,7 +738,7 @@ export default function VoicePage() {
               onClick={isListening ? stopListening : startListening}
               className={`w-20 h-20 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-lg ring-4 ${
                 isListening
-                  ? 'bg-red-500 scale-110 shadow-red-200 ring-red-100 animate-pulse'
+                  ? 'bg-[var(--color-red-500-solid)] scale-110 shadow-red-200 ring-red-100 animate-pulse'
                   : 'bg-gradient-to-br from-[var(--brand-color)] to-blue-600 hover:scale-105 hover:shadow-[var(--brand-color)]/30 ring-[var(--brand-color)]/15'
               }`}
               title={isListening ? 'Stop recording' : 'Tap to speak'}
@@ -801,7 +801,7 @@ export default function VoicePage() {
                   {diag.open && diag.info.length > 0 && (
                     <div className="px-3.5 pb-3.5 space-y-1.5 font-mono text-[10px]">
                       {diag.info.map((row, i) => (
-                        <div key={i} className="bg-white rounded-lg px-2.5 py-1.5 border border-red-100">
+                        <div key={i} className="bg-[var(--color-bg-white)] rounded-lg px-2.5 py-1.5 border border-red-100">
                           <span className="text-red-500 font-bold uppercase tracking-wide">{row.label}: </span>
                           <span className="text-red-800 break-all">{row.value}</span>
                         </div>
@@ -822,7 +822,7 @@ export default function VoicePage() {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') analyze(input); }}
-                    className="w-full pl-9 pr-3 py-3 bg-gray-50 border border-[#e1e2ed] rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all"
+                    className="w-full pl-9 pr-3 py-3 bg-gray-50 border border-[var(--color-border-default)] rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all"
                     placeholder={
                       language === 'hi'
                         ? 'जैसे "20 kg aata add karo" या "3 paneer waste"'
@@ -835,7 +835,7 @@ export default function VoicePage() {
                 <button
                   onClick={() => analyze(input)}
                   disabled={!input.trim()}
-                  className="px-5 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  className="px-5 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
                   {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                   Go
@@ -861,7 +861,7 @@ export default function VoicePage() {
               initial={{ opacity: 0, y: -10, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10 }}
-              className="bg-white rounded-2xl border-2 border-[var(--brand-color)] shadow-lg overflow-hidden"
+              className="bg-[var(--color-bg-white)] rounded-2xl border-2 border-[var(--brand-color)] shadow-lg overflow-hidden"
             >
               <div className="px-5 py-3 bg-[var(--brand-color)]/5 border-b border-[var(--brand-color)]/10 flex items-center gap-2">
                 {confirmDone ? (
@@ -1068,7 +1068,7 @@ export default function VoicePage() {
                                     className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
                                       rowPicks[i] === c.name
                                         ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]'
-                                        : 'bg-white text-gray-700 border-gray-200 hover:border-[var(--brand-color)]/40'
+                                        : 'bg-[var(--color-bg-white)] text-gray-700 border-gray-200 hover:border-[var(--brand-color)]/40'
                                     }`}
                                   >
                                     {c.name} {c.currentStock != null ? `(${c.currentStock} ${c.unit || 'pcs'})` : ''}
@@ -1088,7 +1088,7 @@ export default function VoicePage() {
                           <div className="flex items-center gap-1.5">
                             <button
                               onClick={() => setRowQtys(q => ({ ...q, [i]: Math.max(0.05, (q[i] ?? item.quantity) - stepFor(unit)) }))}
-                              className="w-8 h-8 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
+                              className="w-8 h-8 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
                               aria-label={`Decrease ${item.item}`}
                             >
                               <span className="text-base leading-none font-bold">−</span>
@@ -1102,12 +1102,12 @@ export default function VoicePage() {
                                 const v = parseFloat(e.target.value);
                                 if (!isNaN(v) && v >= 0) setRowQtys(q => ({ ...q, [i]: v }));
                               }}
-                              className="w-16 text-center text-sm font-bold bg-white border border-[#e1e2ed] rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
+                              className="w-16 text-center text-sm font-bold bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
                             />
                             <button
                               onClick={() => setRowQtys(q => ({ ...q, [i]: (q[i] ?? item.quantity) + stepFor(unit) }))}
                               disabled={isConfirming}
-                              className="w-8 h-8 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
+                              className="w-8 h-8 rounded-lg bg-[var(--color-bg-white)] border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-all"
                               aria-label={`Increase ${pickedName}`}
                             >
                               <Plus className="w-4 h-4" />
@@ -1141,7 +1141,7 @@ export default function VoicePage() {
                                   const v = e.target.value === '' ? '' : parseFloat(e.target.value);
                                   if (v === '' || (!isNaN(v) && v >= 0)) setRowRates(r => ({ ...r, [i]: v }));
                                 }}
-                                className="w-20 text-right text-sm font-bold bg-white rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
+                                className="w-20 text-right text-sm font-bold bg-[var(--color-bg-white)] rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20"
                                 title="Purchase rate per unit — saved to the product's average cost"
                               />
                               <span className="text-[10px] text-gray-400">/{unit}</span>
@@ -1154,7 +1154,7 @@ export default function VoicePage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-3 justify-end mt-5 pt-4 border-t border-[#e1e2ed]">
+                <div className="flex gap-3 justify-end mt-5 pt-4 border-t border-[var(--color-border-default)]">
                   <button
                     onClick={handleCancel}
                     disabled={isConfirming}
@@ -1165,9 +1165,9 @@ export default function VoicePage() {
                   <button
                     onClick={handleConfirm}
                     disabled={isConfirming || confirmDone || parsedResult.parsed.items.some((item, i) =>
-                      (!!item.ambiguous || (!item.canonicalName && (item.candidates?.length || 0) > 0)) && !rowPicks[i]
+                      ((!!item.ambiguous || !item.canonicalName) && (item.candidates?.length || 0) > 0) && !rowPicks[i]
                     )}
-                    className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all cursor-pointer shadow-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-6 py-2.5 bg-[var(--color-emerald-600-solid)] text-white rounded-xl text-sm font-bold hover:bg-[var(--color-emerald-700-solid)] transition-all cursor-pointer shadow-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {isConfirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                     {isConfirming ? 'Updating...' : 'Confirm'}
@@ -1181,7 +1181,7 @@ export default function VoicePage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="bg-white rounded-2xl border border-dashed border-[#d7dbea] shadow-sm min-h-[280px] flex flex-col items-center justify-center text-center p-6"
+              className="bg-[var(--color-bg-white)] rounded-2xl border border-dashed border-[var(--color-border-default)] shadow-sm min-h-[280px] flex flex-col items-center justify-center text-center p-6"
             >
               <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center">
                 <Sparkles className="w-5 h-5 text-amber-500" />
@@ -1202,13 +1202,13 @@ export default function VoicePage() {
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider shrink-0 flex items-center gap-1.5">
             <Volume2 className="w-3 h-3" /> Quick Commands
           </p>
-          <div className="flex-1 h-px bg-[#e1e2ed] min-w-[40px]" />
+          <div className="flex-1 h-px bg-[var(--color-border-default)] min-w-[40px]" />
           <div className="flex flex-wrap gap-1.5">
             {EXAMPLES.map((ex, i) => (
               <button
                 key={i}
                 onClick={() => { setInput(ex.text); }}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[11px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/40 hover:text-[var(--brand-color)] hover:shadow-sm transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-[11px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/40 hover:text-[var(--brand-color)] hover:shadow-sm transition-all cursor-pointer"
               >
                 <span className="text-xs">{ex.emoji}</span>
                 <span className="truncate">{ex.text}</span>
@@ -1225,9 +1225,9 @@ export default function VoicePage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] shadow-sm overflow-hidden"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] shadow-sm overflow-hidden"
         >
-          <div className="px-5 py-4 border-b border-[#e1e2ed] flex items-center gap-2">
+          <div className="px-5 py-4 border-b border-[var(--color-border-default)] flex items-center gap-2">
             <History className="w-4 h-4 text-gray-400" />
             <h2 className="text-sm font-bold">Recent Actions</h2>
             {log.length > 0 && (
@@ -1238,12 +1238,12 @@ export default function VoicePage() {
           </div>
           {log.length === 0 ? (
             <div className="flex flex-col items-center py-8 text-center">
-              <MessageSquare className="w-9 h-9 text-gray-200 mb-2.5" />
+              <MessageSquare className="w-9 h-9 text-gray-500 mb-2.5" />
               <p className="text-sm font-semibold text-gray-400">No actions yet</p>
               <p className="text-[11px] text-gray-300 mt-1">Confirmed voice commands appear here</p>
             </div>
           ) : (
-            <div className="divide-y divide-[#e1e2ed] max-h-60 overflow-y-auto">
+            <div className="divide-y divide-[var(--color-border-default)] max-h-60 overflow-y-auto">
               {log.map(entry => {
                 const meta = INTENT_META[entry.intent] || INTENT_META.unknown;
                 const canUndo = !!entry.auditLogId && !entry.undone;
@@ -1285,7 +1285,7 @@ export default function VoicePage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="bg-gradient-to-br from-[var(--brand-color)]/[0.04] to-blue-50/40 rounded-2xl border border-[#e1e2ed] p-5"
+          className="bg-gradient-to-br from-[var(--brand-color)]/[0.04] to-blue-50/40 rounded-2xl border border-[var(--color-border-default)] p-5"
         >
           <div className="flex items-center gap-2 mb-3">
             <HelpCircle className="w-4 h-4 text-[var(--brand-color)]" />
@@ -1320,7 +1320,7 @@ export default function VoicePage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.25 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5"
         >
           <div className="flex items-center gap-2 mb-3">
             <Package className="w-4 h-4 text-gray-400" />
@@ -1331,7 +1331,7 @@ export default function VoicePage() {
           {inventory.items.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {inventory.items.slice(0, 8).map(c => (
-                <span key={c.id} className="text-[9px] font-semibold text-gray-500 bg-gray-50 border border-[#e1e2ed] px-2 py-0.5 rounded-full">
+                <span key={c.id} className="text-[9px] font-semibold text-gray-500 bg-gray-50 border border-[var(--color-border-default)] px-2 py-0.5 rounded-full">
                   {c.name}
                 </span>
               ))}
@@ -1364,7 +1364,7 @@ export default function VoicePage() {
             The stock change will be reversed. This cannot be undone.
           </p>
         </div>
-        <div className="flex gap-3 justify-center pt-4 border-t border-[#e1e2ed]">
+        <div className="flex gap-3 justify-center pt-4 border-t border-[var(--color-border-default)]">
           <button
             onClick={() => setUndoTarget(null)}
             disabled={isUndoing}
@@ -1375,7 +1375,7 @@ export default function VoicePage() {
           <button
             onClick={handleUndo}
             disabled={isUndoing}
-            className="px-6 py-2.5 bg-amber-600 text-white rounded-xl text-sm font-bold hover:bg-amber-700 cursor-pointer shadow-sm transition-all disabled:opacity-40 flex items-center gap-2"
+            className="px-6 py-2.5 bg-[var(--color-amber-600-solid)] text-white rounded-xl text-sm font-bold hover:bg-[var(--color-amber-700-solid)] cursor-pointer shadow-sm transition-all disabled:opacity-40 flex items-center gap-2"
           >
             {isUndoing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
             {isUndoing ? 'Undoing...' : 'Yes, Undo'}

@@ -83,15 +83,15 @@ export default function PaymentConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 border border-[#e1e2ed] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-lg w-full mx-4 border border-[var(--color-border-default)] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-4 border-b border-[#e1e2ed] flex justify-between items-center bg-gradient-to-r from-[#f0f4ff] to-white">
+        <div className="p-4 border-b border-[var(--color-border-default)] flex justify-between items-center bg-gradient-to-r from-[var(--color-surface-muted)] to-white">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center">
               <ClipboardCheck className="w-4 h-4 text-green-600" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-[#191b23]">Confirm Payment</h3>
+              <h3 className="font-bold text-sm text-[var(--color-text-primary)]">Confirm Payment</h3>
               {activeOrder && (
                 <p className="text-[10px] text-gray-500">Order #{activeOrder.orderNumber}</p>
               )}
@@ -125,7 +125,7 @@ export default function PaymentConfirmModal({
           </div>
 
           {/* Cart Items Summary */}
-          <div className="bg-gray-50 rounded-lg border border-[#e1e2ed] divide-y divide-[#e1e2ed] max-h-48 overflow-y-auto">
+          <div className="bg-gray-50 rounded-lg border border-[var(--color-border-default)] divide-y divide-[var(--color-border-default)] max-h-48 overflow-y-auto">
             {cartItems.length === 0 ? (
               <p className="text-xs text-gray-400 text-center py-6">No items in cart</p>
             ) : (
@@ -134,17 +134,17 @@ export default function PaymentConfirmModal({
                 return (
                   <div key={item.id || idx} className="flex items-center justify-between px-3 py-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[10px] font-mono text-gray-400 bg-white border border-[#e1e2ed] rounded w-5 h-5 flex items-center justify-center shrink-0">
+                      <span className="text-[10px] font-mono text-gray-400 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded w-5 h-5 flex items-center justify-center shrink-0">
                         {item.quantity || 1}x
                       </span>
-                      <span className="text-xs font-medium text-[#191b23] truncate">
+                      <span className="text-xs font-medium text-[var(--color-text-primary)] truncate">
                         {item.product?.name || item.name || 'Item'}
                       </span>
                       {item.isFree && (
                         <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded">FREE</span>
                       )}
                     </div>
-                    <span className="text-xs font-mono font-semibold text-[#191b23] shrink-0 ml-2">
+                    <span className="text-xs font-mono font-semibold text-[var(--color-text-primary)] shrink-0 ml-2">
                       {currencySymbol}{lineTotal.toFixed(2)}
                     </span>
                   </div>
@@ -154,7 +154,7 @@ export default function PaymentConfirmModal({
           </div>
 
           {/* Totals */}
-          <div className="bg-white rounded-lg border border-[#e1e2ed] p-3 space-y-1.5">
+          <div className="bg-[var(--color-bg-white)] rounded-lg border border-[var(--color-border-default)] p-3 space-y-1.5">
             <div className="flex justify-between text-xs">
               <span className="text-gray-500">Subtotal</span>
               <span className="font-mono font-medium">{currencySymbol}{subtotal.toFixed(2)}</span>
@@ -174,7 +174,7 @@ export default function PaymentConfirmModal({
               <span className="font-mono font-medium">{currencySymbol}{gst.toFixed(2)}</span>
             </div>
             {paymentMethod === 'Split' && (
-              <div className="pt-1.5 border-t border-dashed border-[#e1e2ed] space-y-1">
+              <div className="pt-1.5 border-t border-dashed border-[var(--color-border-default)] space-y-1">
                 <p className="text-[10px] text-gray-400 font-semibold uppercase">Split Breakdown</p>
                 {splitDetails.cashAmount > 0 && (
                   <div className="flex justify-between text-[10px]"><span className="text-gray-500">Cash</span><span className="font-mono">{currencySymbol}{splitDetails.cashAmount.toFixed(2)}</span></div>
@@ -190,15 +190,15 @@ export default function PaymentConfirmModal({
                 )}
               </div>
             )}
-            <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-[#e1e2ed]">
-              <span className="text-[#191b23]">Grand Total</span>
+            <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-[var(--color-border-default)]">
+              <span className="text-[var(--color-text-primary)]">Grand Total</span>
               <span className="font-mono text-[var(--brand-color)]">{currencySymbol}{grandTotal.toFixed(2)}</span>
             </div>
           </div>
 
           {/* Cashier Info */}
           {currentEmployee && (
-            <div className="flex items-center gap-2 text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-[#e1e2ed]">
+            <div className="flex items-center gap-2 text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-[var(--color-border-default)]">
               <User className="w-3 h-3" />
               <span>Cashier: <strong className="text-gray-600">{currentEmployee.name}</strong></span>
               <span className="ml-auto">{currentEmployee.role || 'Staff'}</span>
@@ -207,17 +207,17 @@ export default function PaymentConfirmModal({
         </div>
 
         {/* Footer Action Buttons */}
-        <div className="p-4 border-t border-[#e1e2ed] flex gap-3 bg-gray-50/50">
+        <div className="p-4 border-t border-[var(--color-border-default)] flex gap-3 bg-gray-50/50">
           <button
             onClick={onBackToOrders}
-            className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white hover:text-[#191b23] transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-[var(--color-bg-white)] hover:text-[var(--color-text-primary)] transition-all cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to Orders
           </button>
           <button
             onClick={onClose}
-            className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white hover:text-[#191b23] transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-600 hover:bg-[var(--color-bg-white)] hover:text-[var(--color-text-primary)] transition-all cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
             Cancel
@@ -226,7 +226,7 @@ export default function PaymentConfirmModal({
             onClick={onConfirmPayment}
             disabled={isProcessing}
             data-tour="pay-print-btn"
-            className={`flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ml-auto cursor-pointer ${isProcessing ? 'bg-gray-400 text-gray-200 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700 hover:shadow-md'}`}
+            className={`flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ml-auto cursor-pointer ${isProcessing ? 'bg-gray-400 text-gray-500 cursor-not-allowed' : 'bg-[var(--color-green-600-solid)] text-white hover:bg-[var(--color-green-700-solid)] hover:shadow-md'}`}
           >
             {isProcessing ? (
               <>

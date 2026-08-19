@@ -67,45 +67,31 @@ const fmt = (n: number) => '₹' + money(n).toLocaleString('en-IN', { maximumFra
 const fmtSmall = (n: number) => '₹' + money(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const prettyQty = (n: number) => String(Math.round(n * 100) / 100);
 
-// A fun food emoji for every ingredient — no reading required.
+// Item thumbnail — shows the item's REAL photo whenever one exists, otherwise
+// its initial letter (same fallback as the billing menu). Never a food emoji:
+// the photo is the source of truth for what the item is.
 // (exported so the Easy Offer Maker reuses the same visual language)
-export function emojiFor(name: string): string {
-  const n = (name || '').toLowerCase();
-  if (/paneer|cheese|cheddar|mozzarella/.test(n)) return '🧀';
-  if (/chicken|poultry|broiler/.test(n)) return '🍗';
-  if (/milk|cream|dahi|yogurt|curd|paneer cream/.test(n)) return '🥛';
-  if (/butter|ghee|oil|shortening/.test(n)) return '🧈';
-  if (/tomato/.test(n)) return '🍅';
-  if (/onion|shallot/.test(n)) return '🧅';
-  if (/rice|basmati|pulao|biryani/.test(n)) return '🍚';
-  if (/atta|flour|maida|wheat|bread|naan|roti/.test(n)) return '🍞';
-  if (/sugar|jaggery|gud/.test(n)) return '🍬';
-  if (/salt/.test(n)) return '🧂';
-  if (/egg/.test(n)) return '🥚';
-  if (/fish|prawn|shrimp|crab|seafood/.test(n)) return '🐟';
-  if (/chili|chilli|masala|spice|pepper|turmeric|cumin|cardamom|coriander seed/.test(n)) return '🌶️';
-  if (/garlic/.test(n)) return '🧄';
-  if (/ginger/.test(n)) return '🫚';
-  if (/lemon|lime/.test(n)) return '🍋';
-  if (/potato|aloo/.test(n)) return '🥔';
-  if (/carrot|gajar/.test(n)) return '🥕';
-  if (/cabbage|patta gobi/.test(n)) return '🥬';
-  if (/capsicum|bell pepper|shimla/.test(n)) return '🫑';
-  if (/mushroom/.test(n)) return '🍄';
-  if (/chocolate|cocoa|brownie/.test(n)) return '🍫';
-  if (/coffee/.test(n)) return '☕';
-  if (/tea|chai/.test(n)) return '🍵';
-  if (/mango/.test(n)) return '🥭';
-  if (/banana|kela/.test(n)) return '🍌';
-  if (/coconut/.test(n)) return '🥥';
-  if (/apple|seb/.test(n)) return '🍎';
-  if (/bottle|water|soda|juice|cola|drink|beverage/.test(n)) return '🥤';
-  if (/noodle|pasta|hakka|chowmein/.test(n)) return '🍜';
-  if (/pizza/.test(n)) return '🍕';
-  if (/burger/.test(n)) return '🍔';
-  if (/dosa|idli|dosa batter/.test(n)) return '🥞';
-  if (/cake|dessert|sweet|jamun|kheer/.test(n)) return '🍰';
-  return '🥕';
+export function ItemThumb({ item, size = 'md' }: { item: any; size?: 'sm' | 'md' | 'lg' }) {
+  const name = item?.name || item?.itemName || item?.ingredientText || '?';
+  const box = size === 'lg'
+    ? 'w-16 h-16 sm:w-20 sm:h-20 rounded-2xl text-2xl sm:text-3xl'
+    : size === 'sm'
+      ? 'w-9 h-9 rounded-lg text-sm'
+      : 'w-11 h-11 rounded-xl text-lg';
+  return (
+    <span className={`relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-gray-100 ${box}`} aria-hidden>
+      <span className="font-black text-gray-400 select-none">{String(name).charAt(0).toUpperCase()}</span>
+      {item?.image && (
+        <img
+          src={item.image}
+          alt={name}
+          loading="lazy"
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+        />
+      )}
+    </span>
+  );
 }
 
 type Step = 'pick' | 'how' | 'check' | 'money' | 'done';
@@ -126,6 +112,7 @@ interface Row {
   needsReview: boolean;        // must be confirmed before saving
   reason?: string;
   manual?: boolean;            // added by tapping tiles (not AI)
+  image?: string;              // real product photo (shown instead of an emoji)
 }
 
 const uid = () => `r${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -177,19 +164,22 @@ interface Props {
   onClose: () => void;
   /** Optional hook to refresh the recipe list after a save. */
   onSaved?: () => void;
+  /** Pre-select a product so the user skips the pick step. */
+  initialProduct?: any | null;
 }
 
-export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
+export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Props) {
   const { items: inventoryItems } = useInventory();
 
-  const [step, setStep] = useState<Step>('pick');
+  const [step, setStep] = useState<Step>(initialProduct ? 'how' : 'pick');
   const [products, setProducts] = useState<any[] | null>(null);
-  const [product, setProduct] = useState<any | null>(null);
+  const [product, setProduct] = useState<any | null>(initialProduct || null);
   const [rows, setRows] = useState<Row[]>([]);
   const [settings, setSettings] = useState<any | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedCost, setSavedCost] = useState<any | null>(null);
   const [fatal, setFatal] = useState('');
+  const [selectedVariant, setSelectedVariant] = useState<string>('');
 
   // Load the menu once — big tappable dish cards are the first question.
   useEffect(() => {
@@ -231,7 +221,8 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
         }));
       const saved = await createRecipe({
         productId: product._id,
-        name: `${product.name} Recipe`,
+        variantName: selectedVariant || undefined,
+        name: `${product.name}${selectedVariant ? ` (${selectedVariant})` : ''} Recipe`,
         yieldQuantity: 1,
         yieldUnit: 'plate',
         servingSize: 1,
@@ -251,12 +242,12 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-[250] bg-[#faf8ff] flex flex-col"
+      className="fixed inset-0 z-[250] bg-[var(--color-bg-page)] flex flex-col"
       role="dialog"
       aria-label="Easy recipe maker"
     >
       {/* Top bar — big and friendly */}
-      <div className="bg-[#191b23] text-white px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
+      <div className="bg-[var(--color-sidebar-bg)] text-white px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <span className="text-2xl" aria-hidden>👨‍🍳</span>
           <span className="text-lg sm:text-xl font-black tracking-tight">Easy Recipe Maker</span>
@@ -287,7 +278,7 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
                 <div
                   className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-2xl border-2 transition-all ${
                     active ? 'border-[var(--brand-color)] bg-blue-50 scale-110 shadow-md'
-                      : done ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-white'
+                      : done ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-[var(--color-bg-white)]'
                   }`}
                   aria-hidden
                 >
@@ -303,12 +294,12 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 pb-10">
         {fatal && (
-          <div className="max-w-xl mx-auto mt-10 bg-white rounded-3xl border border-red-200 p-8 text-center">
+          <div className="max-w-xl mx-auto mt-10 bg-[var(--color-bg-white)] rounded-3xl border border-red-200 p-8 text-center">
             <CircleAlert className="w-14 h-14 text-red-400 mx-auto mb-4" />
             <p className="text-xl font-bold text-gray-800">{fatal}</p>
             <button
               onClick={onClose}
-              className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[#191b23] text-white text-lg font-black cursor-pointer hover:bg-black transition-colors"
+              className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[var(--color-sidebar-bg)] text-white text-lg font-black cursor-pointer hover:bg-black transition-colors"
             >
               Close
             </button>
@@ -318,7 +309,15 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
         {!fatal && step === 'pick' && (
           <PickDish
             products={products}
-            onPick={(p) => { setProduct(p); setRows([]); go('how'); }}
+            onPick={(p) => {
+              // Check if a specific variant was selected (from variant buttons)
+              const variantName = (p as any)._selectedVariant || '';
+              const cleanProduct = variantName ? { ...p, _selectedVariant: undefined } : p;
+              setProduct(cleanProduct);
+              setSelectedVariant(variantName);
+              setRows([]);
+              go('how');
+            }}
             onClose={onClose}
           />
         )}
@@ -328,6 +327,7 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
             product={product}
             inventoryItems={inventoryItems}
             onRows={(newRows) => { setRows(newRows); go('check'); }}
+            selectedVariant={selectedVariant}
           />
         )}
 
@@ -357,8 +357,9 @@ export default function EasyRecipeMaker({ onClose, onSaved }: Props) {
           <DoneScreen
             product={product}
             savedCost={savedCost}
-            onAgain={() => { setProduct(null); setRows([]); setSavedCost(null); setStep('pick'); }}
+            onAgain={() => { setProduct(null); setRows([]); setSavedCost(null); setSelectedVariant(''); setStep('pick'); }}
             onClose={onClose}
+            selectedVariant={selectedVariant}
           />
         )}
       </div>
@@ -393,11 +394,11 @@ function PickDish({ products, onPick, onClose }: {
 
   if (products.length === 0) {
     return (
-      <div className="max-w-xl mx-auto mt-10 bg-white rounded-3xl border border-[#e1e2ed] p-8 text-center">
+      <div className="max-w-xl mx-auto mt-10 bg-[var(--color-bg-white)] rounded-3xl border border-[var(--color-border-default)] p-8 text-center">
         <Utensils className="w-14 h-14 text-gray-300 mx-auto mb-4" />
         <p className="text-xl font-bold text-gray-700">No dishes on the menu yet</p>
         <p className="text-base text-gray-400 mt-2">Add your dishes in the Products screen first, then come back here.</p>
-        <button onClick={onClose} className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[var(--brand-color)] text-white text-lg font-black cursor-pointer hover:bg-[#003ea8] transition-colors">
+        <button onClick={onClose} className="mt-6 w-full max-w-xs mx-auto block py-4 rounded-2xl bg-[var(--brand-color)] text-white text-lg font-black cursor-pointer hover:bg-[var(--color-primary-hover)] transition-colors">
           OK, close
         </button>
       </div>
@@ -416,22 +417,50 @@ function PickDish({ products, onPick, onClose }: {
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search your dishes…"
           aria-label="Search dishes"
-          className="w-full pl-14 pr-4 py-4 rounded-2xl border-2 border-[#e1e2ed] bg-white text-lg font-semibold focus:outline-none focus:ring-4 focus:ring-[var(--brand-color)]/20"
+          className="w-full pl-14 pr-4 py-4 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-lg font-semibold focus:outline-none focus:ring-4 focus:ring-[var(--brand-color)]/20"
         />
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 mt-6">
-        {list.map((p) => (
-          <button
-            key={p._id}
-            onClick={() => onPick(p)}
-            className="bg-white rounded-3xl border-2 border-[#e1e2ed] hover:border-[var(--brand-color)] hover:shadow-lg active:scale-[0.98] transition-all p-4 sm:p-5 flex flex-col items-center cursor-pointer min-h-[140px]"
-          >
-            <span className="text-5xl sm:text-6xl" aria-hidden>{emojiFor(p.name)}</span>
-            <span className="mt-3 text-base sm:text-lg font-black text-gray-900 text-center leading-tight">{p.name}</span>
-            <span className="mt-1.5 text-lg font-black text-[var(--brand-color)]">{fmt(Number(p.price) || 0)}</span>
-          </button>
-        ))}
+        {list.map((p) => {
+          const variants = (p.variants || []) as Array<{ name: string; price?: number }>;
+          const hasVariants = variants.length > 0;
+          return (
+            <div key={p._id} className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] overflow-hidden">
+              <button
+                onClick={() => onPick(p)}
+                className="w-full hover:border-[var(--brand-color)] hover:shadow-lg active:scale-[0.98] transition-all p-4 sm:p-5 flex flex-col items-center cursor-pointer"
+              >
+                <ItemThumb item={p} size="lg" />
+                <span className="mt-3 text-base sm:text-lg font-black text-gray-900 text-center leading-tight">{p.name}</span>
+                <span className="mt-1.5 text-lg font-black text-[var(--brand-color)]">{fmt(Number(p.price) || 0)}</span>
+              </button>
+              {/* Variant buttons — tap to pick a specific variant */}
+              {hasVariants && (
+                <div className="px-3 pb-3 space-y-1.5">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 text-center">Variants</p>
+                  <div className="flex flex-wrap gap-1 justify-center">
+                    <button
+                      onClick={() => onPick(p)}
+                      className="px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-blue-50 text-[10px] font-bold text-gray-600 hover:text-[var(--brand-color)] transition-all cursor-pointer"
+                    >
+                      Base
+                    </button>
+                    {variants.map((v) => (
+                      <button
+                        key={v.name}
+                        onClick={() => onPick({ ...p, _selectedVariant: v.name })}
+                        className="px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-blue-50 text-[10px] font-bold text-gray-600 hover:text-[var(--brand-color)] transition-all cursor-pointer"
+                      >
+                        {v.name}{v.price ? ` ₹${v.price}` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
         {list.length === 0 && (
           <div className="col-span-full text-center py-10 text-lg text-gray-400">No dish named “{q}” — check the spelling.</div>
         )}
@@ -443,10 +472,11 @@ function PickDish({ products, onPick, onClose }: {
 // ────────────────────────────────────────────────────────────────────
 // STEP 2 — HOW IS IT MADE?  (voice-first, tap-to-add fallback)
 // ────────────────────────────────────────────────────────────────────
-function HowScreen({ product, inventoryItems, onRows }: {
+function HowScreen({ product, inventoryItems, onRows, selectedVariant }: {
   product: any;
   inventoryItems: any[];
   onRows: (rows: Row[]) => void;
+  selectedVariant?: string;
 }) {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -597,12 +627,13 @@ function HowScreen({ product, inventoryItems, onRows }: {
           baseQuantity: Number(m.quantity) || 1,
         };
       };
+      const imgOf = (id?: string) => (inventoryItems || []).find((i) => String(i.id) === String(id))?.image || '';
       for (const m of (draft.matched || [])) {
         rows.push({
           key: uid(), ingredientText: m.ingredientText, inventoryItemId: m.inventoryItemId,
           itemName: m.itemName || m.ingredientText, unit: m.unit, quantity: Number(m.quantity) || 0,
           itemUnit: m.itemUnit, costPreview: m.costPreview,
-          confidence: m.confidence, needsReview: false,
+          confidence: m.confidence, needsReview: false, image: imgOf(m.inventoryItemId),
           ...withPricing(m),
         });
       }
@@ -611,7 +642,7 @@ function HowScreen({ product, inventoryItems, onRows }: {
           key: uid(), ingredientText: n.ingredientText, inventoryItemId: n.inventoryItemId,
           itemName: n.itemName || n.ingredientText, unit: n.unit, quantity: Number(n.quantity) || 0,
           itemUnit: n.itemUnit, costPreview: n.costPreview, confidence: n.confidence,
-          needsReview: true, reason: n.reason,
+          needsReview: true, reason: n.reason, image: imgOf(n.inventoryItemId),
           ...withPricing(n),
         });
       }
@@ -644,6 +675,7 @@ function HowScreen({ product, inventoryItems, onRows }: {
       itemUnit: item.unit || 'g', averageCost: Number(item.averageCost) || 0,
       costPerUnit: Number(item.averageCost) || 0,
       costPreview: Number(item.averageCost) || 0, needsReview: false, manual: true,
+      image: item.image || '',
     }]);
   };
   const bumpManual = (key: string, delta: number) => {
@@ -663,7 +695,7 @@ function HowScreen({ product, inventoryItems, onRows }: {
   return (
     <div className="max-w-2xl mx-auto">
       <h2 className="text-center text-2xl sm:text-3xl font-black text-gray-900 mt-2">
-        What goes inside <span className="text-[var(--brand-color)]">{product.name}</span>?
+        What goes inside <span className="text-[var(--brand-color)]">{product.name}</span>{selectedVariant ? <span className="text-lg text-gray-500 ml-2">({selectedVariant})</span> : ''}?
       </h2>
       <p className="text-center text-base text-gray-400 mt-2">“200 gram paneer, 150 gram tomato, 30 gram butter”</p>
 
@@ -674,8 +706,8 @@ function HowScreen({ product, inventoryItems, onRows }: {
           aria-label={recording ? 'Stop recording' : 'Say the ingredients'}
           className={`w-40 h-40 sm:w-48 sm:h-48 rounded-full flex flex-col items-center justify-center gap-2 transition-all cursor-pointer shadow-xl ${
             recording
-              ? 'bg-red-500 text-white scale-105 animate-pulse'
-              : 'bg-[var(--brand-color)] text-white hover:bg-[#003ea8] active:scale-95'
+              ? 'bg-[var(--color-red-500-solid)] text-white scale-105 animate-pulse'
+              : 'bg-[var(--brand-color)] text-white hover:bg-[var(--color-primary-hover)] active:scale-95'
           }`}
         >
           {recording ? (
@@ -701,19 +733,19 @@ function HowScreen({ product, inventoryItems, onRows }: {
       </div>
 
       {/* Typed text + AI */}
-      <div className="bg-white rounded-3xl border-2 border-[#e1e2ed] p-4 sm:p-5">
+      <div className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-4 sm:p-5">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={2}
           placeholder="Type it — “200g paneer, 150g tomato, 30g butter, 40ml cream”"
           aria-label="Type the ingredients"
-          className="w-full text-lg leading-relaxed p-3 rounded-2xl bg-gray-50 border border-[#e1e2ed] focus:outline-none focus:ring-4 focus:ring-[var(--brand-color)]/20 resize-none"
+          className="w-full text-lg leading-relaxed p-3 rounded-2xl bg-gray-50 border border-[var(--color-border-default)] focus:outline-none focus:ring-4 focus:ring-[var(--brand-color)]/20 resize-none"
         />
         <button
           onClick={() => void extract(text)}
           disabled={loading || text.trim().length < 3}
-          className="mt-3 w-full py-4 rounded-2xl bg-[var(--brand-color)] text-white text-lg font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[#003ea8] transition-colors disabled:opacity-40"
+          className="mt-3 w-full py-4 rounded-2xl bg-[var(--brand-color)] text-white text-lg font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-40"
         >
           {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6" />}
           {loading ? 'Thinking…' : '✨ Make it'}
@@ -734,7 +766,7 @@ function HowScreen({ product, inventoryItems, onRows }: {
       </button>
 
       {showPicker && (
-        <div className="mt-4 bg-white rounded-3xl border-2 border-[#e1e2ed] p-4">
+        <div className="mt-4 bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-4">
           <div className="relative mb-3">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
@@ -742,7 +774,7 @@ function HowScreen({ product, inventoryItems, onRows }: {
               onChange={(e) => setPickQ(e.target.value)}
               placeholder="Find an ingredient…"
               aria-label="Find an ingredient"
-              className="w-full pl-12 pr-4 py-3.5 rounded-2xl bg-gray-50 border border-[#e1e2ed] text-base font-semibold focus:outline-none"
+              className="w-full pl-12 pr-4 py-3.5 rounded-2xl bg-gray-50 border border-[var(--color-border-default)] text-base font-semibold focus:outline-none"
             />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-72 overflow-y-auto">
@@ -750,9 +782,9 @@ function HowScreen({ product, inventoryItems, onRows }: {
               <button
                 key={i.id}
                 onClick={() => addManual(i)}
-                className="rounded-2xl border-2 border-[#e1e2ed] hover:border-[var(--brand-color)] bg-white p-3 text-left cursor-pointer active:scale-[0.97] transition-all"
+                className="rounded-2xl border-2 border-[var(--color-border-default)] hover:border-[var(--brand-color)] bg-[var(--color-bg-white)] p-3 text-left cursor-pointer active:scale-[0.97] transition-all"
               >
-                <span className="text-2xl" aria-hidden>{emojiFor(i.name)}</span>
+                <ItemThumb item={i} size="sm" />
                 <span className="block text-sm font-bold text-gray-800 leading-tight mt-1">{i.name}</span>
                 <span className="block text-xs text-gray-400 mt-0.5">
                   {fmtSmall(Number(i.averageCost) || 0)} / {i.unit}
@@ -768,8 +800,8 @@ function HowScreen({ product, inventoryItems, onRows }: {
       {manual.length > 0 && (
         <div className="mt-5 space-y-2.5">
           {manual.map((r) => (
-            <div key={r.key} className="bg-white rounded-2xl border-2 border-[#e1e2ed] p-3 flex items-center gap-3">
-              <span className="text-3xl shrink-0" aria-hidden>{emojiFor(r.itemName || r.ingredientText)}</span>
+            <div key={r.key} className="bg-[var(--color-bg-white)] rounded-2xl border-2 border-[var(--color-border-default)] p-3 flex items-center gap-3">
+              <ItemThumb item={r} />
               <div className="flex-1 min-w-0">
                 <p className="text-base font-black text-gray-900 truncate">{r.itemName}</p>
                 <p className="text-sm text-gray-400">{fmtSmall(r.costPreview || 0)} each</p>
@@ -796,7 +828,7 @@ function HowScreen({ product, inventoryItems, onRows }: {
         <button
           onClick={next}
           disabled={!readyToGo}
-          className="w-full max-w-sm py-5 rounded-2xl bg-emerald-500 text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-emerald-600 transition-colors disabled:opacity-30"
+          className="w-full max-w-sm py-5 rounded-2xl bg-[var(--color-emerald-500-solid)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[var(--color-emerald-600-solid)] transition-colors disabled:opacity-30"
         >
           Next <ChevronRight className="w-7 h-7" />
         </button>
@@ -846,13 +878,13 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
       // Incompatible units (kg vs pcs…) — keep it flagged, never guess.
       update(key, {
         inventoryItemId: item._id || item.id, itemName: item.name, itemUnit,
-        averageCost: Number(item.averageCost) || 0,
+        averageCost: Number(item.averageCost) || 0, image: item.image || '',
         needsReview: true, reason: `Units don't match — this item is tracked in ${itemUnit}.`,
       });
     } else {
       update(key, {
         inventoryItemId: item._id || item.id, itemName: item.name, itemUnit,
-        averageCost: Number(item.averageCost) || 0,
+        averageCost: Number(item.averageCost) || 0, image: item.image || '',
         costPerUnit: money(Number(item.averageCost) || 0),
         needsReview: false, reason: undefined,
         quantity: qty > 0 ? qty : row.quantity, unit: itemUnit,
@@ -875,10 +907,10 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
         {rows.map((r) => (
           <div
             key={r.key}
-            className={`rounded-2xl border-2 p-3 sm:p-4 ${r.needsReview ? 'border-amber-300 bg-amber-50' : 'border-[#e1e2ed] bg-white'}`}
+            className={`rounded-2xl border-2 p-3 sm:p-4 ${r.needsReview ? 'border-amber-300 bg-amber-50' : 'border-[var(--color-border-default)] bg-[var(--color-bg-white)]'}`}
           >
             <div className="flex items-center gap-3">
-              <span className="text-3xl shrink-0" aria-hidden>{emojiFor(r.itemName || r.ingredientText)}</span>
+              <ItemThumb item={r} />
               <div className="flex-1 min-w-0">
                 <p className="text-lg font-black text-gray-900 truncate">{r.itemName || r.ingredientText}</p>
                 <p className="text-sm text-gray-400 truncate">
@@ -902,14 +934,14 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
             </div>
 
             <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-              <div className="flex items-center gap-1.5 bg-gray-50 rounded-xl p-1 border border-[#e1e2ed]">
-                <button onClick={() => bump(r.key, -1)} aria-label="Less" className="w-11 h-11 rounded-lg bg-white hover:bg-gray-100 border border-[#e1e2ed] flex items-center justify-center cursor-pointer">
+              <div className="flex items-center gap-1.5 bg-gray-50 rounded-xl p-1 border border-[var(--color-border-default)]">
+                <button onClick={() => bump(r.key, -1)} aria-label="Less" className="w-11 h-11 rounded-lg bg-[var(--color-bg-white)] hover:bg-gray-100 border border-[var(--color-border-default)] flex items-center justify-center cursor-pointer">
                   <Minus className="w-4.5 h-4.5" />
                 </button>
                 <span className="w-16 text-center text-lg font-black text-gray-900">
                   {prettyQty(r.quantity)} {r.unit}
                 </span>
-                <button onClick={() => bump(r.key, 1)} aria-label="More" className="w-11 h-11 rounded-lg bg-white hover:bg-gray-100 border border-[#e1e2ed] flex items-center justify-center cursor-pointer">
+                <button onClick={() => bump(r.key, 1)} aria-label="More" className="w-11 h-11 rounded-lg bg-[var(--color-bg-white)] hover:bg-gray-100 border border-[var(--color-border-default)] flex items-center justify-center cursor-pointer">
                   <Plus className="w-4.5 h-4.5" />
                 </button>
               </div>
@@ -936,7 +968,7 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
                     onKeyDown={(e) => { if (e.key === 'Enter') void pickSearch(r.key, hitQ); }}
                     placeholder="Search your inventory…"
                     aria-label="Search inventory to replace this ingredient"
-                    className="w-full pl-11 pr-3 py-3 rounded-xl bg-white border border-[#e1e2ed] text-base font-semibold focus:outline-none"
+                    className="w-full pl-11 pr-3 py-3 rounded-xl bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-base font-semibold focus:outline-none"
                     autoFocus
                   />
                 </div>
@@ -945,9 +977,9 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
                     <button
                       key={h._id || h.id}
                       onClick={() => choose(r.key, h)}
-                      className="rounded-xl border-2 border-[#e1e2ed] hover:border-emerald-400 bg-white p-3 text-left cursor-pointer active:scale-[0.98] transition-all flex items-center gap-2.5"
+                      className="rounded-xl border-2 border-[var(--color-border-default)] hover:border-emerald-400 bg-[var(--color-bg-white)] p-3 text-left cursor-pointer active:scale-[0.98] transition-all flex items-center gap-2.5"
                     >
-                      <span className="text-2xl" aria-hidden>{emojiFor(h.name)}</span>
+                      <ItemThumb item={h} size="sm" />
                       <span className="min-w-0">
                         <span className="block text-sm font-black text-gray-800 truncate">{h.name}</span>
                         <span className="block text-xs text-gray-400">{fmtSmall(Number(h.averageCost) || 0)} / {h.unit}</span>
@@ -969,19 +1001,19 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
       </div>
 
       {/* Mini cost line so they know what's coming */}
-      <div className="mt-6 bg-[#191b23] rounded-2xl p-4 flex items-center justify-between text-white">
+      <div className="mt-6 bg-[var(--color-sidebar-bg)] rounded-2xl p-4 flex items-center justify-between text-white">
         <span className="text-lg font-bold text-white/70">Cost to make</span>
         <span className="text-2xl font-black">{fmtSmall(variable)}</span>
       </div>
 
       <div className="flex gap-3 mt-6">
-        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
           <ChevronLeft className="w-6 h-6" /> Back
         </button>
         <button
           onClick={onNext}
           disabled={rows.filter((r) => r.inventoryItemId).length === 0}
-          className="flex-1 py-5 rounded-2xl bg-emerald-500 text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-emerald-600 transition-colors disabled:opacity-30"
+          className="flex-1 py-5 rounded-2xl bg-[var(--color-emerald-500-solid)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[var(--color-emerald-600-solid)] transition-colors disabled:opacity-30"
         >
           Looks good <ChevronRight className="w-7 h-7" />
         </button>
@@ -1018,12 +1050,12 @@ function MoneyScreen({ product, rows, settings, saving, onBack, onSave }: {
       <p className="text-center text-base text-gray-400 mt-2">{product.name} · this is an estimate, not an exact number</p>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-8">
-        <div className="bg-white rounded-3xl border-2 border-[#e1e2ed] p-5 text-center">
+        <div className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-5 text-center">
           <span className="text-4xl" aria-hidden>🧾</span>
           <p className="mt-2 text-sm font-bold text-gray-400 uppercase tracking-wider">Cost to make</p>
           <p className="text-3xl font-black text-gray-900 mt-1">{fmtSmall(variable)}</p>
         </div>
-        <div className="bg-white rounded-3xl border-2 border-[#e1e2ed] p-5 text-center">
+        <div className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-5 text-center">
           <span className="text-4xl" aria-hidden>🏷️</span>
           <p className="mt-2 text-sm font-bold text-gray-400 uppercase tracking-wider">You sell for</p>
           <p className="text-3xl font-black text-[var(--brand-color)] mt-1">{fmtSmall(price)}</p>
@@ -1050,13 +1082,13 @@ function MoneyScreen({ product, rows, settings, saving, onBack, onSave }: {
       )}
 
       <div className="flex gap-3 mt-8">
-        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onBack} className="px-6 py-5 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-600 text-lg font-black flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors">
           <ChevronLeft className="w-6 h-6" /> Back
         </button>
         <button
           onClick={onSave}
           disabled={saving || rows.filter((r) => r.inventoryItemId).length === 0}
-          className="flex-1 py-6 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-2xl font-black flex items-center justify-center gap-3 cursor-pointer transition-colors disabled:opacity-40 shadow-lg"
+          className="flex-1 py-6 rounded-2xl bg-[var(--color-emerald-500-solid)] hover:bg-[var(--color-emerald-600-solid)] text-white text-2xl font-black flex items-center justify-center gap-3 cursor-pointer transition-colors disabled:opacity-40 shadow-lg"
         >
           {saving ? <Loader2 className="w-8 h-8 animate-spin" /> : <Check className="w-8 h-8" />}
           {saving ? 'Saving…' : 'Save it! ✅'}
@@ -1069,11 +1101,12 @@ function MoneyScreen({ product, rows, settings, saving, onBack, onSave }: {
 // ────────────────────────────────────────────────────────────────────
 // STEP 5 — DONE (big celebration, nothing more to read)
 // ────────────────────────────────────────────────────────────────────
-function DoneScreen({ product, savedCost, onAgain, onClose }: {
+function DoneScreen({ product, savedCost, onAgain, onClose, selectedVariant }: {
   product: any;
   savedCost: any | null;
   onAgain: () => void;
   onClose: () => void;
+  selectedVariant?: string;
 }) {
   const variable = Number(savedCost?.estimatedVariableCost ?? savedCost?.recipeCost ?? 0);
   const contribution = Number(savedCost?.contribution ?? 0);
@@ -1084,10 +1117,10 @@ function DoneScreen({ product, savedCost, onAgain, onClose }: {
       </div>
       <h2 className="text-3xl sm:text-4xl font-black text-gray-900 mt-6">Saved! 🎉</h2>
       <p className="text-xl text-gray-500 mt-3 font-semibold">
-        {product.name} is ready. Every time you sell it, the ingredients come off your stock automatically.
+        {product.name}{selectedVariant ? ` (${selectedVariant})` : ''} is ready. Every time you sell it, the ingredients come off your stock automatically.
       </p>
 
-      <div className="bg-white rounded-3xl border-2 border-[#e1e2ed] p-6 mt-8 grid grid-cols-2 gap-4">
+      <div className="bg-[var(--color-bg-white)] rounded-3xl border-2 border-[var(--color-border-default)] p-6 mt-8 grid grid-cols-2 gap-4">
         <div>
           <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Cost to make</p>
           <p className="text-3xl font-black text-gray-900 mt-1">{fmtSmall(variable)}</p>
@@ -1099,10 +1132,10 @@ function DoneScreen({ product, savedCost, onAgain, onClose }: {
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mt-8 justify-center">
-        <button onClick={onAgain} className="py-5 px-8 rounded-2xl bg-[var(--brand-color)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[#003ea8] transition-colors">
+        <button onClick={onAgain} className="py-5 px-8 rounded-2xl bg-[var(--brand-color)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[var(--color-primary-hover)] transition-colors">
           <Plus className="w-6 h-6" /> Make another
         </button>
-        <button onClick={onClose} className="py-5 px-8 rounded-2xl border-2 border-[#e1e2ed] bg-white text-gray-700 text-xl font-black cursor-pointer hover:bg-gray-50 transition-colors">
+        <button onClick={onClose} className="py-5 px-8 rounded-2xl border-2 border-[var(--color-border-default)] bg-[var(--color-bg-white)] text-gray-700 text-xl font-black cursor-pointer hover:bg-gray-50 transition-colors">
           Done
         </button>
       </div>

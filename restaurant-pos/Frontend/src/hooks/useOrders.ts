@@ -14,9 +14,43 @@ import { debugWarn } from '../utils/debugLog';
 import { computeKOTDelta, mergeIntoSnapshot } from '../utils/kotDelta';
 import { printKOT } from '../utils/printKOT';
 
+/**
+ * Normalize an order line into the frontend CartItem shape. POS-origin items
+ * already carry a full `product` object; backend-created items (website/QR
+ * orders, whose items are OrderItem docs with productId/productName only) get
+ * the matching catalog product attached so cart/tax code that reads
+ * `item.product.gstPercent` never sees undefined.
+ */
+function toCartItemShape(item: any, productById: Map<string, any>): any {
+  if (!item) return item;
+  if (item.product && (item.product.id || item.product._id)) return item;
+  const productId = item.productId ? String(item.productId) : undefined;
+  const product = productId ? productById.get(productId) : undefined;
+  return {
+    ...item,
+    id: item.id || item._id,
+    product: product || {
+      id: productId,
+      name: item.productName || 'Item',
+      price: item.price || 0,
+      gstPercent: 0,
+      availability: true,
+    },
+  };
+}
+
 export function buildOrderOpenState(order: Order) {
-  const orderItems = Array.isArray(order.items) ? order.items : [];
-  const kotItems = (order.kotRecords || []).flatMap(kot => kot.items || []);
+  // Attach catalog products to backend-shaped lines (see toCartItemShape).
+  let productById: Map<string, any> = new Map();
+  try {
+    const cached = getDBData<any[]>('pos_products', []);
+    if (Array.isArray(cached)) {
+      productById = new Map(cached.map((p: any) => [String(p.id || p._id), p]));
+    }
+  } catch { /* non-fatal — fall back to minimal product objects */ }
+
+  const orderItems = (Array.isArray(order.items) ? order.items : []).map(i => toCartItemShape(i, productById));
+  const kotItems = (order.kotRecords || []).flatMap(kot => (kot.items || []).map(i => toCartItemShape(i, productById)));
 
   let snapshot: CartItem[] = order.lastKotSnapshot || [];
   if (!order.lastKotSnapshot && kotItems.length > 0) {
@@ -105,6 +139,9 @@ interface OrdersConfig {
   setTakeawayOrders: React.Dispatch<React.SetStateAction<TakeawayOrder[]>>;
   activeOrder: Order | null;
   setActiveOrder: React.Dispatch<React.SetStateAction<Order | null>>;
+  /** Table whose billing workspace is open but whose order is not created yet. */
+  pendingTableId: string | null;
+  setPendingTableId: (id: string | null) => void;
   customers: Customer[];
   setCustomers: (customers: Customer[]) => void;
   bills: Bill[];
@@ -143,6 +180,7 @@ export function useOrders(config: OrdersConfig) {
     tables, setTables,
     takeawayOrders, setTakeawayOrders,
     activeOrder, setActiveOrder,
+    pendingTableId, setPendingTableId,
     customers, setCustomers,
     bills, setBills,
     cartItems, setCartItems,
@@ -186,7 +224,17 @@ export function useOrders(config: OrdersConfig) {
     return next;
   }, [orders, takeawayOrders]);
 
-  const handleCreateOrder = useCallback(async (type: Order['type'], tableId?: string): Promise<Order | null> => {
+  const handleCreateOrder = useCallback(async (
+    type: Order['type'],
+    tableId?: string,
+    opts?: {
+      preserveCart?: boolean;
+      awaitServer?: boolean;
+      /** Lazy first-KOT creation: carry the cart items + computed totals so the
+       *  order is complete (items/totals/tenant) the moment it is born. */
+      seed?: { items: CartItem[]; subtotal: number; discount: number; gst: number; grandTotal: number };
+    },
+  ): Promise<Order | null> => {
     const orderAlreadyActive = !!activeOrder && activeOrder.status !== 'Paid' && activeOrder.status !== 'Closed' && activeOrder.status !== 'Cancelled';
 
     // Shared creation routine — invoked directly when the cart is free, or
@@ -218,39 +266,79 @@ export function useOrders(config: OrdersConfig) {
       orderNumber, type, status: 'New',
       tableId, tableNumber: tableId ? (tables.find(t => t.id === tableId)?.number || parseInt(tableId.replace('table_', '')) || undefined) : undefined,
       waiterId: currentEmployee?.id, waiterName: currentEmployee?.name,
-      createdAt: now, updatedAt: now, items: [], kotRecords: [],
+      createdAt: now, updatedAt: now,
+      items: opts?.seed ? opts.seed.items : [], kotRecords: [],
       timeline: [createTimelineEvent('order_created', `Order #${orderNumber} created as ${type}`, currentEmployee?.name)],
       interimBillPrinted: false, finalBillPrinted: false,
-      subtotal: 0, discount: 0, gst: 0, grandTotal: 0,
+      subtotal: opts?.seed ? opts.seed.subtotal : 0,
+      discount: opts?.seed ? opts.seed.discount : 0,
+      gst: opts?.seed ? opts.seed.gst : 0,
+      grandTotal: opts?.seed ? opts.seed.grandTotal : 0,
     };
 
     const nextOrders = [newOrder, ...orders];
     setOrders(nextOrders);
     setActiveOrder(newOrder);
-    setCartItems([]);
+    if (!opts?.preserveCart) setCartItems([]);
     setCustomerPhone('');
     setSearchedCustomer(null);
     setAppliedReward(null);
     setOrderType(type);
     setPaymentMethod('Cash');
     setSplitDetails({ cashAmount: 0, cardAmount: 0, upiAmount: 0, walletAmount: 0 });
-    // BACKEND CALLED — POST new order to cloud for kitchen/management
-    api.createOrder(newOrder)
-      .then((created: any) => {
-        // Swap the temp local id for the server _id so later updates (KOT, Paid)
-        // target the real Mongo id instead of 400ing on an invalid ObjectId.
-        const serverId = created?._id || created?.id;
-        if (serverId && serverId !== newOrder.id) {
+    // BACKEND CALLED — POST new order to cloud for kitchen/management.
+    // When awaitServer is set (lazy creation at first KOT) the caller needs the
+    // real Mongo id synchronously so the KOT update it sends immediately after
+    // targets a valid ObjectId; otherwise keep the fire-and-forget swap.
+    let finalOrder = newOrder;
+    if (opts?.awaitServer) {
+      try {
+        const created = await api.createOrder(newOrder);
+        // Swap the temp local id for the server _id so the follow-up KOT update
+        // targets the real Mongo id instead of 400ing on an invalid ObjectId.
+        const serverId = created?.data?._id || created?.data?.id;
+        if (created?.ok && serverId && serverId !== newOrder.id) {
+          finalOrder = { ...newOrder, id: serverId };
           setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, id: serverId } : o));
           setActiveOrder(prev => (prev && prev.id === newOrder.id) ? { ...prev, id: serverId } : prev);
-          // Keep the table's orderId pointing at the real (server) order id so
-          // KOT-status and table-card lookups keep working after the swap.
           if (tableId) {
             setTables(prev => prev.map(t => t.id === tableId ? { ...t, orderId: serverId } : t));
           }
         }
-      })
-      .catch(err => debugWarn('useOrders', 'createOrder failed', err));
+        if (!created?.ok && created?.status === 409 && created?.code === 'TABLE_ALREADY_OCCUPIED') {
+          // A customer QR/website order landed on this table while the cashier
+          // was preparing — the server refuses a second live order (one order
+          // per table). Roll back the optimistic local order + occupancy so the
+          // cashier is not left on a phantom order, and surface the conflict.
+          setOrders(prev => prev.filter(o => o.id !== newOrder.id));
+          setActiveOrder(prev => (prev && prev.id === newOrder.id) ? null : prev);
+          if (tableId) {
+            setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'Available' as const, orderSince: undefined, orderId: undefined } : t));
+          }
+          throw new Error('TABLE_ALREADY_OCCUPIED');
+        }
+      } catch (err) {
+        if ((err as Error)?.message === 'TABLE_ALREADY_OCCUPIED') throw err;
+        debugWarn('useOrders', 'createOrder (awaitServer) failed:', err);
+      }
+    } else {
+      api.createOrder(newOrder)
+        .then((created: any) => {
+          // Swap the temp local id for the server _id so later updates (KOT, Paid)
+          // target the real Mongo id instead of 400ing on an invalid ObjectId.
+          const serverId = created?.data?._id || created?.data?.id;
+          if (created?.ok && serverId && serverId !== newOrder.id) {
+            setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, id: serverId } : o));
+            setActiveOrder(prev => (prev && prev.id === newOrder.id) ? { ...prev, id: serverId } : prev);
+            // Keep the table's orderId pointing at the real (server) order id so
+            // KOT-status and table-card lookups keep working after the swap.
+            if (tableId) {
+              setTables(prev => prev.map(t => t.id === tableId ? { ...t, orderId: serverId } : t));
+            }
+          }
+        })
+        .catch(err => debugWarn('useOrders', 'createOrder failed', err));
+    }
     // BACKEND CALLED — mark the table Occupied server-side so other terminals
     // see it taken. Server-created (Mongo) ids sync; local-only tables are skipped.
     if (tableId && /^[a-fA-F0-9]{24}$/.test(tableId)) {
@@ -258,7 +346,7 @@ export function useOrders(config: OrdersConfig) {
     }
     setActiveWorkspace('Billing');
     showToast(`Order #${orderNumber} created (${type})`, 'success');
-    return newOrder;
+    return finalOrder;
     };
 
     // Guard: cart items tied to an ACTIVE order must not be silently dropped.
@@ -282,20 +370,37 @@ export function useOrders(config: OrdersConfig) {
       }
       return null;
     }
-    // Leftover/stale cart items with no active order must NOT block — clear them.
-    if (cartItems.length > 0) {
+    // Leftover/stale cart items with no active order must NOT block — clear them
+    // unless the caller explicitly wants to keep them (lazy creation at KOT).
+    if (cartItems.length > 0 && !opts?.preserveCart) {
       setCartItems([]);
     }
     return createOrderNow();
   }, [orders, tables, currentEmployee, setOrders, setActiveOrder, setTables, showToast, setActiveWorkspace, setCartItems, cartItems, activeOrder, setCustomerPhone, setSearchedCustomer, setAppliedReward, setOrderType, setPaymentMethod, setSplitDetails, askConfirmation, getNextOrderNumber]);
 
-  const handleOpenOrder = useCallback((order: Order) => {
-    const { cartItems: rebuiltCartItems, activeOrder: normalizedOrder } = buildOrderOpenState(order);
+  const handleOpenOrder = useCallback(async (order: Order) => {
+    // The orders LIST endpoint returns orders without the assembled `items`
+    // array (only GET /orders/:id joins items/kots/timeline). buildOrderOpenState
+    // falls back to KOT items, but an online order with auto-KOT disabled has
+    // neither — so the reopened cart would be empty and the cashier could not
+    // send it to the kitchen. Fetch the full detail when items are missing.
+    let full = order;
+    const needsDetail = (order.items || []).length === 0 && (order.kotRecords || []).length === 0;
+    if (needsDetail && order.id && /^[a-fA-F0-9]{24}$/.test(String(order.id))) {
+      try {
+        const fetched = await api.fetchOrderById(String(order.id));
+        if (fetched) full = fetched;
+      } catch (err) {
+        debugWarn('useOrders', 'fetchOrderById (open order) failed:', err);
+      }
+    }
+    const { cartItems: rebuiltCartItems, activeOrder: normalizedOrder } = buildOrderOpenState(full);
     setCartItems(rebuiltCartItems);
     setActiveOrder(normalizedOrder);
+    setPendingTableId(null);
     setActiveWorkspace('Billing');
     showToast(`Opened Order #${order.orderNumber}`, 'info');
-  }, [setActiveOrder, setCartItems, setActiveWorkspace, showToast]);
+  }, [setActiveOrder, setCartItems, setPendingTableId, setActiveWorkspace, showToast]);
 
   /**
    * Close the active order WITHOUT payment — the undo for an accidental table
@@ -447,7 +552,7 @@ export function useOrders(config: OrdersConfig) {
       if (tRes.status === 'rejected') debugWarn('useOrders', 'createTakeawayOrder failed:', tRes.reason);
       // Swap the temp local ids for the server _ids so later updates (KOT,
       // Paid) target the real Mongo ids instead of 400ing on invalid ObjectIds.
-      const orderServerId = oRes.status === 'fulfilled' ? (oRes.value?._id || oRes.value?.id) : undefined;
+      const orderServerId = oRes.status === 'fulfilled' ? (oRes.value?.data?._id || oRes.value?.data?.id) : undefined;
       const twServerId = tRes.status === 'fulfilled' ? (tRes.value?._id || tRes.value?.id) : undefined;
       if (orderServerId && orderServerId !== newOrder.id) {
         setOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, id: orderServerId } : o));
@@ -598,6 +703,8 @@ export function useOrders(config: OrdersConfig) {
         quantity: d.printQty,
         notes: d.notes,
         price: d.price,
+        configuration: d.configuration,
+        configSummary: d.configSummary,
       }));
       kotType = 'Additional';
     }
@@ -657,10 +764,47 @@ export function useOrders(config: OrdersConfig) {
     }, 500);
   }, [activeOrder, cartItems, currentEmployee, orders, settings, moduleSettings, setOrders, setActiveOrder, setTables, setCartItems, setKotOrder, setIsKOTOpen, setActiveWorkspace, showToast]);
 
-  const handleConfirmKOT = useCallback((pendingItems: CartItem[], kotType?: KOTType) => {
-    if (!activeOrder) return;
-    const kotNumber = activeOrder.kotRecords.length + 1;
-    const type: KOTType = kotType || (activeOrder.kotRecords.length === 0 ? 'Original' : 'Additional');
+  const handleConfirmKOT = useCallback(async (pendingItems: CartItem[], kotType?: KOTType) => {
+    let order = activeOrder;
+    // Lazy order creation — tapping an available table never creates an order;
+    // the order (and the table's Occupied state) is born with its FIRST KOT so
+    // an accidental table tap can't occupy a table. The cart items are kept.
+    if (!order) {
+      if (pendingItems.length === 0) { showToast('No items to send to kitchen', 'warning'); return; }
+      // The order is born with its first KOT — carry the cart items and the
+      // computed totals so the doc is complete (items + totals + tenant) the
+      // moment it exists, exactly like a website-origin order.
+      const subtotal = pendingItems.reduce((s: number, i: any) => s + (i.price || 0) * (i.quantity || 0), 0);
+      const gst = pendingItems.reduce((s: number, i: any) =>
+        s + (i.price || 0) * (i.quantity || 0) * ((i.product?.gstPercent || 0) / 100), 0);
+      let created: Order | null = null;
+      try {
+        created = await handleCreateOrder(
+          (orderType as Order['type']) || 'Dine In',
+          pendingTableId || undefined,
+          {
+            preserveCart: true,
+            awaitServer: true,
+            seed: { items: pendingItems, subtotal, discount: 0, gst, grandTotal: subtotal + gst },
+          },
+        );
+      } catch (err) {
+        if ((err as Error)?.message === 'TABLE_ALREADY_OCCUPIED') {
+          // A customer QR/website order already owns this table — never create
+          // a second order. Tell the cashier to open the existing order.
+          showToast('This table already has an open online order — refresh to open it', 'warning');
+          setPendingTableId(null);
+          return;
+        }
+        throw err;
+      }
+      if (!created) { showToast('Could not create the order', 'warning'); return; }
+      order = { ...created, items: pendingItems.map(i => ({ ...i })) };
+      setPendingTableId(null);
+    }
+    if (!order) return;
+    const kotNumber = order.kotRecords.length + 1;
+    const type: KOTType = kotType || (order.kotRecords.length === 0 ? 'Original' : 'Additional');
     const newKOT: KOTRecord = {
       id: `kot_${Date.now()}`, kotNumber, type,
       status: 'Accepted',
@@ -668,37 +812,39 @@ export function useOrders(config: OrdersConfig) {
       printedBy: currentEmployee?.name || 'System',
     };
     const timelineType: TimelineEventType = type === 'Reprint' ? 'kot_reprint' :
-      activeOrder.kotRecords.length === 0 ? 'kot_printed' : 'kot_additional_printed';
+      order.kotRecords.length === 0 ? 'kot_printed' : 'kot_additional_printed';
     const desc = type === 'Reprint' ? `KOT #${kotNumber} reprinted` :
-      activeOrder.kotRecords.length === 0
+      order.kotRecords.length === 0
         ? `KOT #${kotNumber} printed (${pendingItems.length} items)`
         : `Additional KOT #${kotNumber} printed (${pendingItems.length} items)`;
     // Update cumulative snapshot with what was just printed
     // CRITICAL: Do NOT merge reprint items into snapshot — reprint doesn't add new items to kitchen
     const newSnapshot = type !== 'Reprint'
-      ? mergeIntoSnapshot(activeOrder.lastKotSnapshot, pendingItems)
-      : activeOrder.lastKotSnapshot;
+      ? mergeIntoSnapshot(order.lastKotSnapshot, pendingItems)
+      : order.lastKotSnapshot;
     const sentIds = new Set(pendingItems.map(i => i.id));
     const updated: Order = {
-      ...activeOrder,
-      items: activeOrder.items.map(it => sentIds.has(it.id) ? { ...it, kotPrinted: true } : it),
-      kotRecords: [...activeOrder.kotRecords, newKOT],
+      ...order,
+      items: order.items.map(it => sentIds.has(it.id) ? { ...it, kotPrinted: true } : it),
+      kotRecords: [...order.kotRecords, newKOT],
       lastKotSnapshot: newSnapshot,
-      timeline: [...activeOrder.timeline, createTimelineEvent(timelineType, desc, currentEmployee?.name)],
+      timeline: [...order.timeline, createTimelineEvent(timelineType, desc, currentEmployee?.name)],
       updatedAt: new Date().toISOString(),
-      status: activeOrder.status === 'New' ? 'Accepted' : activeOrder.status,
+      status: order.status === 'New' ? 'Accepted' : order.status,
     };
     setCartItems(cartItems.map(it => sentIds.has(it.id) ? { ...it, kotPrinted: true } : it));
-    setOrders(orders.map(o => o.id === activeOrder.id ? updated : o));
+    // Functional update so a just-created (lazy) order — not yet in the local
+    // `orders` closure — still gets its KOT record attached.
+    setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
     setActiveOrder(updated);
     setKotOrder(updated);
-    api.updateOrder(activeOrder.id, updated).catch(err => debugWarn('useOrders', 'updateOrder (KOT confirm) failed:', err));
+    api.updateOrder(order.id, updated).catch(err => debugWarn('useOrders', 'updateOrder (KOT confirm) failed:', err));
     // Ensure the order's table stays occupied — self-heal if a background table
     // refresh ever reset it while the order was still live.
-    if (activeOrder.tableId) {
+    if (order.tableId) {
       setTables(prev => prev.map(t =>
-        t.id === activeOrder.tableId
-          ? { ...t, status: t.status === 'Available' ? ('Occupied' as const) : t.status, orderSince: t.orderSince || activeOrder.createdAt }
+        t.id === order.tableId
+          ? { ...t, status: t.status === 'Available' ? ('Occupied' as const) : t.status, orderSince: t.orderSince || order.createdAt }
           : t
       ));
     }
@@ -710,7 +856,7 @@ export function useOrders(config: OrdersConfig) {
       if (kotShouldAutoPrint) printKOT(updated, newKOT, settings);
       showToast(`KOT #${kotNumber} sent to ${kotDeliveryLabel}`, 'success');
     }, 500);
-  }, [activeOrder, cartItems, currentEmployee, orders, settings, moduleSettings, setOrders, setActiveOrder, setTables, setCartItems, setKotOrder, setIsKOTOpen, setIsKOTPreviewOpen, setActiveWorkspace, showToast]);
+  }, [activeOrder, pendingTableId, setPendingTableId, handleCreateOrder, orderType, cartItems, currentEmployee, orders, settings, moduleSettings, setOrders, setActiveOrder, setTables, setCartItems, setKotOrder, setIsKOTOpen, setIsKOTPreviewOpen, setActiveWorkspace, showToast]);
 
   const handleUpdateKOTStatus = useCallback((orderId: string, kotId: string, newStatus: KOTStatus) => {
     setOrders(prev => {

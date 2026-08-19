@@ -35,6 +35,14 @@ export interface AiUsageRecord {
   retried?: boolean;
   cancelled?: boolean;
   timeout?: boolean;
+  /** Phase 8 — telemetry extensions (never PII; prompts are stored hashed only). */
+  promptVersion?: string;
+  cacheBust?: boolean;
+  validationPassed?: boolean | null;
+  validationFailed?: boolean | null;
+  fallbackReason?: string | null;
+  promptHash?: string;
+  requestId?: string;
 }
 
 /**
@@ -75,6 +83,13 @@ export function recordAiUsage(record: AiUsageRecord): void {
       retried: record.retried || false,
       cancelled: record.cancelled || false,
       timeout: record.timeout || false,
+      promptVersion: record.promptVersion || '',
+      cacheBust: record.cacheBust || false,
+      validationPassed: record.validationPassed ?? null,
+      validationFailed: record.validationFailed ?? null,
+      fallbackReason: record.fallbackReason || null,
+      promptHash: record.promptHash || '',
+      requestId: record.requestId || '',
     }).catch((err: any) => {
       console.error('[AiUsageLogger] Failed to record AI usage:', err?.message || err);
     });

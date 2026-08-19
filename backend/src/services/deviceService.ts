@@ -259,8 +259,9 @@ export class DeviceService {
       return this.toRow(target, { restaurant: await this.restaurantName(restaurantId) });
     }
 
-    // Genuinely new device — enforce the plan limit BEFORE creating the record.
-    const { allowed, maxDevices } = await checkDeviceCapacity(restaurantId, input.userId);
+    // Genuinely new device — enforce the per-branch plan limit BEFORE creating
+    // the record (each branch has its own device allowance).
+    const { allowed, maxDevices } = await checkDeviceCapacity(restaurantId, input.userId, input.branchId ? String(input.branchId) : undefined);
     if (!allowed) {
       await this.activity(
         { _id: new mongoose.Types.ObjectId(), restaurantId: restaurantId as any },

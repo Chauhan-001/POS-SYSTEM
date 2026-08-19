@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { errMsg } from '../api';
@@ -9,9 +9,9 @@ import { cartSubtotal, linePrice, useSession } from '../context/session';
 
 const TIP_CHIPS = [0, 10, 20, 30];
 
-/** Cart page: lines, contact info, tip, totals, place-order CTA. */
+/** Cart page: lines, contact info, offer, tip, totals, place-order CTA. */
 export default function CartPage() {
-  const { qr, type, cart, updateQty, removeLine, placeOrder, showToast } = useSession();
+  const { type, cart, updateQty, removeLine, placeOrder, appliedOffer, offerCheck, revalidateOffer, removeOffer } = useSession();
   const navigate = useNavigate();
 
   const [tip, setTip] = useState(0);
@@ -23,11 +23,24 @@ export default function CartPage() {
   const [error, setError] = useState('');
   const [stamped, setStamped] = useState(false);
 
+  // Phase B — the server remains the discount authority: re-validate the
+  // applied offer whenever the cart changes (item removed, qty changed, offer
+  // expired…). If it becomes invalid the offer is removed gracefully and the
+  // customer is told why.
+  useEffect(() => {
+    if (appliedOffer) revalidateOffer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart]);
+
   const subtotal = cartSubtotal(cart);
   const tax = Math.round(
     cart.reduce((s, l) => s + (Number(l.price) || 0) * l.qty * ((Number(l.gstPercent) || 5) / 100), 0) * 100
   ) / 100;
-  const estTotal = Math.round((subtotal + tax + tip) * 100) / 100;
+  // Authoritative discount from the backend check (never client-computed).
+  const discount = offerCheck?.ok ? Number(offerCheck.discount) || 0 : (appliedOffer?.discount || 0);
+  const afterDiscount = Math.max(0, subtotal - discount);
+  const estTotal = Math.round((afterDiscount + tax + tip) * 100) / 100;
+  const offerInvalid = appliedOffer && offerCheck && !offerCheck.ok;
 
   const submit = async () => {
     if (busy || cart.length === 0) return;
@@ -83,6 +96,11 @@ export default function CartPage() {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="menu-name">{line.name}</div>
+            {line.configSummary && (
+              <div className="muted" style={{ fontSize: 11, lineHeight: 1.3, marginTop: 2 }}>
+                {line.configSummary}
+              </div>
+            )}
             <span className="price">₹{linePrice(line).toFixed(2)}</span>
           </div>
           <div style={{ textAlign: 'center' }}>
@@ -101,6 +119,27 @@ export default function CartPage() {
           </div>
         </motion.div>
       ))}
+
+      {/* Phase B — applied offer with the server-validated discount */}
+      {appliedOffer && (
+        <div className={`offer-box${offerInvalid ? ' invalid' : ''}`}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="menu-name">{appliedOffer.title}</div>
+            <span className="muted">
+              {offerInvalid
+                ? 'Offer is no longer applicable to your order.'
+                : `Saving ${appliedOffer.couponCode ? `code ${appliedOffer.couponCode} · ` : ''}${discount > 0 ? `₹${discount.toFixed(2)}` : 'on this order'}`}
+            </span>
+          </div>
+          <button
+            className="muted"
+            style={{ background: 'none', border: 'none', textDecoration: 'underline' }}
+            onClick={removeOffer}
+          >
+            remove
+          </button>
+        </div>
+      )}
 
       {/* contact (optional for table, required for car — car is pre-gated) */}
       <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
@@ -159,6 +198,12 @@ export default function CartPage() {
           <span>Subtotal</span>
           <span>₹{subtotal.toFixed(2)}</span>
         </div>
+        {discount > 0 && (
+          <div className="totals-row save">
+            <span>{appliedOffer?.title || 'Offer'}</span>
+            <span>−₹{discount.toFixed(2)}</span>
+          </div>
+        )}
         <div className="totals-row">
           <span>GST</span>
           <span>₹{tax.toFixed(2)}</span>

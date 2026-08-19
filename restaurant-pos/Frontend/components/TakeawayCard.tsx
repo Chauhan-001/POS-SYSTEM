@@ -54,7 +54,7 @@ function TakeawayCard({
       className={`rounded-xl border-2 transition-all duration-200 cursor-pointer p-4 ${
         isOverdue
           ? 'bg-red-50 border-red-400 hover:shadow-lg hover:-translate-y-0.5 animate-pulse'
-          : 'bg-white border-gray-200 hover:shadow-md hover:-translate-y-0.5'
+          : 'bg-[var(--color-bg-white)] border-gray-200 hover:shadow-md hover:-translate-y-0.5'
       }`}
     >
       <div className="flex justify-between items-start mb-2">

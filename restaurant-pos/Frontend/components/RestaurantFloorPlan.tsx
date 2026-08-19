@@ -1,9 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Clock, AlertCircle, Eye, Receipt, CheckCircle, Timer,
-  UtensilsCrossed, MapPin, Maximize2, Minimize2,
+  UtensilsCrossed, MapPin, Maximize2, Minimize2, Hourglass,
   Pencil, Plus, Trash2, X, Save, Square, Circle, Move,
-  Table, Search, Edit3, Palette, Layers, RotateCcw, Magnet
+  Table, Search, Edit3, Palette, Layers, RotateCcw, Magnet, StopCircle
 } from 'lucide-react';
 import type { TableInfo, Order } from '../src/types';
 import { useCurrentTime } from '../src/hooks/useCurrentTime';
@@ -13,8 +13,12 @@ interface RestaurantFloorPlanProps {
   orders: Order[];
   settings: any;
   onCreateOrder: (type: string, tableId?: string) => void;
+  /** Open an AVAILABLE table's billing workspace without creating an order. */
+  onOpenTableBilling: (tableId: string) => void;
   onOpenBilling: (order: Order) => void;
   onOpenReceiptPreview: (order: Order) => void;
+  /** End a customer's ACTIVE table-QR seat session (the QR stays valid). */
+  onExpireSession?: (tableId: string) => void;
   onAddTable?: (table: Omit<TableInfo, 'id'>) => void;
   onUpdateTable?: (id: string, updates: Partial<TableInfo>) => void;
   onDeleteTable?: (id: string) => void;
@@ -50,16 +54,16 @@ interface CanvasSection {
 }
 
 const STATUS_STYLES: Record<string, { ring: string; bg: string; dot: string; label: string }> = {
-  'Available': { ring: 'ring-emerald-400/60', bg: 'bg-emerald-50', dot: 'bg-emerald-500', label: 'text-emerald-700' },
-  'Occupied': { ring: 'ring-orange-400/60', bg: 'bg-orange-50', dot: 'bg-orange-500', label: 'text-orange-700' },
-  'Reserved': { ring: 'ring-blue-400/60', bg: 'bg-blue-50', dot: 'bg-blue-500', label: 'text-blue-700' },
-  'Preparing': { ring: 'ring-amber-400/60', bg: 'bg-amber-50', dot: 'bg-amber-500', label: 'text-amber-700' },
-  'Food Ready': { ring: 'ring-green-400/60', bg: 'bg-green-50', dot: 'bg-green-500', label: 'text-green-700' },
-  'Served': { ring: 'ring-teal-400/60', bg: 'bg-teal-50', dot: 'bg-teal-500', label: 'text-teal-700' },
-  'Waiting Payment': { ring: 'ring-orange-400/60', bg: 'bg-orange-50', dot: 'bg-orange-500', label: 'text-orange-700' },
-  'Cleaning': { ring: 'ring-sky-400/60', bg: 'bg-sky-50', dot: 'bg-sky-500', label: 'text-sky-700' },
+  'Available': { ring: 'ring-emerald-400/60', bg: 'bg-emerald-50', dot: 'bg-[var(--color-emerald-500-solid)]', label: 'text-emerald-700' },
+  'Occupied': { ring: 'ring-orange-400/60', bg: 'bg-orange-50', dot: 'bg-[var(--color-orange-500-solid)]', label: 'text-orange-700' },
+  'Reserved': { ring: 'ring-blue-400/60', bg: 'bg-blue-50', dot: 'bg-[var(--color-blue-500-solid)]', label: 'text-blue-700' },
+  'Preparing': { ring: 'ring-amber-400/60', bg: 'bg-amber-50', dot: 'bg-[var(--color-amber-500-solid)]', label: 'text-amber-700' },
+  'Food Ready': { ring: 'ring-green-400/60', bg: 'bg-green-50', dot: 'bg-[var(--color-green-500-solid)]', label: 'text-green-700' },
+  'Served': { ring: 'ring-teal-400/60', bg: 'bg-teal-50', dot: 'bg-[var(--color-teal-500-solid)]', label: 'text-teal-700' },
+  'Waiting Payment': { ring: 'ring-orange-400/60', bg: 'bg-orange-50', dot: 'bg-[var(--color-orange-500-solid)]', label: 'text-orange-700' },
+  'Cleaning': { ring: 'ring-sky-400/60', bg: 'bg-sky-50', dot: 'bg-[var(--color-sky-500-solid)]', label: 'text-sky-700' },
   'Paid': { ring: 'ring-gray-400/60', bg: 'bg-gray-50', dot: 'bg-gray-500', label: 'text-gray-700' },
-  'Cancelled': { ring: 'ring-red-400/60', bg: 'bg-red-50', dot: 'bg-red-500', label: 'text-red-700' },
+  'Cancelled': { ring: 'ring-red-400/60', bg: 'bg-red-50', dot: 'bg-[var(--color-red-500-solid)]', label: 'text-red-700' },
 };
 
 const AREA_COLORS: { text: string; bg: string; border: string; fill: string }[] = [
@@ -178,7 +182,7 @@ function autoPositionTables(tables: TableInfo[], areas: FloorArea[], existing: R
 
 export default function RestaurantFloorPlan({
   tables, orders, settings,
-  onCreateOrder, onOpenBilling, onOpenReceiptPreview,
+  onCreateOrder, onOpenTableBilling, onOpenBilling, onOpenReceiptPreview, onExpireSession,
   onAddTable, onUpdateTable, onDeleteTable, showToast,
 }: RestaurantFloorPlanProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -607,7 +611,7 @@ export default function RestaurantFloorPlan({
       {(showCornersOnly ? ['nw', 'ne', 'sw', 'se'] : ALL_DIRS).map(dir => (
         <div key={dir}
           onPointerDown={(e) => handleTableResizeStart(id, dir, e)}
-          className={`absolute w-3 h-3 bg-white border-2 border-[var(--brand-color)] rounded-sm opacity-0 group-hover:opacity-100 hover:opacity-100 hover:bg-[var(--brand-color)] transition-all z-30 shadow-sm touch-none ${resizeHandleStyles[dir]}`}
+          className={`absolute w-3 h-3 bg-[var(--color-bg-white)] border-2 border-[var(--brand-color)] rounded-sm opacity-0 group-hover:opacity-100 hover:opacity-100 hover:bg-[var(--brand-color)] transition-all z-30 shadow-sm touch-none ${resizeHandleStyles[dir]}`}
           title={`Resize ${dir}`}
         />
       ))}
@@ -616,7 +620,7 @@ export default function RestaurantFloorPlan({
 
   // --- Canvas renderer (view mode) ---
   const renderCanvas = () => (
-    <div ref={viewCanvasRef} className={`relative flex-1 min-h-[300px] md:min-h-[400px] overflow-hidden select-none rounded-xl bg-[#f5f3ff]`}>
+    <div ref={viewCanvasRef} className={`relative flex-1 min-h-[300px] md:min-h-[400px] overflow-hidden select-none rounded-xl bg-[var(--color-surface-muted)]`}>
       {/* Grid */}
       <div className="absolute inset-0 pointer-events-none opacity-[0.12]"
         style={{ backgroundImage: 'linear-gradient(rgba(0,74,198,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,74,198,0.05) 1px, transparent 1px)', backgroundSize: '48px 48px' }}
@@ -654,7 +658,7 @@ export default function RestaurantFloorPlan({
 
         return (
           <div key={table.id}
-            onClick={() => { if (avail) onCreateOrder('Dine In', table.id); else if (order) onOpenBilling(order); }}
+            onClick={() => { if (avail) onOpenTableBilling(table.id); else if (order) onOpenBilling(order); }}
             data-tour={avail ? 'table-card' : undefined}
             className={`absolute group cursor-pointer hover:z-20`}
             style={{
@@ -665,14 +669,14 @@ export default function RestaurantFloorPlan({
             {/* Urgent badge (view) */}
             {urgent && (
               <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                <span className="flex items-center gap-0.5 bg-red-500 text-white text-[6px] font-bold px-1.5 py-0.5 rounded-full animate-pulse shadow">
+                <span className="flex items-center gap-0.5 bg-[var(--color-red-500-solid)] text-white text-[6px] font-bold px-1.5 py-0.5 rounded-full animate-pulse shadow">
                   <AlertCircle className="w-2 h-2" /> URGENT
                 </span>
               </div>
             )}
 
             {/* Table shape */}
-            <div className={`relative flex flex-col items-center justify-center bg-white shadow-md transition-all
+            <div className={`relative flex flex-col items-center justify-center bg-[var(--color-bg-white)] shadow-md transition-all
               ${isRound ? 'rounded-full' : 'rounded-xl'}
               ring-2 ${st.ring}
               ${avail ? 'hover:shadow-xl hover:scale-110 hover:ring-emerald-400' : 'hover:shadow-xl hover:scale-110'}
@@ -694,8 +698,16 @@ export default function RestaurantFloorPlan({
             )}
             {!avail && order && (
               <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 z-20 pointer-events-none">
-                <button onClick={(e) => { e.stopPropagation(); onOpenReceiptPreview(order); }} className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center hover:scale-110 transition-all cursor-pointer pointer-events-auto"><Eye className="w-2.5 h-2.5 text-blue-600" /></button>
-                <button onClick={(e) => { e.stopPropagation(); onOpenBilling(order); }} className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center hover:scale-110 transition-all cursor-pointer pointer-events-auto"><Receipt className="w-2.5 h-2.5 text-orange-600" /></button>
+                <button onClick={(e) => { e.stopPropagation(); onOpenReceiptPreview(order); }} className="w-5 h-5 rounded-full bg-[var(--color-bg-white)] shadow flex items-center justify-center hover:scale-110 transition-all cursor-pointer pointer-events-auto"><Eye className="w-2.5 h-2.5 text-blue-600" /></button>
+                <button onClick={(e) => { e.stopPropagation(); onOpenBilling(order); }} className="w-5 h-5 rounded-full bg-[var(--color-bg-white)] shadow flex items-center justify-center hover:scale-110 transition-all cursor-pointer pointer-events-auto"><Receipt className="w-2.5 h-2.5 text-orange-600" /></button>
+              </div>
+            )}
+            {/* Table held by a customer's QR scan (no order yet) — end the session */}
+            {!avail && !order && table.activeSession && (
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20 pointer-events-none">
+                <button onClick={(e) => { e.stopPropagation(); onExpireSession?.(table.id); }} className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-300 shadow px-2 py-1 text-[7px] font-bold text-red-700 hover:bg-red-100 transition-all cursor-pointer pointer-events-auto">
+                  <StopCircle className="w-2 h-2" /> End session
+                </button>
               </div>
             )}
             {avail && (
@@ -751,21 +763,21 @@ export default function RestaurantFloorPlan({
       {isFullscreen && <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={() => setIsFullscreen(false)} />}
 
       {/* ========= VIEW MODE ========= */}
-      <div className={`flex flex-col bg-white rounded-2xl overflow-hidden border border-[#e1e2ed] shadow-sm ${isFullscreen ? 'fixed inset-4 z-50' : ''}`}>
-        <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#e1e2ed] shrink-0">
+      <div className={`flex flex-col bg-[var(--color-bg-white)] rounded-2xl overflow-hidden border border-[var(--color-border-default)] shadow-sm ${isFullscreen ? 'fixed inset-4 z-50' : ''}`}>
+        <div className="flex items-center justify-between px-4 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 rounded-lg bg-[var(--brand-color)]/10 flex items-center justify-center"><MapPin className="w-3.5 h-3.5 text-[var(--brand-color)]" /></div>
-            <h3 className="text-sm font-bold text-[#191b23]">Restaurant Floor Plan</h3>
+            <h3 className="text-sm font-bold text-[var(--color-text-primary)]">Restaurant Floor Plan</h3>
             <div className="flex items-center gap-3 text-[10px]">
-              <span className="flex items-center gap-1 text-emerald-600"><span className="w-2 h-2 rounded-full bg-emerald-500" />{tables.length - occupied} Free</span>
-              <span className="flex items-center gap-1 text-orange-600"><span className="w-2 h-2 rounded-full bg-orange-500" />{occupied} Occupied</span>
+              <span className="flex items-center gap-1 text-emerald-600"><span className="w-2 h-2 rounded-full bg-[var(--color-emerald-500-solid)]" />{tables.length - occupied} Free</span>
+              <span className="flex items-center gap-1 text-orange-600"><span className="w-2 h-2 rounded-full bg-[var(--color-orange-500-solid)]" />{occupied} Occupied</span>
             </div>
           </div>
           <div className="flex items-center gap-1">
             <button onClick={() => { setEditOpen(true); setEditTab('areas'); }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm"
             ><Pencil className="w-3 h-3" /> Edit Floor Plan</button>
-            <button onClick={() => setIsFullscreen(v => !v)} className="p-1.5 rounded-lg text-gray-400 hover:text-[#191b23] hover:bg-gray-100 transition-all cursor-pointer">{isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</button>
+            <button onClick={() => setIsFullscreen(v => !v)} className="p-1.5 rounded-lg text-gray-400 hover:text-[var(--color-text-primary)] hover:bg-gray-100 transition-all cursor-pointer">{isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</button>
           </div>
         </div>
 
@@ -775,13 +787,13 @@ export default function RestaurantFloorPlan({
       {/* ========= EDIT MODAL ========= */}
       {editOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEditOpen(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[95vw] max-w-6xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-[95vw] max-w-6xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Modal header */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-[#e1e2ed] shrink-0">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border-default)] shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-[var(--brand-color)] flex items-center justify-center"><Pencil className="w-4 h-4 text-white" /></div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#191b23]">Edit Floor Plan</h3>
+                  <h3 className="text-sm font-bold text-[var(--color-text-primary)]">Edit Floor Plan</h3>
                   <p className="text-[10px] text-gray-500">Step 1: Set up areas · Step 2: Place tables</p>
                 </div>
               </div>
@@ -789,7 +801,7 @@ export default function RestaurantFloorPlan({
             </div>
 
             {/* Tab bar */}
-            <div className="flex border-b border-[#e1e2ed] shrink-0">
+            <div className="flex border-b border-[var(--color-border-default)] shrink-0">
               <button onClick={() => setEditTab('areas')}
                 className={`flex items-center gap-2 px-5 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${editTab === 'areas' ? 'border-[var(--brand-color)] text-[var(--brand-color)]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
               ><Layers className="w-4 h-4" /> 1. Areas</button>
@@ -800,7 +812,7 @@ export default function RestaurantFloorPlan({
 
             <div className="flex flex-1 overflow-hidden">
               {/* Left: Canvas */}
-              <div className="flex-1 p-4 bg-[#faf8ff] flex flex-col min-w-0">
+              <div className="flex-1 p-4 bg-[var(--color-bg-page)] flex flex-col min-w-0">
                 <div className="flex items-center justify-between mb-2.5">
                   <div className="flex items-center gap-2 text-[10px] text-gray-500">
                     {editTab === 'areas' ? (
@@ -814,7 +826,7 @@ export default function RestaurantFloorPlan({
                   {/* Canvas inner — ref drives all edit drag/resize math */}
                   <div ref={editCanvasRef}
                     onDoubleClick={quickAddAt}
-                    className="relative border-2 border-dashed border-[var(--brand-color)]/20 rounded-xl bg-white select-none touch-none"
+                    className="relative border-2 border-dashed border-[var(--brand-color)]/20 rounded-xl bg-[var(--color-bg-white)] select-none touch-none"
                     style={{ minHeight: '600px', height: 'auto' }}
                   >
                     <div className="absolute inset-0 pointer-events-none opacity-[0.1]"
@@ -823,7 +835,7 @@ export default function RestaurantFloorPlan({
                     {canvasSections.map(s => {
                       const isAreaDrag = draggingArea === s.id;
                       const isResize = resizing?.id === s.id;
-                      const handleClass = editTab === 'areas' ? 'absolute z-20 w-3 h-3 bg-white border-2 border-[var(--brand-color)] rounded-sm opacity-0 group-hover:opacity-100 hover:opacity-100 hover:bg-[var(--brand-color)] hover:border-[var(--brand-color)] transition-all cursor-pointer touch-none' : 'hidden';
+                      const handleClass = editTab === 'areas' ? 'absolute z-20 w-3 h-3 bg-[var(--color-bg-white)] border-2 border-[var(--brand-color)] rounded-sm opacity-0 group-hover:opacity-100 hover:opacity-100 hover:bg-[var(--brand-color)] hover:border-[var(--brand-color)] transition-all cursor-pointer touch-none' : 'hidden';
                       return (
                       <div key={s.id}
                         onPointerDown={(e) => handleAreaGrab(s.id, e)}
@@ -888,21 +900,21 @@ export default function RestaurantFloorPlan({
                           {isSelected && (
                             <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-1 z-30 whitespace-nowrap">
                               <button onClick={(e) => { e.stopPropagation(); toggleShape(table.id); }}
-                                className="w-5 h-5 rounded-full bg-white shadow-md flex items-center justify-center hover:bg-gray-100 transition-all cursor-pointer border border-gray-200"
+                                className="w-5 h-5 rounded-full bg-[var(--color-bg-white)] shadow-md flex items-center justify-center hover:bg-gray-100 transition-all cursor-pointer border border-gray-200"
                                 title="Toggle round/rect"
                               >{isRound ? <Square className="w-2.5 h-2.5 text-purple-600" /> : <Circle className="w-2.5 h-2.5 text-purple-600" />}</button>
                               <button onClick={(e) => { e.stopPropagation(); resetTableSize(table.id); }}
-                                className="w-5 h-5 rounded-full bg-white shadow-md flex items-center justify-center hover:bg-gray-100 transition-all cursor-pointer border border-gray-200"
+                                className="w-5 h-5 rounded-full bg-[var(--color-bg-white)] shadow-md flex items-center justify-center hover:bg-gray-100 transition-all cursor-pointer border border-gray-200"
                                 title="Reset to default size"
                               ><RotateCcw className="w-2.5 h-2.5 text-blue-600" /></button>
                               <button onClick={(e) => { e.stopPropagation(); delTable(table.id); }}
-                                className="w-5 h-5 rounded-full bg-white shadow-md flex items-center justify-center hover:bg-red-500 hover:text-white transition-all cursor-pointer border border-gray-200"
+                                className="w-5 h-5 rounded-full bg-[var(--color-bg-white)] shadow-md flex items-center justify-center hover:bg-[var(--color-red-500-solid)] hover:text-white transition-all cursor-pointer border border-gray-200"
                                 title="Delete table"
                               ><Trash2 className="w-2.5 h-2.5 text-red-500" /></button>
                             </div>
                           )}
 
-                          <div className={`relative flex flex-col items-center justify-center bg-white shadow-md transition-all
+                          <div className={`relative flex flex-col items-center justify-center bg-[var(--color-bg-white)] shadow-md transition-all
                             ${isRound ? 'rounded-full' : 'rounded-xl'}
                             ring-2 ${isSelected ? 'ring-[var(--brand-color)]' : st.ring}
                             hover:ring-[var(--brand-color)]
@@ -928,7 +940,7 @@ export default function RestaurantFloorPlan({
                                 onChange={e => setEditingTableNumVal(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter') updateTableNumber(table.id); if (e.key === 'Escape') setEditingTableNum(null); }}
                                 onBlur={() => updateTableNumber(table.id)}
-                                className="w-16 text-center px-1 py-0.5 rounded-lg border-2 border-[var(--brand-color)] bg-white text-[10px] font-black outline-none shadow-lg"
+                                className="w-16 text-center px-1 py-0.5 rounded-lg border-2 border-[var(--brand-color)] bg-[var(--color-bg-white)] text-[10px] font-black outline-none shadow-lg"
                                 autoFocus
                               />
                             </div>
@@ -951,16 +963,16 @@ export default function RestaurantFloorPlan({
               </div>
 
               {/* Right panel */}
-              <div className="w-72 border-l border-[#e1e2ed] flex flex-col bg-gray-50/50">
+              <div className="w-72 border-l border-[var(--color-border-default)] flex flex-col bg-gray-50/50">
                 {editTab === 'areas' ? (
                   <>
-                    <div className="p-3 border-b border-[#e1e2ed]">
+                    <div className="p-3 border-b border-[var(--color-border-default)]">
                       <p className="text-[10px] font-bold text-gray-500 uppercase mb-2">Areas / Zones</p>
                       <div className="flex gap-1.5">
                         <input type="text" placeholder="New area name..." value={newAreaLabel} onChange={e => setNewAreaLabel(e.target.value)}
                           onKeyDown={e => e.key === 'Enter' && addArea()}
-                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-[#e1e2ed] text-[10px] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 bg-white" />
-                        <button onClick={addArea} className="px-2.5 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer"><Plus className="w-3 h-3" /></button>
+                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[10px] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 bg-[var(--color-bg-white)]" />
+                        <button onClick={addArea} className="px-2.5 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer"><Plus className="w-3 h-3" /></button>
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
@@ -969,7 +981,7 @@ export default function RestaurantFloorPlan({
                         const isEditing = editingAreaId === area.id;
                         const tableCount = tables.filter(t => (t.section || 'Main Hall') === area.label).length;
                         return (
-                          <div key={area.id} className="bg-white rounded-lg border border-[#e1e2ed] p-2.5 hover:border-[var(--brand-color)]/30 transition-all">
+                          <div key={area.id} className="bg-[var(--color-bg-white)] rounded-lg border border-[var(--color-border-default)] p-2.5 hover:border-[var(--brand-color)]/30 transition-all">
                             {isEditing ? (
                               <div className="flex items-center gap-1.5">
                                 <input type="text" value={editAreaLabel} onChange={e => setEditAreaLabel(e.target.value)}
@@ -983,7 +995,7 @@ export default function RestaurantFloorPlan({
                                 <div className="flex items-center gap-2 min-w-0">
                                   <span className={`w-3 h-3 rounded ${pal.bg} border ${pal.border} shrink-0`} />
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-bold text-[#191b23] truncate">{area.label}</p>
+                                    <p className="text-[10px] font-bold text-[var(--color-text-primary)] truncate">{area.label}</p>
                                     <p className="text-[8px] text-gray-400">{tableCount} table{tableCount !== 1 ? 's' : ''}</p>
                                   </div>
                                 </div>
@@ -1006,38 +1018,38 @@ export default function RestaurantFloorPlan({
                       })}
                       {areas.length === 0 && <p className="text-center py-6 text-[10px] text-gray-400">No areas yet. Add one above.</p>}
                     </div>
-                    <div className="p-3 border-t border-[#e1e2ed] text-[10px] text-gray-500 text-center">{areas.length} area{areas.length !== 1 ? 's' : ''} · Drag zone body to move, handles to resize</div>
+                    <div className="p-3 border-t border-[var(--color-border-default)] text-[10px] text-gray-500 text-center">{areas.length} area{areas.length !== 1 ? 's' : ''} · Drag zone body to move, handles to resize</div>
                   </>
                 ) : (
                   <>
-                    <div className="p-3 border-b border-[#e1e2ed]">
+                    <div className="p-3 border-b border-[var(--color-border-default)]">
                       <div className="relative mb-2">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
                         <input type="text" placeholder="Search tables..." value={editSearch} onChange={e => setEditSearch(e.target.value)}
-                          className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#e1e2ed] text-[10px] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 bg-white" />
+                          className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[10px] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 bg-[var(--color-bg-white)]" />
                       </div>
                       <button onClick={() => { if (areas.length === 0) { showToast?.('Create areas first', 'warning'); return; } setShowAddForm(true); }}
-                        className="w-full py-2 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
+                        className="w-full py-2 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
                       ><Plus className="w-3 h-3" /> Add Table</button>
                     </div>
 
                     {showAddForm && (
-                      <div className="p-3 border-b border-[#e1e2ed] bg-white">
+                      <div className="p-3 border-b border-[var(--color-border-default)] bg-[var(--color-bg-white)]">
                         <div className="flex items-center justify-between mb-2">
-                          <p className="text-[9px] font-bold text-[#191b23]">New Table</p>
+                          <p className="text-[9px] font-bold text-[var(--color-text-primary)]">New Table</p>
                           <button onClick={() => setShowAddForm(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="w-3.5 h-3.5" /></button>
                         </div>
                         <div className="space-y-2">
                           <div>
                             <label className="text-[7px] font-bold text-gray-500 uppercase block mb-0.5">Number</label>
                             <input type="number" value={addForm.number} onChange={e => setAddForm({ ...addForm, number: e.target.value })}
-                              className="w-full px-2 py-1.5 rounded-lg border border-[#e1e2ed] text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30" placeholder="e.g. 25" />
+                              className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30" placeholder="e.g. 25" />
                           </div>
                           <div className="flex gap-2">
                             <div className="flex-1">
                               <label className="text-[7px] font-bold text-gray-500 uppercase block mb-0.5">Capacity</label>
                               <input type="number" value={addForm.capacity} onChange={e => setAddForm({ ...addForm, capacity: Math.max(1, Number(e.target.value)) })}
-                                className="w-full px-2 py-1.5 rounded-lg border border-[#e1e2ed] text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30" />
+                                className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30" />
                             </div>
                             <div className="flex-1">
                               <label className="text-[7px] font-bold text-gray-500 uppercase block mb-0.5">Shape</label>
@@ -1054,11 +1066,11 @@ export default function RestaurantFloorPlan({
                           <div>
                             <label className="text-[7px] font-bold text-gray-500 uppercase block mb-0.5">Place in Area</label>
                             <select value={addForm.area} onChange={e => setAddForm({ ...addForm, area: e.target.value })}
-                              className="w-full px-2 py-1.5 rounded-lg border border-[#e1e2ed] text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30 bg-white">
+                              className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/30 bg-[var(--color-bg-white)]">
                               {areas.map(a => <option key={a.id}>{a.label}</option>)}
                             </select>
                           </div>
-                          <button onClick={addTable} className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-sm">+ Add Table</button>
+                          <button onClick={addTable} className="w-full py-2 bg-[var(--color-emerald-600-solid)] hover:bg-[var(--color-emerald-700-solid)] text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-sm">+ Add Table</button>
                         </div>
                       </div>
                     )}
@@ -1082,8 +1094,8 @@ export default function RestaurantFloorPlan({
                               return (
                                 <div key={table.id}
                                   onClick={() => setSelectedTableIds(prev => ({ ...prev, [table.id]: !prev[table.id] }))}
-                                  className={`flex items-center justify-between bg-white rounded-lg border p-2 mb-1 transition-all cursor-pointer
-                                    ${isSelected ? 'border-[var(--brand-color)] ring-1 ring-[var(--brand-color)]/20 bg-blue-50/30' : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/30'}`}
+                                  className={`flex items-center justify-between bg-[var(--color-bg-white)] rounded-lg border p-2 mb-1 transition-all cursor-pointer
+                                    ${isSelected ? 'border-[var(--brand-color)] ring-1 ring-[var(--brand-color)]/20 bg-blue-50/30' : 'border-[var(--color-border-default)] hover:border-[var(--brand-color)]/30'}`}
                                 >
                                   <div className="flex items-center gap-2 min-w-0">
                                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[10px] shrink-0
@@ -1104,7 +1116,7 @@ export default function RestaurantFloorPlan({
                                     </div>
                                     <div className="min-w-0" onClick={e => e.stopPropagation()}>
                                       <div className="flex items-center gap-1">
-                                        <span className="text-[10px] font-bold text-[#191b23]">{table.capacity}</span>
+                                        <span className="text-[10px] font-bold text-[var(--color-text-primary)]">{table.capacity}</span>
                                         <button onClick={(e) => { e.stopPropagation(); if (onUpdateTable) onUpdateTable(table.id, { capacity: Math.max(1, table.capacity - 1) }); }}
                                           className="w-4 h-4 rounded flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
                                         ><span className="text-[10px] font-bold leading-none">−</span></button>
@@ -1133,18 +1145,18 @@ export default function RestaurantFloorPlan({
                       })}
                       {tables.length === 0 && <p className="text-center py-6 text-[10px] text-gray-400">No tables. Click "Add Table" or double-click the canvas.</p>}
                     </div>
-                    <div className="p-3 border-t border-[#e1e2ed] text-[10px] text-gray-500 text-center">{tables.length} table{tables.length !== 1 ? 's' : ''} · Click to show/hide on canvas · Click number to rename</div>
+                    <div className="p-3 border-t border-[var(--color-border-default)] text-[10px] text-gray-500 text-center">{tables.length} table{tables.length !== 1 ? 's' : ''} · Click to show/hide on canvas · Click number to rename</div>
                   </>
                 )}
               </div>
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-between px-5 py-3 border-t border-[#e1e2ed] bg-gray-50/50 shrink-0">
+            <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--color-border-default)] bg-gray-50/50 shrink-0">
               <div className="flex items-center gap-3 text-[10px] text-gray-500">
                 <button onClick={() => setSnapEnabled(v => !v)}
                   className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer border ${
-                    snapEnabled ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]' : 'bg-white text-gray-500 border-[#e1e2ed] hover:border-[var(--brand-color)]/40'
+                    snapEnabled ? 'bg-[var(--brand-color)] text-white border-[var(--brand-color)]' : 'bg-[var(--color-bg-white)] text-gray-500 border-[var(--color-border-default)] hover:border-[var(--brand-color)]/40'
                   }`}
                 ><Magnet className="w-3 h-3" /> Snap {snapEnabled ? 'On' : 'Off'}</button>
                 <span className="hidden sm:inline">
@@ -1155,10 +1167,10 @@ export default function RestaurantFloorPlan({
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => { saveJSON(LAYOUT_KEY, layouts); saveJSON(AREA_LAYOUT_KEY, areaLayouts); saveJSON(ENTRANCE_POS_KEY, entrancePos); showToast?.('Layout saved', 'success'); }}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+                  className="px-4 py-2 bg-[var(--color-emerald-600-solid)] hover:bg-[var(--color-emerald-700-solid)] text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
                 ><Save className="w-3.5 h-3.5" /> Save</button>
                 <button onClick={() => setEditOpen(false)}
-                  className="px-4 py-2 border border-[#e1e2ed] rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer"
+                  className="px-4 py-2 border border-[var(--color-border-default)] rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer"
                 >Close</button>
               </div>
             </div>

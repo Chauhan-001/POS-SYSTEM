@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { debugWarn } from '../utils/debugLog';
+import { setAiToken } from '../ai/aiClient';
 
 const BASE = '/api';
 
@@ -16,6 +17,11 @@ let _refreshSubscribers: Array<(token: string) => void> = [];
 
 export function setAccessToken(token: string | null) {
   _accessToken = token;
+  // Keep the AI client's in-memory JWT in sync so /api/ai/* calls (which use
+  // their own token store, not axios) never keep serving an expired token
+  // after a refresh. aiClient.getEffectiveToken() prefers the in-memory value
+  // over localStorage, so without this the AI endpoints 401 while reports work.
+  setAiToken(token);
 }
 
 export function getAccessToken(): string | null {
@@ -82,7 +88,18 @@ apiClient.interceptors.response.use(
       _isRefreshing = true;
 
       try {
-        if (!_refreshToken) throw new Error('No refresh token');
+        if (!_refreshToken) {
+          // No refresh token available — treat as a full session expiry.
+          // Avoid throwing a raw error that could leak to UI.
+          setAccessToken(null);
+          setRefreshToken(null);
+          localStorage.removeItem('pos_access_token');
+          localStorage.removeItem('pos_refresh_token');
+          localStorage.removeItem('pos_current_employee');
+          _onSessionExpired?.();
+          _isRefreshing = false;
+          return Promise.reject(new Error('Session expired'));
+        }
 
         const { data } = await axios.post(`${BASE}/auth/refresh`, {
           refreshToken: _refreshToken,
@@ -114,12 +131,14 @@ apiClient.interceptors.response.use(
         localStorage.removeItem('pos_current_employee');
         _onSessionExpired?.();
         debugWarn('Axios', 'Session expired, redirecting to login');
-        return Promise.reject(refreshError);
+        // Reject with a clean error — never leak raw token errors to UI.
+        return Promise.reject(new Error('Session expired'));
       } finally {
         _isRefreshing = false;
       }
     }
-    return Promise.reject(error);
+    // For non-refresh 401s, reject with a clean message too.
+    return Promise.reject(error.response?.status === 401 ? new Error('Session expired') : error);
   },
 );
 

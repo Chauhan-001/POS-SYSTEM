@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { round2 } from './unitConversion';
 import { profitabilityService } from './profitabilityService';
 import { consumptionService } from './consumptionService';
+import { recipeCostEngine } from './recipeCostEngine';
 
 const money = (n: number) => round2(n);
 
@@ -50,45 +51,7 @@ export class CostIntelligenceService {
     });
 
     // ── 2. Ingredient cost changes (current averageCost vs window purchases) ─
-    const recipes = await Recipe.find({ restaurantId, status: 'active', isDeleted: { $ne: true } }).lean().exec();
-    const ingredientIds = new Set<string>();
-    for (const r of recipes as any[]) {
-      for (const c of (r.components || [])) {
-        if (c.componentType !== 'sub_recipe' && c.inventoryItemId) ingredientIds.add(String(c.inventoryItemId));
-      }
-    }
-    const items: any[] = await Product.find({ _id: { $in: [...ingredientIds] }, restaurantId, isDeleted: { $ne: true } })
-      .select('_id name unit averageCost currentStock').lean().exec();
-    const purchases: any[] = await Purchase.find({
-      restaurantId,
-      status: 'completed',
-      date: { $gte: iso(prevStart), $lte: iso(end) },
-    }).select('item price quantity unit date').lean().exec();
-
-    const ingredientCostChanges: any[] = [];
-    for (const item of items) {
-      const name = String(item.name || '').toLowerCase();
-      const windowPurchases = purchases.filter((p) => String(p.item || '').toLowerCase() === name && p.date >= iso(start));
-      const prevPurchases = purchases.filter((p) => String(p.item || '').toLowerCase() === name && p.date < iso(start));
-      const wavg = (list: any[]) => {
-        const q = list.reduce((s, p) => s + Number(p.quantity || 0), 0);
-        if (q <= 0) return null;
-        return list.reduce((s, p) => s + Number(p.quantity || 0) * Number(p.price || 0), 0) / q;
-      };
-      const current = wavg(windowPurchases);
-      const prev = wavg(prevPurchases);
-      const pct = current !== null && prev !== null && prev > 0 ? ((current - prev) / prev) * 100 : null;
-      ingredientCostChanges.push({
-        itemId: String(item._id),
-        name: item.name,
-        unit: item.unit,
-        currentCost: Number(item.averageCost) || 0,
-        avgPurchaseCost: current !== null ? money(current) : undefined,
-        previousAvgPurchaseCost: prev !== null ? money(prev) : undefined,
-        pctChange: pct !== null ? round2(pct) : undefined,
-        hasData: current !== null && prev !== null,
-      });
-    }
+    const ingredientCostChanges = await this.loadIngredientCostChanges(restaurantId, days, iso, start, end);
 
     // ── 3. Wastage (recorded InventoryEvent 'waste' rows) ──────────────
     // Cost lookups use the FULL product catalog (waste is logged for any
@@ -113,10 +76,33 @@ export class CostIntelligenceService {
       row.cost = money(row.cost + cost);
       wastageByItem.set(key, row);
     }
+    // Previous-window waste (baseline for spike/repeated detection). Same
+    // cost lookup (current catalog averageCost) so both windows are comparable.
+    const prevWasteEvents: any[] = await InventoryEvent.find({
+      restaurantId,
+      type: 'waste',
+      eventDate: { $gte: iso(prevStart), $lte: iso(start) },
+    }).select('item quantity unit eventDate').lean().exec();
+    const prevWasteByItem = new Map<string, { name: string; qty: number; unit: string; cost: number }>();
+    for (const ev of prevWasteEvents) {
+      const key = String(ev.item || '');
+      const it = itemByName.get(key.toLowerCase());
+      const qty = Math.abs(Number(ev.quantity || 0));
+      const cost = money(qty * (it ? Number(it.averageCost) || 0 : 0));
+      const row = prevWasteByItem.get(key) || { name: key, qty: 0, unit: ev.unit || '', cost: 0 };
+      row.qty = money(row.qty + qty);
+      row.cost = money(row.cost + cost);
+      prevWasteByItem.set(key, row);
+    }
+    const wasteItems: any[] = [...wastageByItem.values()].map((w) => {
+      const prev = prevWasteByItem.get(String(w.name)) || { qty: 0, cost: 0 };
+      return { name: w.name, unit: w.unit, qty: w.qty, cost: w.cost, prevQty: money(prev.qty || 0), prevCost: money(prev.cost || 0) };
+    });
     const wastage = {
       totalCost: money([...wastageByItem.values()].reduce((s, w) => s + w.cost, 0)),
       itemCount: wastageByItem.size,
       topItems: [...wastageByItem.values()].sort((a, b) => b.cost - a.cost).slice(0, 5),
+      items: wasteItems.sort((a, b) => b.cost - a.cost),
     };
 
     // ── 4. Theoretical vs actual consumption variance ──────────────────
@@ -176,6 +162,180 @@ export class CostIntelligenceService {
       costRisers,
       lowMargin,
     };
+  }
+
+  /**
+   * Shared deterministic ingredient cost-change computation (used by metrics()
+   * and marginDeterioration()): weighted-average purchase cost in the current
+   * window vs the previous window of equal length.
+   */
+  private async loadIngredientCostChanges(
+    restaurantId: string,
+    days: number,
+    iso: (d: Date) => string,
+    start: Date,
+    end: Date
+  ): Promise<any[]> {
+    const prevStart = new Date(start.getTime() - days * 86400000);
+    const recipes = await Recipe.find({ restaurantId, status: 'active', isDeleted: { $ne: true } }).lean().exec();
+    const ingredientIds = new Set<string>();
+    for (const r of recipes as any[]) {
+      for (const c of (r.components || [])) {
+        if (c.componentType !== 'sub_recipe' && c.inventoryItemId) ingredientIds.add(String(c.inventoryItemId));
+      }
+    }
+    const items: any[] = await Product.find({ _id: { $in: [...ingredientIds] }, restaurantId, isDeleted: { $ne: true } })
+      .select('_id name unit averageCost currentStock').lean().exec();
+    const purchases: any[] = await Purchase.find({
+      restaurantId,
+      status: 'completed',
+      date: { $gte: iso(prevStart), $lte: iso(end) },
+    }).select('item price quantity unit date').lean().exec();
+
+    const ingredientCostChanges: any[] = [];
+    for (const item of items) {
+      const name = String(item.name || '').toLowerCase();
+      const windowPurchases = purchases.filter((p) => String(p.item || '').toLowerCase() === name && p.date >= iso(start));
+      const prevPurchases = purchases.filter((p) => String(p.item || '').toLowerCase() === name && p.date < iso(start));
+      const wavg = (list: any[]) => {
+        const q = list.reduce((s, p) => s + Number(p.quantity || 0), 0);
+        if (q <= 0) return null;
+        return list.reduce((s, p) => s + Number(p.quantity || 0) * Number(p.price || 0), 0) / q;
+      };
+      const current = wavg(windowPurchases);
+      const prev = wavg(prevPurchases);
+      const pct = current !== null && prev !== null && prev > 0 ? ((current - prev) / prev) * 100 : null;
+      ingredientCostChanges.push({
+        itemId: String(item._id),
+        name: item.name,
+        unit: item.unit,
+        currentCost: Number(item.averageCost) || 0,
+        avgPurchaseCost: current !== null ? money(current) : undefined,
+        previousAvgPurchaseCost: prev !== null ? money(prev) : undefined,
+        pctChange: pct !== null ? round2(pct) : undefined,
+        hasData: current !== null && prev !== null,
+      });
+    }
+    return ingredientCostChanges;
+  }
+
+  /**
+   * Deterministic margin-deterioration analysis (Phase D). For every active
+   * recipe that uses an ingredient whose weighted-average purchase cost rose
+   * materially (>= minRiserPct), recomputes the recipe cost at LAST period's
+   * purchase prices via RecipeCostEngine costOverrides, and reports the
+   * previous → current recipe cost and contribution-margin movement.
+   *
+   * All money is computed by the recipe cost engine — nothing is invented.
+   * Returns an empty rows array when no material movement exists.
+   */
+  async marginDeterioration(
+    restaurantId: string,
+    opts: { days?: number; branchId?: string; minRiserPct?: number; minRecipeCostImpactPct?: number; maxProducts?: number } = {}
+  ) {
+    if (!mongoose.Types.ObjectId.isValid(restaurantId)) throw new AppError(400, 'Invalid restaurantId');
+    const days = Math.min(365, Math.max(7, Number(opts.days) || 60));
+    const minRiserPct = Number(opts.minRiserPct) || 10;
+    const minRecipeCostImpactPct = Number(opts.minRecipeCostImpactPct) || 8;
+    const maxProducts = Math.min(6, Math.max(1, Number(opts.maxProducts) || 3));
+    const end = new Date();
+    const start = new Date(Date.now() - days * 86400000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+    const ingredientCostChanges = await this.loadIngredientCostChanges(restaurantId, days, iso, start, end);
+    const risers = ingredientCostChanges.filter(
+      (c) => c.pctChange !== undefined && c.pctChange >= minRiserPct && c.previousAvgPurchaseCost > 0 && c.avgPurchaseCost > 0
+    );
+    if (risers.length === 0) return { rows: [], risers: [] };
+    const riserIds = new Set(risers.map((r) => r.itemId));
+
+    const recipes: any[] = await Recipe.find({ restaurantId, status: 'active', isDeleted: { $ne: true } }).lean().exec();
+    const recipeMap = new Map(recipes.map((r) => [String(r._id), r]));
+    const productIds = recipes.map((r) => r.productId);
+    const products: any[] = await Product.find({ _id: { $in: productIds }, restaurantId, isDeleted: { $ne: true } })
+      .select('_id name price unit averageCost').lean().exec();
+    const productById = new Map(products.map((p: any) => [String(p._id), p]));
+
+    // ingredient ids (incl. sub-recipe leaves) used by each recipe, recursing
+    // through sub-recipe components (cycle-safe: visited set).
+    const leafIngredientIds = (recipeId: string, visited: Set<string> = new Set()): Set<string> => {
+      const out = new Set<string>();
+      const rec = recipeMap.get(recipeId);
+      if (!rec || visited.has(recipeId)) return out;
+      visited.add(recipeId);
+      for (const comp of rec.components || []) {
+        if (comp.componentType === 'sub_recipe' && comp.subRecipeId) {
+          for (const id of leafIngredientIds(String(comp.subRecipeId), visited)) out.add(id);
+        } else if (comp.inventoryItemId) {
+          out.add(String(comp.inventoryItemId));
+        }
+      }
+      return out;
+    };
+
+    const costOverrides = new Map<string, number>();
+    for (const c of ingredientCostChanges) {
+      if (c.previousAvgPurchaseCost && Number(c.previousAvgPurchaseCost) > 0) costOverrides.set(c.itemId, Number(c.previousAvgPurchaseCost));
+    }
+
+    const rows: any[] = [];
+    for (const recipe of recipes) {
+      if (!recipe.productId) continue;
+      const used = leafIngredientIds(String(recipe._id));
+      if (used.size === 0) continue;
+      let riserUsed: any = null;
+      for (const rid of used) {
+        if (!riserIds.has(rid)) continue;
+        const ch = ingredientCostChanges.find((c) => c.itemId === rid);
+        if (ch && (!riserUsed || (ch.pctChange || 0) > (riserUsed.pctChange || 0))) riserUsed = ch;
+      }
+      if (!riserUsed) continue;
+
+      const product = productById.get(String(recipe.productId));
+      if (!product) continue;
+      const sellingPrice = Number(product.price) || 0;
+      if (sellingPrice <= 0) continue;
+
+      try {
+        const current = await recipeCostEngine.costRecipe(recipe, { restaurantId });
+        const previous = await recipeCostEngine.costRecipe(recipe, { restaurantId, costOverrides });
+        const prevCost = money(previous.recipeCost);
+        const currCost = money(current.recipeCost);
+        if (prevCost <= 0) continue;
+        const recipeCostDelta = money(currCost - prevCost);
+        const recipeCostPct = round2((recipeCostDelta / prevCost) * 100);
+        const prevMarginPct = round2(((sellingPrice - prevCost) / sellingPrice) * 100);
+        const currMarginPct = round2(((sellingPrice - currCost) / sellingPrice) * 100);
+        const marginDeltaPp = round2(currMarginPct - prevMarginPct);
+        if (recipeCostPct < minRecipeCostImpactPct && marginDeltaPp > -5) continue;
+        rows.push({
+          productId: String(product._id),
+          productName: product.name,
+          recipeId: String(recipe._id),
+          recipeName: recipe.name,
+          category: product.category || undefined,
+          sellingPrice,
+          previousRecipeCost: prevCost,
+          recipeCost: currCost,
+          recipeCostDelta,
+          recipeCostPct,
+          previousContributionMarginPercent: prevMarginPct,
+          contributionMarginPercent: currMarginPct,
+          marginDeltaPp,
+          ingredientId: riserUsed.itemId,
+          ingredientName: riserUsed.name,
+          ingredientPreviousCost: money(riserUsed.previousAvgPurchaseCost),
+          ingredientCurrentCost: money(riserUsed.avgPurchaseCost),
+          ingredientPctChange: riserUsed.pctChange,
+        });
+      } catch {
+        // A single recipe must never break the whole analysis.
+        continue;
+      }
+    }
+
+    rows.sort((a, b) => a.marginDeltaPp - b.marginDeltaPp);
+    return { rows: rows.slice(0, maxProducts), risers: risers.map((r) => ({ itemId: r.itemId, name: r.name, pctChange: r.pctChange, unit: r.unit })) };
   }
 
   /**

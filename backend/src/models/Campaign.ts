@@ -16,7 +16,7 @@
 
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type CampaignChannel = 'sms' | 'whatsapp' | 'email' | 'app_notification' | 'webhook';
+export type CampaignChannel = 'sms' | 'whatsapp' | 'email' | 'app_notification' | 'webhook' | 'website';
 export type CampaignStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed' | 'partial';
 
 export interface ICampaign extends Document {
@@ -69,7 +69,7 @@ const CampaignSchema = new Schema<ICampaign>(
     },
     template: {
       type: new Schema({
-        channel: { type: String, enum: ['sms', 'whatsapp', 'email', 'app_notification', 'webhook'], required: true },
+        channel: { type: String, enum: ['sms', 'whatsapp', 'email', 'app_notification', 'webhook', 'website'], required: true },
         subject: { type: String, trim: true },
         message: { type: String, required: true, trim: true },
       }, { _id: false }),

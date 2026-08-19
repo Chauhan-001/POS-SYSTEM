@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Package, ShoppingCart, AlertTriangle, TrendingUp, ArrowRight, Sparkles, Brain, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { Package, ShoppingCart, AlertTriangle, TrendingUp, ArrowRight, Sparkles, Brain, AlertCircle, Loader2 } from 'lucide-react';
+import RefreshButton from '../../common/RefreshButton';
 import { motion } from 'motion/react';
 import { daysUntilExpiry } from '../expiryUtils';
 import type { InventoryPage, InventoryAlert } from '../types';
@@ -8,6 +9,7 @@ import { useInventory } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
 import AICard from '../../../src/ai/AICard';
 import { computeHealthScore, generatePurchaseRecs, predictLowStock, computeInventoryCardsLocal } from '../../../src/ai/aiData';
+import { fetchInventoryWaste } from '../../../src/api/client';
 import WeatherWidget from '../../../src/ai/WeatherWidget';
 
 export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: (page: InventoryPage) => void; moduleSettings?: Record<string, boolean> }) {
@@ -67,13 +69,35 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
   const [recsSource, setRecsSource] = useState<AiSource | null>(null);
   const [lowStockSource, setLowStockSource] = useState<AiSource | null>(null);
   const [aiLoading, setAiLoading] = useState(true);
+  // True once the health score has been computed (even if the result is null
+  // because there are no inventory items or no waste data). Used to
+  // differentiate "still loading" from "no data to show".
+  const [healthComputed, setHealthComputed] = useState(false);
 
-  // Waste proxy for the health engine — same derivation the live AI endpoint
-  // receives. Hoisted so both the live fetch and the local delta reuse it.
-  const wasteEntries = useMemo(
-    () => items.filter(i => i.status === 'critical').length * 50 + items.filter(i => i.expiryDate).length * 30,
-    [items],
-  );
+  // Waste cost for the health engine — real data from the backend waste
+  // report (last 30 days), never a fabricated proxy. Hoisted so both the
+  // card fetch and the local delta reuse it.
+  const [wasteCost, setWasteCost] = useState(0);
+  useEffect(() => {
+    if (!itemsSynced) return;
+    let cancelled = false;
+    const day = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const end = new Date();
+    const start = new Date(Date.now() - 30 * 86_400_000);
+    fetchInventoryWaste(day(start), day(end))
+      .then(({ data }) => {
+        if (cancelled || !Array.isArray(data)) return;
+        const byName = new Map(items.map(i => [i.name.toLowerCase(), i]));
+        const cost = (data as Array<{ item?: string; quantity?: number }>).reduce((sum, row) => {
+          const item = row?.item ? byName.get(String(row.item).toLowerCase()) : undefined;
+          return sum + (Number(row?.quantity) || 0) * (item?.averageCost || 0);
+        }, 0);
+        setWasteCost(cost);
+      })
+      .catch(() => { if (!cancelled) setWasteCost(0); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsSynced]);
 
   // AI cards fetch ONCE when the catalog is ready (fresh login / page open)
   // and on the explicit refresh button — never on every `items` change.
@@ -108,9 +132,9 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
     const sigAtStart = catalogSigRef.current;
     setAiLoading(true);
     Promise.all([
-      computeHealthScore(items, wasteEntries),
+      computeHealthScore(items, wasteCost),
       generatePurchaseRecs(items),
-      predictLowStock(items),
+      predictLowStock(items, purchases ?? undefined),
     ]).then(([h, p, l]) => {
       // Catalog changed while the LLM was answering — drop the stale result;
       // the delta effect already recomputed (or will recompute) locally.
@@ -118,13 +142,14 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
       lastComputedSigRef.current = sigAtStart;
       setHealthScore(h.data);
       setHealthSource(h.source);
+      setHealthComputed(true);
       setPurchaseRecs(p.data);
       setRecsSource(p.source);
       setLowStockPreds(l.data);
       setLowStockSource(l.source);
       setAiLoading(false);
     }).catch(() => { if (catalogSigRef.current === sigAtStart) setAiLoading(false); });
-  }, [aiRefreshKey, itemsSynced]); // catalog-ready + explicit refresh only
+  }, [aiRefreshKey, itemsSynced, wasteCost, purchases]); // catalog-ready + data-ready only
 
   // Deterministic delta: whenever the catalog CONTENT changes while this
   // page is open (stock edit, purchase, waste logged elsewhere), recompute
@@ -138,9 +163,10 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
     if (catalogSig === lastComputedSigRef.current) return; // no real change
     if (lastComputedSigRef.current === '') return; // initial population — live effect owns it
     lastComputedSigRef.current = catalogSig;
-    const cards = computeInventoryCardsLocal(items, wasteEntries);
+    const cards = computeInventoryCardsLocal(items, wasteCost, purchases);
     setHealthScore(cards.health);
     setHealthSource('delta');
+    setHealthComputed(true);
     setPurchaseRecs(cards.purchaseRecs);
     setRecsSource('delta');
     setLowStockPreds(cards.lowStock);
@@ -154,6 +180,8 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
   // misleading flash on load.
   const AiSourceBadge = ({ source }: { source: AiSource }) => source === 'live' ? (
     <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">AI live</span>
+  ) : source === 'data' ? (
+    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200" title="Calculated from your live inventory data — always matches the item list">Live data</span>
   ) : source === 'delta' ? (
     <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200" title="Catalog changed — updated instantly with local calculations (no AI call). Refresh for a live analysis.">Auto-refresh</span>
   ) : (
@@ -162,10 +190,10 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
 
   const statusColor = (status: string) => {
     switch (status) {
-      case 'healthy': return 'bg-emerald-500';
-      case 'normal': return 'bg-blue-500';
-      case 'low': return 'bg-amber-500';
-      case 'critical': return 'bg-red-500';
+      case 'healthy': return 'bg-[var(--color-emerald-500-solid)]';
+      case 'normal': return 'bg-[var(--color-blue-500-solid)]';
+      case 'low': return 'bg-[var(--color-amber-500-solid)]';
+      case 'critical': return 'bg-[var(--color-red-500-solid)]';
       default: return 'bg-gray-400';
     }
   };
@@ -188,22 +216,22 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {moduleSettings?.enableAIInventoryHealth !== false && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}
-          className="lg:col-span-2 bg-white rounded-2xl border border-[#e1e2ed] p-6 flex flex-col shadow-sm"
+          className="lg:col-span-2 bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 flex flex-col shadow-sm"
         >
           <div className="flex items-center gap-2 mb-3">
-            <div className="w-6 h-6 rounded-lg bg-purple-500 flex items-center justify-center">
+            <div className="w-6 h-6 rounded-lg bg-[var(--color-purple-500-solid)] flex items-center justify-center">
               <Brain className="w-3.5 h-3.5 text-white" />
             </div>
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">AI Inventory Health</span>
-            <button
-              type="button"
-              onClick={() => setAiRefreshKey(k => k + 1)}
+            <RefreshButton
+              onRefresh={() => { setAiRefreshKey(k => k + 1); return Promise.resolve(); }}
+              busy={aiLoading}
               title="Refresh AI analysis (calls the AI once)"
-              className="flex items-center gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
+              className="gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
+              iconClassName="w-2.5 h-2.5"
             >
-              <RefreshCw className="w-2.5 h-2.5" />
               Refresh
-            </button>
+            </RefreshButton>
             {healthSource && <AiSourceBadge source={healthSource} />}
             {healthScore && (
               <span className={`ml-auto text-[9px] font-semibold px-2 py-0.5 rounded-full ${
@@ -214,7 +242,14 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
               </span>
             )}
           </div>
-          {healthScore ? (
+          {!healthComputed && aiLoading ? (
+          <div className="flex-1 flex items-center justify-center">
+            {itemsSynced && <Loader2 className="w-6 h-6 animate-spin text-purple-500" />}
+            <span className="text-xs text-gray-400 ml-2">
+              {itemsSynced ? 'Calculating…' : 'Offline — connect to calculate health'}
+            </span>
+          </div>
+          ) : healthScore ? (
           <div className="flex items-center gap-6 flex-1">
             <div className="relative w-28 h-28 shrink-0">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
@@ -253,15 +288,16 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
             </div>
           </div>
           ) : (
-          <div className="flex-1 flex items-center justify-center">
-            {itemsSynced && <Loader2 className="w-6 h-6 animate-spin text-purple-500" />}
-            <span className="text-xs text-gray-400 ml-2">
-              {itemsSynced ? 'Calculating…' : 'Offline — connect to calculate health'}
-            </span>
+          <div className="flex-1 flex items-center justify-center py-6">
+            <div className="text-center">
+              <Package className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+              <p className="text-xs font-semibold text-gray-400">No inventory data to assess</p>
+              <p className="text-[10px] text-gray-300 mt-1">Add inventory items to see health score</p>
+            </div>
           </div>
           )}
           {healthScore && healthScore.recommendations.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-[#e1e2ed]">
+            <div className="mt-3 pt-3 border-t border-[var(--color-border-default)]">
               <p className="text-[10px] text-gray-500 flex items-center gap-1">
                 <AlertCircle className="w-3 h-3 text-purple-500" />
                 {healthScore.recommendations[0]}
@@ -276,9 +312,9 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
           className="lg:col-span-3 space-y-4"
         >
           <div className="grid grid-cols-3 gap-4">
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
               <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Stock Value</p>
-              <p className="text-2xl font-bold font-mono">₹{totalValue.toLocaleString()}</p>
+              <p className="text-2xl font-bold font-mono">₹{totalValue.toLocaleString('en-IN')}</p>
               <div className="flex items-center gap-1 mt-1.5">
                 {synced && purchaseTrend !== null ? (
                   <>
@@ -301,7 +337,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                 )}
               </div>
             </div>
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
               <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Low Items</p>
               <p className="text-2xl font-bold font-mono">{lowItems.length}</p>
               <div className="flex items-center gap-1 mt-1.5">
@@ -311,7 +347,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                 </span>
               </div>
             </div>
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
               <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Items</p>
               <p className="text-2xl font-bold font-mono">{items.length}</p>
               <p className="text-[10px] text-gray-400 mt-1.5">{new Set(items.map(i => i.category)).size} categories</p>
@@ -320,13 +356,13 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
 
           <div className="flex gap-3">
             <button onClick={() => onNavigate('purchase')}
-              className="flex-1 py-3.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
             >
               <ShoppingCart className="w-5 h-5" />
               Add Stock
             </button>
             <button onClick={() => onNavigate('items')}
-              className="flex-1 py-3.5 bg-white border border-[#e1e2ed] text-gray-700 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+              className="flex-1 py-3.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-gray-700 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
             >
               <Package className="w-5 h-5" />
               View Items
@@ -339,11 +375,11 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {moduleSettings?.enableAIPurchaseRecs !== false && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.1 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm flex flex-col"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-lg bg-amber-500 flex items-center justify-center">
+              <div className="w-5 h-5 rounded-lg bg-[var(--color-amber-500-solid)] flex items-center justify-center">
                 <Sparkles className="w-3 h-3 text-white" />
               </div>
               <h2 className="text-sm font-bold">AI Recommendations</h2>
@@ -351,9 +387,9 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
             </div>
             <ShoppingCart className="w-4 h-4 text-[var(--brand-color)]" />
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 flex-1 flex flex-col">
             {purchaseRecs.slice(0, 5).map((rec, i) => (
-              <div key={`${rec.item}-${i}`} className="flex items-center justify-between py-2 border-b border-[#e1e2ed] last:border-0">
+              <div key={`${rec.item}-${i}`} className="flex items-center justify-between py-2 border-b border-[var(--color-border-default)] last:border-0">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
                     rec.urgency === 'high' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
@@ -362,18 +398,18 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold truncate">{rec.item}</p>
-                    <p className="text-[9px] text-gray-400">{rec.suggestedQty} · ₹{rec.estimatedCost?.toLocaleString()}</p>
+                    <p className="text-[9px] text-gray-400">{rec.suggestedQty} · ₹{Number(rec.estimatedCost || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     <p className="text-[9px] text-gray-400 truncate">{rec.reason}</p>
                   </div>
                 </div>
                 <button onClick={() => onNavigate('purchase')}
-                  className="px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[#003ea8] transition-all cursor-pointer shrink-0 ml-2"
+                  className="px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shrink-0 ml-2"
                 >
                   Order
                 </button>
               </div>
             ))}
-            <button onClick={() => onNavigate('purchase')} className="w-full py-2 text-center text-[10px] text-[var(--brand-color)] font-semibold hover:underline cursor-pointer">
+            <button onClick={() => onNavigate('purchase')} className="w-full py-2 mt-auto text-center text-[10px] text-[var(--brand-color)] font-semibold hover:underline cursor-pointer">
               View all recommendations
             </button>
           </div>
@@ -382,11 +418,11 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
 
         {moduleSettings?.enableAILowStock !== false && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.12 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-lg bg-red-500 flex items-center justify-center">
+              <div className="w-5 h-5 rounded-lg bg-[var(--color-red-500-solid)] flex items-center justify-center">
                 <Brain className="w-3 h-3 text-white" />
               </div>
               <h2 className="text-sm font-bold">Low Stock Predictions</h2>
@@ -431,8 +467,14 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.15 }}
           className="space-y-3"
         >
-          {moduleSettings?.enableAIWeather !== false && <WeatherWidget compact menuItems={items.map(i => i.name).filter(Boolean)} />}
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm">
+          {moduleSettings?.enableAIWeather !== false && (
+            <WeatherWidget
+              compact
+              menuItems={items.map(i => i.name).filter(Boolean)}
+              inventoryItems={items.map(i => i.name).filter(Boolean)}
+            />
+          )}
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold">Alerts</h2>
               <AlertTriangle className="w-4 h-4 text-amber-500" />
@@ -446,7 +488,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
               ) : (
                 realAlerts.map(alert => {
                   const severityColor = alert.severity === 'critical' ? 'border-red-200 bg-red-50' : alert.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50';
-                  const dotColor = alert.severity === 'critical' ? 'bg-red-500' : alert.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500';
+                  const dotColor = alert.severity === 'critical' ? 'bg-[var(--color-red-500-solid)]' : alert.severity === 'warning' ? 'bg-[var(--color-amber-500-solid)]' : 'bg-[var(--color-blue-500-solid)]';
                   return (
                     <div key={alert.id} className={`rounded-xl border ${severityColor} p-3`}>
                       <div className="flex items-start gap-2.5">
@@ -468,7 +510,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
 
         {/* Item health checklist — full width row */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.2 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-6 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-bold">Item Status</h2>

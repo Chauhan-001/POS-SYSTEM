@@ -17,6 +17,7 @@ import Branch from '../../../models/Branch';
 import QROrderingSession from '../models/QROrderingSession';
 import CustomerRequest from '../models/CustomerRequest';
 import type { IQRRequest, IQRSession } from '../types';
+import { emitToRestaurant } from '../../../socket';
 
 // ====================================================================
 // SESSION ENDPOINTS
@@ -388,6 +389,10 @@ export async function assignRequest(req: Request, res: Response): Promise<void> 
       res.status(404).json({ success: false, error: 'Customer request not found' });
       return;
     }
+
+    // Assigning also sets status SEEN — push so other terminals silence the
+    // reminder immediately (the row is hidden for assigned calls anyway).
+    emitToRestaurant(request.restaurantId, 'waiter:call:seen', requestStatePayload(request));
     
     res.json({
       success: true,
@@ -399,6 +404,61 @@ export async function assignRequest(req: Request, res: Response): Promise<void> 
     res.status(500).json({
       success: false,
       error: 'Failed to assign customer request',
+    });
+  }
+}
+
+/**
+ * POST /api/qr-ordering/requests/:id/seen
+ * Silence the reminder for a customer request WITHOUT resolving it.
+ *
+ * Used for ONLINE_ORDER calls: the cashier can acknowledge the sound (so it
+ * doesn't ring again and again) while the notification card stays live until
+ * the order's bill is closed — then orderService completes it automatically.
+ */
+export async function markRequestSeen(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = req as AuthenticatedRequest;
+    const { id } = req.params;
+    const { seenBy } = req.body || {};
+
+    // Tenant isolation: only the owning restaurant can silence a request.
+    const request = await CustomerRequest.findOneAndUpdate(
+      {
+        _id: id,
+        restaurantId: new mongoose.Types.ObjectId(String(auth.user?.restaurantId || '')),
+        status: { $in: ['PENDING', 'SEEN'] },
+      },
+      {
+        $set: {
+          status: 'SEEN',
+          seenAt: new Date(),
+          seenBy: typeof seenBy === 'string' && seenBy.trim() ? seenBy.trim() : undefined,
+        },
+      },
+      { new: true }
+    ).lean();
+
+    if (!request) {
+      res.status(404).json({ success: false, error: 'Customer request not found' });
+      return;
+    }
+
+    // Live push: EVERY POS terminal silences the reminder instantly — not just
+    // the one that clicked. The card stays live (SEEN) on all terminals until
+    // the order's bill closes; only the repeating sound stops.
+    emitToRestaurant(request.restaurantId, 'waiter:call:seen', requestStatePayload(request));
+
+    res.json({
+      success: true,
+      data: request,
+      message: 'Customer request silenced',
+    });
+  } catch (error: any) {
+    console.error('[QR Ordering] Mark request seen error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to silence customer request',
     });
   }
 }
@@ -433,6 +493,10 @@ export async function completeRequest(req: Request, res: Response): Promise<void
       res.status(404).json({ success: false, error: 'Customer request not found' });
       return;
     }
+
+    // Live push: every POS terminal drops the card from its PENDING list and
+    // moves it to Acknowledged instantly (no waiting for the 15s poll).
+    emitToRestaurant(request.restaurantId, 'waiter:call:completed', requestStatePayload(request));
     
     res.json({
       success: true,
@@ -510,4 +574,39 @@ export async function getExpiredSessions(req: Request, res: Response): Promise<v
       error: 'Failed to retrieve expired sessions',
     });
   }
+}
+
+/**
+ * Build the socket payload for a request state change (seen/completed).
+ * Mirrors the `waiter:call` event shape so POS terminals can merge it into
+ * their pending/acknowledged lists with the same normalizer (id, branchId,
+ * type, orderType, timestamps, actor). Broadcast with the event name
+ * `waiter:call:seen` or `waiter:call:completed`.
+ */
+function requestStatePayload(request: any): Record<string, unknown> {
+  return {
+    id: String(request?._id || request?.id || ''),
+    status: request?.status,
+    type: request?.type,
+    orderType: request?.orderType,
+    branchId: request?.branchId ? String(request.branchId) : null,
+    tableId: request?.tableId ? String(request.tableId) : null,
+    tableNumber: request?.tableNumber ?? null,
+    carId: request?.carId || request?.parkingSlot || request?.carPlate || null,
+    orderId: request?.orderId ? String(request.orderId) : null,
+    orderNumber: request?.orderNumber ?? null,
+    message: request?.message ?? null,
+    createdAt: request?.createdAt,
+    seenAt: request?.seenAt,
+    seenBy: request?.seenBy,
+    completedAt: request?.completedAt,
+    completedBy: request?.completedBy,
+    // assignedTo may be a raw ObjectId (seen/complete use .lean() without
+    // populate) or a populated doc { _id, name, role } (assignRequest).
+    assignedTo: request?.assignedTo
+      ? typeof request.assignedTo === 'object'
+        ? String(request.assignedTo._id || request.assignedTo.id || '')
+        : String(request.assignedTo)
+      : null,
+  };
 }

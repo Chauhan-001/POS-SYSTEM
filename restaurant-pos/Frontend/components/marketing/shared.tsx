@@ -32,6 +32,7 @@ const RECOMMENDATION_META: Record<string, OpportunityMeta> = {
   high_margin_promotion: { icon: '💰', eyebrow: 'Profit opportunity', title: 'Promote high-margin items', tone: 'from-emerald-50 to-white' },
   combo_upsell: { icon: '🧺', eyebrow: 'Combo opportunity', title: 'Bundle items together', tone: 'from-teal-50 to-white' },
   first_visit: { icon: '👋', eyebrow: 'New customer opportunity', title: 'Welcome new customers', tone: 'from-blue-50 to-white' },
+  ai: { icon: '✨', eyebrow: 'AI recommendation', title: 'AI-powered suggestion', tone: 'from-purple-50 to-white' },
   new_menu: { icon: '✨', eyebrow: 'Menu opportunity', title: 'Feature a new item', tone: 'from-blue-50 to-white' },
   seasonal_menu: { icon: '🍂', eyebrow: 'Seasonal opportunity', title: 'Seasonal special', tone: 'from-amber-50 to-white' },
   repeat_customer: { icon: '🔁', eyebrow: 'Retention opportunity', title: 'Bring customers back', tone: 'from-pink-50 to-white' },
@@ -40,10 +41,44 @@ const RECOMMENDATION_META: Record<string, OpportunityMeta> = {
   birthday: { icon: '🎂', eyebrow: 'Birthday opportunity', title: 'Birthday promotion', tone: 'from-pink-50 to-white' },
   anniversary: { icon: '💍', eyebrow: 'Anniversary opportunity', title: 'Anniversary special', tone: 'from-rose-50 to-white' },
   referral: { icon: '🤝', eyebrow: 'Referral opportunity', title: 'Referral promotion', tone: 'from-emerald-50 to-white' },
+  margin_protection: { icon: '🛡️', eyebrow: 'Margin safety', title: 'Hold discounts — thin margin', tone: 'from-red-50 to-white' },
+  cost_increase_warning: { icon: '📈', eyebrow: 'Cost alert', title: 'Ingredient costs rising', tone: 'from-amber-50 to-white' },
+  margin_deterioration: { icon: '📉', eyebrow: 'Margin deterioration', title: 'Review pricing — costs rose', tone: 'from-red-50 to-white' },
+  wastage_alert: { icon: '🗑️', eyebrow: 'Wastage alert', title: 'Waste investigation', tone: 'from-orange-50 to-white' },
 };
 
 export function opportunityMeta(source?: string): OpportunityMeta {
   return RECOMMENDATION_META[source || ''] || { icon: '✨', eyebrow: 'Opportunity', title: 'Promotion idea', tone: 'from-purple-50 to-white' };
+}
+
+// ─── Offer provenance (recommendationSource) → subtle creator badge ──
+// Where an offer came from (AI / rules / inventory / manual). Purely
+// informational — it never changes the offer's financial behavior.
+
+const PROVENANCE_LABELS: Record<string, { label: string; cls: string }> = {
+  ai: { label: 'AI Recommended', cls: 'text-purple-600 bg-purple-50 border-purple-100' },
+  analytics_proven: { label: 'Proven Offer', cls: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
+  rule: { label: 'Rule Recommended', cls: 'text-sky-600 bg-sky-50 border-sky-100' },
+  rules: { label: 'Rule Recommended', cls: 'text-sky-600 bg-sky-50 border-sky-100' },
+  inventory_clearance: { label: 'Inventory Opportunity', cls: 'text-orange-600 bg-orange-50 border-orange-100' },
+  inventory_low_stock_protection: { label: 'Inventory Opportunity', cls: 'text-orange-600 bg-orange-50 border-orange-100' },
+  slow_day: { label: 'Slow-Day Opportunity', cls: 'text-slate-600 bg-slate-50 border-slate-200' },
+  time_based: { label: 'Timing Opportunity', cls: 'text-indigo-600 bg-indigo-50 border-indigo-100' },
+  weekend: { label: 'Weekend Opportunity', cls: 'text-rose-600 bg-rose-50 border-rose-100' },
+  festival: { label: 'Festival Opportunity', cls: 'text-amber-600 bg-amber-50 border-amber-100' },
+  combo_upsell: { label: 'Combo Opportunity', cls: 'text-teal-600 bg-teal-50 border-teal-100' },
+  high_margin_promotion: { label: 'Profit Opportunity', cls: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
+  weak_category: { label: 'Category Opportunity', cls: 'text-violet-600 bg-violet-50 border-violet-100' },
+  margin_protection: { label: 'Margin Safety', cls: 'text-red-600 bg-red-50 border-red-100' },
+  cost_increase_warning: { label: 'Cost Alert', cls: 'text-amber-600 bg-amber-50 border-amber-100' },
+  margin_deterioration: { label: 'Margin Deterioration', cls: 'text-red-600 bg-red-50 border-red-100' },
+  wastage_alert: { label: 'Wastage Alert', cls: 'text-orange-600 bg-orange-50 border-orange-100' },
+  manual: { label: 'Manual', cls: 'text-gray-500 bg-gray-50 border-gray-200' },
+};
+
+export function provenanceBadge(source?: string): { label: string; cls: string } | null {
+  if (!source) return null;
+  return PROVENANCE_LABELS[String(source)] || { label: 'Recommended', cls: 'text-gray-500 bg-gray-50 border-gray-200' };
 }
 
 // ─── Offer types → friendly labels ─────────────────────────────────
@@ -70,7 +105,7 @@ export const OFFER_TYPE_ICONS: Record<string, string> = {
 
 export function offerValueLabel(type: string, value: number, currencySymbol = '₹'): string {
   switch (type) {
-    case 'percentage': return `${value}% OFF`;
+    case 'percentage': case 'festival': return `${value}% OFF`;
     case 'flat': case 'cashback': case 'coupon': return `${currencySymbol}${value} OFF`;
     case 'reward_points': return `${value} points`;
     case 'bogo': return 'Buy 1 Get 1';
@@ -102,6 +137,39 @@ export const AUDIENCE_OPTIONS: AudienceOption[] = [
 ];
 
 export const LOYALTY_TIERS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
+
+// ─── Copy tone + language options (offer messages / Studio / Promote) ──
+// One source of truth so the Create wizard, the Promote flow and the Studio
+// ask the owner the same question with the same choices. The ids are the
+// values sent to /api/ai/offer-copy and the promotion-copy endpoint.
+
+export interface CopyToneOption { id: string; label: string; hint: string }
+export interface CopyLanguageOption { id: string; label: string; hint: string }
+
+export const COPY_TONES: CopyToneOption[] = [
+  { id: 'friendly', label: 'Friendly', hint: 'Warm & welcoming' },
+  { id: 'funky', label: 'Funky', hint: 'Bold, playful & energetic' },
+  { id: 'zomato', label: 'Zomato style', hint: 'Short, witty & foodie fun' },
+  { id: 'professional', label: 'Professional', hint: 'Polished & trustworthy' },
+  { id: 'premium', label: 'Premium', hint: 'Elegant & exclusive' },
+  { id: 'festive', label: 'Festive', hint: 'Celebration energy' },
+  { id: 'genz', label: 'Gen Z', hint: 'Casual, meme-adjacent' },
+  { id: 'minimal', label: 'Minimal', hint: 'Short & clean' },
+];
+
+export const COPY_LANGUAGES: CopyLanguageOption[] = [
+  { id: 'en', label: 'English', hint: 'Clear English' },
+  { id: 'hi', label: 'Hindi', hint: 'हिंदी में लिखें' },
+  { id: 'hinglish', label: 'Hinglish', hint: 'Hindi + English mix' },
+];
+
+export function copyToneLabel(id?: string): string {
+  return COPY_TONES.find((t) => t.id === id)?.label || 'Friendly';
+}
+
+export function copyLanguageLabel(id?: string): string {
+  return COPY_LANGUAGES.find((l) => l.id === id)?.label || 'English';
+}
 
 // ─── Small UI atoms ────────────────────────────────────────────────
 

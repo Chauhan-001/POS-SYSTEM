@@ -197,20 +197,25 @@ export class StockMovementService {
     }
 
     // ── InventoryEvent (activity feed) ───────────────────────────────
-    try {
-      await inventoryEventRepo.create({
-        restaurantId: new mongoose.Types.ObjectId(input.restaurantId),
-        branchId: input.branchId ? new mongoose.Types.ObjectId(input.branchId) : undefined,
-        type: EVENT_TYPE_MAP[input.type],
-        item: product.name,
-        quantity: effectiveDelta,
-        unit: input.unit || product.unit || 'pcs',
-        operator: input.operator || 'System',
-        details: input.details || `${input.type}: ${Math.abs(effectiveDelta)} ${product.unit || 'pcs'} ${product.name}`,
-        eventDate: new Date().toISOString().slice(0, 10),
-      } as any);
-    } catch (err: any) {
-      console.warn('[StockMovement] inventory event failed (non-fatal):', err.message);
+    // Skip when nothing actually moved (e.g. a clamped sale of an out-of-stock
+    // item with allowNegative — effectiveDelta is 0). A "sold 0 pcs" row in
+    // the activity feed is garbage; only record real stock changes.
+    if (effectiveDelta !== 0) {
+      try {
+        await inventoryEventRepo.create({
+          restaurantId: new mongoose.Types.ObjectId(input.restaurantId),
+          branchId: input.branchId ? new mongoose.Types.ObjectId(input.branchId) : undefined,
+          type: EVENT_TYPE_MAP[input.type],
+          item: product.name,
+          quantity: effectiveDelta,
+          unit: input.unit || product.unit || 'pcs',
+          operator: input.operator || 'System',
+          details: input.details || `${input.type}: ${Math.abs(effectiveDelta)} ${product.unit || 'pcs'} ${product.name}`,
+          eventDate: new Date().toISOString().slice(0, 10),
+        } as any);
+      } catch (err: any) {
+        console.warn('[StockMovement] inventory event failed (non-fatal):', err.message);
+      }
     }
 
     // ── AuditLog ─────────────────────────────────────────────────────

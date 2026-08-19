@@ -8,7 +8,17 @@
     "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "audit:fact-consistency": "npx tsx scripts/audit-fact-consistency.ts",
+    "audit:fact-consistency:live": "npx tsx scripts/audit-fact-consistency.ts --live",
+    "audit:security": "npm audit --audit-level=high",
+    "typecheck": "tsc --noEmit",
+    "seed:demo": "npx tsx scripts/seed-demo.ts",
+    "seed:demo:reset": "npx tsx scripts/seed-demo.ts --reset",
+    "seed:demo:clean": "npx tsx scripts/seed-demo.ts --clean",
+    "seed:demo:report": "npx tsx scripts/seed-demo.ts --report",
+    "backup": "bash scripts/mongodb-backup.sh",
+    "backup:drill": "bash scripts/mongodb-restore-drill.sh"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

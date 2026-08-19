@@ -215,7 +215,7 @@ export default function InventoryAnalytics() {
     return [
       {
         label: 'Stock Value',
-        value: `₹${Math.round(stockValue).toLocaleString()}`,
+        value: `₹${Math.round(stockValue).toLocaleString('en-IN')}`,
         change: stockChange == null ? null : `${stockChange >= 0 ? '+' : ''}${stockChange}%`,
         up: (stockChange ?? 0) >= 0,
         // Stock value is always computable from the catalog — no empty state needed.
@@ -224,7 +224,7 @@ export default function InventoryAnalytics() {
       },
       {
         label: 'Monthly Spend',
-        value: real ? `₹${real.monthlyUse.toLocaleString()}` : '—',
+        value: real ? `₹${real.monthlyUse.toLocaleString('en-IN')}` : '—',
         change: useChange == null ? null : `${useChange >= 0 ? '+' : ''}${useChange}%`,
         up: (useChange ?? 0) >= 0,
         empty: isOnline && real && real.monthlyUse === 0,
@@ -319,7 +319,7 @@ export default function InventoryAnalytics() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {kpis.map((kpi, i) => (
           <motion.div key={kpi.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: i * 0.05 }}
-            className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+            className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
           >
             <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
               {kpi.label}
@@ -340,7 +340,7 @@ export default function InventoryAnalytics() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <p className="text-sm font-bold mb-4">Purchase Spend — Last 7 Days</p>
           {spendData.length === 0 ? (
@@ -359,7 +359,7 @@ export default function InventoryAnalytics() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.05 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <p className="text-sm font-bold mb-4">Top Items — Quantity Bought (7 days)</p>
           {consumptionKeys.length === 0 ? (
@@ -380,7 +380,7 @@ export default function InventoryAnalytics() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.1 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <p className="text-sm font-bold mb-4 flex items-center gap-2">
             Stock Movement — Purchased vs Consumed (30 days)
@@ -408,7 +408,7 @@ export default function InventoryAnalytics() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.15 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <p className="text-sm font-bold mb-4">Category Spend Split</p>
           {categoryData.length === 0 ? (
@@ -427,7 +427,7 @@ export default function InventoryAnalytics() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.2 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <p className="text-sm font-bold mb-4 flex items-center gap-2">
             Top Suppliers by Spend
@@ -447,10 +447,10 @@ export default function InventoryAnalytics() {
                     <div className="flex-1">
                       <div className="flex justify-between text-sm mb-1">
                         <span className="font-semibold">{item.name}</span>
-                        <span className="text-xs text-gray-500">₹{item.sold.toLocaleString()}</span>
+                        <span className="text-xs text-gray-500">₹{item.sold.toLocaleString('en-IN')}</span>
                       </div>
                       <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${(item.sold / maxSold) * 100}%` }} />
+                        <div className="h-full bg-[var(--color-emerald-500-solid)] rounded-full transition-all" style={{ width: `${(item.sold / maxSold) * 100}%` }} />
                       </div>
                     </div>
                   </div>
@@ -461,7 +461,7 @@ export default function InventoryAnalytics() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.25 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <p className="text-sm font-bold mb-4 flex items-center gap-2">
             Low Stock Alerts
@@ -502,7 +502,7 @@ export default function InventoryAnalytics() {
 
         {/* Expiry Alerts — items expired or expiring within the lookahead window (server-computed from product expiryDate) */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.3 }}
-          className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-sm"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm font-bold flex items-center gap-2">

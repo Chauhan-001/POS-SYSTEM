@@ -148,14 +148,16 @@ function projectDate(groupBy: TimeGroup): Record<string, any> {
     case 'year':
       return { $toString: '$_id.year' };
     default:
-      return '$_id.date';
+      // A bare field-path string is a valid $project expression (aliases
+      // _id.date), matching the other branches' object-shaped return type.
+      return '$_id.date' as unknown as Record<string, any>;
   }
 }
 
 async function paginate(
   Model: mongoose.Model<any>,
   match: Record<string, any>,
-  groupId: Record<string, any>,
+  groupId: Record<string, any> | string,
   groupAccumulators: Record<string, any>,
   projectFields: Record<string, any>,
   sortField: string,
@@ -187,7 +189,7 @@ async function paginate(
     },
   ];
 
-  const result = await Model.aggregate(pipeline);
+  const result = await Model.aggregate(pipeline as mongoose.PipelineStage[]);
   const total = result[0]?.total || 0;
   const totalPages = Math.ceil(total / limit);
 
@@ -916,7 +918,7 @@ export async function getFeatureAnalytics(
     },
   ];
 
-  const result = await AIUsageLog.aggregate(pipeline);
+  const result = await AIUsageLog.aggregate(pipeline as mongoose.PipelineStage[]);
   const total = result[0]?.total || 0;
   const totalPages = Math.ceil(total / limit);
 
@@ -1143,7 +1145,7 @@ export async function searchAnalytics(
   ];
 
   const [records, total] = await Promise.all([
-    AIUsageLog.aggregate(recordsPipeline),
+    AIUsageLog.aggregate(recordsPipeline as mongoose.PipelineStage[]),
     AIUsageLog.countDocuments(match),
   ]);
 

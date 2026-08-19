@@ -8,14 +8,17 @@
 
 import { Request, Response } from 'express';
 import { heldOrderService } from '../services';
+import type { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 /**
- * GET /api/held-orders — List held orders with optional branch filter.
+ * GET /api/held-orders — List held orders (scoped to the JWT restaurant)
+ * with optional branch filter.
  */
 export async function listHeldOrders(req: Request, res: Response): Promise<void> {
   try {
     const { branchId } = req.query;
-    const result = await heldOrderService.list({ branchId: branchId as string });
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const result = await heldOrderService.list({ restaurantId, branchId: branchId as string });
     res.json({ data: result.data, total: result.total });
   } catch (error) {
     console.error('[HeldOrdersController] list error:', error);
@@ -24,11 +27,12 @@ export async function listHeldOrders(req: Request, res: Response): Promise<void>
 }
 
 /**
- * GET /api/held-orders/:id — Get a single held order.
+ * GET /api/held-orders/:id — Get a single held order (tenant-scoped).
  */
 export async function getHeldOrder(req: Request, res: Response): Promise<void> {
   try {
-    const order = await heldOrderService.getById(req.params.id);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const order = await heldOrderService.getById(req.params.id, restaurantId);
     if (!order) {
       res.status(404).json({ error: 'Held order not found' });
       return;
@@ -41,11 +45,13 @@ export async function getHeldOrder(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * POST /api/held-orders — Create a new held order snapshot.
+ * POST /api/held-orders — Create a new held order snapshot. The restaurant is
+ * tagged server-side from the authenticated token (never client-supplied).
  */
 export async function createHeldOrder(req: Request, res: Response): Promise<void> {
   try {
-    const order = await heldOrderService.create(req.body);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const order = await heldOrderService.create(req.body, restaurantId);
     res.status(201).json({ data: order });
   } catch (error) {
     console.error('[HeldOrdersController] create error:', error);
@@ -54,11 +60,12 @@ export async function createHeldOrder(req: Request, res: Response): Promise<void
 }
 
 /**
- * PUT /api/held-orders/:id — Update a held order.
+ * PUT /api/held-orders/:id — Update a held order (tenant-scoped).
  */
 export async function updateHeldOrder(req: Request, res: Response): Promise<void> {
   try {
-    const order = await heldOrderService.update(req.params.id, req.body);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const order = await heldOrderService.update(req.params.id, req.body, restaurantId);
     if (!order) {
       res.status(404).json({ error: 'Held order not found' });
       return;
@@ -71,11 +78,12 @@ export async function updateHeldOrder(req: Request, res: Response): Promise<void
 }
 
 /**
- * DELETE /api/held-orders/:id — Soft-delete a held order.
+ * DELETE /api/held-orders/:id — Soft-delete a held order (tenant-scoped).
  */
 export async function deleteHeldOrder(req: Request, res: Response): Promise<void> {
   try {
-    const deleted = await heldOrderService.delete(req.params.id);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const deleted = await heldOrderService.delete(req.params.id, restaurantId);
     if (!deleted) {
       res.status(404).json({ error: 'Held order not found' });
       return;

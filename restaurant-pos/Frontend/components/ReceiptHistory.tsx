@@ -100,15 +100,15 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
   const totalRevenue = useMemo(() => filtered.reduce((s, b) => s + b.grandTotal, 0), [filtered]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-[#fbfaff]">
+    <div className="flex flex-col h-full min-h-0 bg-[var(--color-surface-muted)]">
       {/* Header */}
-      <div className="flex items-center gap-2 px-5 py-3 bg-white border-b border-[#e1e2ed] shrink-0">
+      <div className="flex items-center gap-2 px-5 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
         <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-[var(--brand-color)]" />
-          <span className="text-sm font-bold text-[#191b23]">Receipt History</span>
+          <span className="text-sm font-bold text-[var(--color-text-primary)]">Receipt History</span>
           <span className="text-[10px] text-gray-400 ml-1">{filtered.length} receipt{filtered.length !== 1 ? 's' : ''}</span>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -134,7 +134,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
 
       <div className="flex-1 min-h-0 overflow-y-auto p-5">
         {/* Search Bar */}
-        <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 mb-4 shadow-xs">
+        <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 mb-4 shadow-xs">
           <div className="flex flex-wrap items-end gap-3">
             {/* Main Search */}
             <div className="flex-1 min-w-[250px]">
@@ -146,7 +146,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Invoice #, Ticket #, Phone, Customer, Cashier, Date..."
-                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] bg-white"
+                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)]"
                   autoFocus
                 />
               </div>
@@ -157,19 +157,19 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">From</label>
               <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer" />
+                className="px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer" />
             </div>
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">To</label>
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer" />
+                className="px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer" />
             </div>
 
             {/* Payment Filter */}
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">Payment</label>
               <select value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer">
+                className="px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer">
                 <option value="All">All Methods</option>
                 <option value="Cash">Cash</option>
                 <option value="UPI">UPI</option>
@@ -183,7 +183,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">Channel</label>
               <select value={channelFilter} onChange={e => setChannelFilter(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer">
+                className="px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer">
                 <option value="All">All Channels</option>
                 <option value="Dine In">Dine In</option>
                 <option value="Takeaway">Takeaway</option>
@@ -199,7 +199,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
             <div>
               <label className="block text-[9px] font-bold uppercase text-gray-400 mb-1">Sort</label>
               <select value={sortBy} onChange={e => setSortBy(e.target.value as any)}
-                className="px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-white cursor-pointer">
+                className="px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-bold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)] cursor-pointer">
                 <option value="date_desc">Newest First</option>
                 <option value="date_asc">Oldest First</option>
                 <option value="amount_desc">Highest Amount</option>
@@ -223,11 +223,11 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
         )}
 
         {/* Receipts Table */}
-        <div className="bg-white rounded-xl border border-[#e1e2ed] shadow-xs overflow-hidden">
+        <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="bg-gray-50 border-b border-[#e1e2ed] text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                <tr className="bg-gray-50 border-b border-[var(--color-border-default)] text-[9px] font-bold text-gray-400 uppercase tracking-wider">
                   <th className="p-3 pl-5">Invoice</th>
                   <th className="p-3">Ticket</th>
                   <th className="p-3">Date</th>
@@ -284,7 +284,7 @@ export default function ReceiptHistory({ bills, currencySymbol, onReprint, onBac
                           )}
                         </td>
                         <td className="p-3">
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#faf8ff] border border-[#c3c6d7] text-gray-600">
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[var(--color-bg-page)] border border-[var(--color-border-input)] text-gray-600">
                             {bill.orderType}
                           </span>
                         </td>

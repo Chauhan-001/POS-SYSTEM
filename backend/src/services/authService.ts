@@ -7,7 +7,12 @@ import {
   generateAccessToken, generateRefreshToken,
   verifyRefreshToken, type AccessTokenPayload,
 } from '../utils/jwt';
-import { Employee } from '../models';
+import { Employee, SubscriptionPlan } from '../models';
+import { generatePublicToken } from '../utils/publicToken';
+import Payment from '../models/Payment';
+import { paymentGateway } from '../modules/payment/RazorpayGateway';
+import { isBillingPeriod, billingDurationDays, planPriceForPeriod } from '../modules/subscription/subscriptionService';
+import { ALL_FEATURES } from '../constants/planFeatures';
 import { config } from '../config';
 import { enforceDevicePolicy, assertDeviceNotBlocked } from './devicePolicyService';
 import { sessionService } from './sessionService';
@@ -116,9 +121,13 @@ export class AuthService {
           const isValidUsr = await verifyPin(data.password, usr.password);
           if (!isValidUsr) throw new Error('Invalid username or password');
 
-          restaurant = await restaurantRepo.findById(usr.restaurantId.toString());
-          if (!restaurant || restaurant.isDeleted) throw new Error('Restaurant not found');
-          if (!restaurant.isActive) throw new Error('Restaurant is inactive. Contact support.');
+          // The platform super_admin has no tenant restaurant — resolve only
+          // when one exists so a null restaurantId never throws.
+          if (usr.restaurantId) {
+            restaurant = await restaurantRepo.findById(usr.restaurantId.toString());
+            if (!restaurant || restaurant.isDeleted) throw new Error('Restaurant not found');
+            if (!restaurant.isActive) throw new Error('Restaurant is inactive. Contact support.');
+          }
 
           user = {
             _id: usr._id,
@@ -291,7 +300,10 @@ export class AuthService {
     let isRestaurantLogin = false;
 
     if (user && !user.isDeleted && user.status === 'active') {
-      restaurant = await restaurantRepo.findById(user.restaurantId.toString());
+      // Platform super_admin has no tenant restaurant (restaurantId null).
+      if (user.restaurantId) {
+        restaurant = await restaurantRepo.findById(user.restaurantId.toString());
+      }
     } else {
       const emp = await employeeRepo.findById(payload.userId);
       if (emp && !emp.isDeleted && emp.status === 'Active' && emp.restaurantId) {
@@ -419,10 +431,47 @@ export class AuthService {
     email?: string;
     password: string;
     restaurantName: string;
+    userId?: string;
+    planId?: string;
+    paymentOrderId?: string;
+    paymentId?: string;
+    paymentSignature?: string;
   }) {
     const existingOwner = await Employee.findOne({ role: 'Owner', isDeleted: { $ne: true } }).exec();
     if (existingOwner) {
       throw new Error('Owner account already exists. Only one Owner can be registered.');
+    }
+
+    // Owner-chosen login id (legacy clients keep the phone as the login id).
+    const username = (data.userId || '').trim() || data.phone;
+    if (data.userId) {
+      const existingUser = await userRepo.findOne({ userId: username, role: 'owner', isDeleted: { $ne: true } } as any);
+      if (existingUser) throw new Error('That User ID is already taken. Please choose another.');
+    }
+
+    // ── Paid onboarding: validate the plan + verify payment BEFORE creating any
+    //    entity, so a failed/forged payment never leaves partial data behind. ──
+    let plan: any = null;
+    let payment: any = null;
+    if (data.planId) {
+      plan = await SubscriptionPlan.findOne({ planId: data.planId, isActive: true }).lean().exec();
+      if (!plan) throw new Error('Selected plan not found or inactive');
+      payment = await Payment.findOne({ razorpayOrderId: data.paymentOrderId }).exec();
+      if (!payment) throw new Error('Payment record not found — complete the payment first');
+      if (payment.status === 'success' && payment.restaurantId) {
+        throw new Error('This payment has already been used for another registration');
+      }
+      if (config.razorpay.keySecret) {
+        if (!data.paymentSignature) throw new Error('Payment signature is required');
+        const valid = paymentGateway.verifySignature({
+          orderId: data.paymentOrderId as string,
+          paymentId: data.paymentId as string,
+          signature: data.paymentSignature,
+        });
+        if (!valid) throw new Error('Invalid payment signature — possible tampering detected');
+      } else {
+        console.warn('[AuthService] registerOwner: RAZORPAY_KEY_SECRET not set — dev-mode payment accepted');
+      }
     }
 
     // Transactional onboarding: every entity must be created together. The repo
@@ -441,7 +490,12 @@ export class AuthService {
         name: data.restaurantName,
         phone: data.phone,
         isActive: true,
-        ownerUserId: data.phone,
+        ownerUserId: username,
+        // Public storefront capability — without it QR Studio can never mint
+        // table/car/pickup stickers (resolvePublicToken returns null and every
+        // sticker create/seed fails with "No public store token configured").
+        // The admin onboarding path sets this; POS first-time setup must too.
+        publicToken: generatePublicToken(),
       } as any);
 
       branch = await branchRepo.create({
@@ -454,8 +508,13 @@ export class AuthService {
 
       const hashedPassword = await hashPin(data.password);
 
+      // Keep the POS owner login (Restaurant.ownerPin) in sync with the same
+      // credentials — the login path resolves the restaurant by ownerUserId and
+      // verifies ownerPin, so the owner's chosen User ID + Password must work.
+      await restaurantRepo.update(restaurant._id as any, { ownerPin: hashedPassword } as any);
+
       employee = await employeeRepo.create({
-        username: data.phone,
+        username,
         name: data.fullName,
         role: 'Owner',
         pin: hashedPassword,
@@ -465,7 +524,7 @@ export class AuthService {
       } as any);
 
       user = await userRepo.create({
-        userId: data.phone,
+        userId: username,
         restaurantId: restaurant._id,
         phone: data.phone,
         name: data.fullName,
@@ -477,20 +536,62 @@ export class AuthService {
         branchIds: [branch._id],
       } as any);
 
-      subscription = await subscriptionRepo.create({
-        restaurantId: restaurant._id,
-        plan: 'free',
-        status: 'trial',
-        startDate: new Date(),
-        trialEnd: new Date(Date.now() + config.subscription.trialDays * 24 * 60 * 60 * 1000),
-        maxUsers: 5,
-        maxDevices: 6,
-        features: [
-          'core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty',
-          'reservations', 'multi_branch', 'analytics', 'custom_branding',
-          'advanced_reports', 'expense_tracking', 'api_access', 'priority_support',
-        ],
-      } as any);
+      // Paid plan (payment verified above) or free trial — never both.
+      // The subscription inherits the billing cadence the owner paid for.
+      const paidPeriod = isBillingPeriod(payment?.billingPeriod) ? payment.billingPeriod : 'monthly';
+      subscription = plan
+        ? await subscriptionRepo.create({
+            restaurantId: restaurant._id,
+            plan: plan.planId,
+            status: 'active',
+            billingPeriod: paidPeriod,
+            startDate: new Date(),
+            expiryDate: new Date(Date.now() + billingDurationDays(paidPeriod) * 24 * 60 * 60 * 1000),
+            maxUsers: plan.maxUsers || 5,
+            maxDevices: (plan.limits?.maxDevicesPerBranch ?? plan.limits?.maxDevices ?? plan.maxDevices) || 3,
+            limits: {
+              maxBranches: plan.limits?.maxBranches ?? 1,
+              maxDevicesPerBranch: plan.limits?.maxDevicesPerBranch ?? plan.limits?.maxDevices ?? 3,
+            },
+            features: Array.isArray(plan.features) && plan.features.length > 0
+              ? plan.features
+              : ['core_pos', 'basic_reports', 'inventory', 'loyalty'],
+            ...(plan.aiEnabled !== undefined ? { aiEnabled: plan.aiEnabled } : {}),
+          } as any)
+        : await subscriptionRepo.create({
+            restaurantId: restaurant._id,
+            plan: 'free',
+            status: 'trial',
+            startDate: new Date(),
+            trialStart: new Date(),
+            trialEnd: new Date(Date.now() + config.subscription.trialDays * 24 * 60 * 60 * 1000),
+            // Keep expiryDate in lockstep with trialEnd — the schema's 7-day
+            // default would otherwise leave a misleading earlier date that
+            // status payloads and proration read.
+            expiryDate: new Date(Date.now() + config.subscription.trialDays * 24 * 60 * 60 * 1000),
+            maxUsers: 5,
+            maxDevices: 6,
+            // Trial grants the FULL product — every feature in the catalog
+            // (single source: constants/planFeatures). Never a partial list.
+            features: ALL_FEATURES,
+          } as any);
+
+      // Claim the pre-registration payment onto the new tenant.
+      if (plan && payment) {
+        await Payment.updateOne(
+          { _id: payment._id },
+          {
+            $set: {
+              restaurantId: restaurant._id,
+              subscriptionId: subscription?._id,
+              razorpayPaymentId: data.paymentId,
+              signature: data.paymentSignature || null,
+              status: 'success',
+              paymentMethod: 'razorpay',
+            },
+          }
+        ).exec();
+      }
     } catch (error) {
       // Compensating rollback — remove any partially-created records.
       const rollbackSteps: Array<[any, string]> = [];
@@ -522,7 +623,12 @@ export class AuthService {
       entityId: user._id.toString(),
       performedBy: user.name,
       performedById: user._id.toString(),
-      details: { restaurantName: data.restaurantName, branchId: branch._id.toString() },
+      details: {
+        restaurantName: data.restaurantName,
+        branchId: branch._id.toString(),
+        onboarding: plan ? 'paid' : 'trial',
+        planId: plan ? plan.planId : undefined,
+      },
     } as any);
 
     return {
@@ -548,6 +654,55 @@ export class AuthService {
         restaurantId: restaurant.restaurantId,
         name: restaurant.name,
       },
+    };
+  }
+
+  /**
+   * Create a payment order for plan purchase BEFORE the owner account exists.
+   * The resulting Payment row has no restaurantId yet; registerOwner() claims
+   * it once payment is confirmed. Returns the Razorpay order + key so the POS
+   * can render the checkout. In dev mode (no keys) the gateway returns a mock
+   * order and the flow completes with the dev-mode payment path.
+   */
+  async createRegisterOrder(planId?: string, billingPeriod?: string) {
+    const plan = await SubscriptionPlan.findOne({ planId, isActive: true }).lean().exec()
+      || await SubscriptionPlan.findOne({ isDefault: true, isActive: true }).lean().exec();
+    if (!plan) throw new Error('No subscription plan found');
+
+    const period = isBillingPeriod(billingPeriod) ? billingPeriod : 'monthly';
+    const periodPrice = planPriceForPeriod(plan, period);
+    const amount = periodPrice * 100; // paise
+    const receipt = `reg_${crypto.randomBytes(8).toString('hex')}`;
+    const order = await paymentGateway.createOrder({
+      amount,
+      currency: 'INR',
+      receipt,
+      notes: { planId: plan.planId, billingPeriod: period, purpose: 'owner_registration' },
+    });
+
+    const invoiceNumber = `REG-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    await Payment.create({
+      restaurantId: null,
+      razorpayOrderId: order.id,
+      amount: periodPrice,
+      currency: 'INR',
+      gateway: 'razorpay',
+      paymentMethod: 'razorpay',
+      billingPeriod: period,
+      status: 'created',
+      invoiceNumber,
+    } as any);
+
+    console.log(`[AuthService] Registration order created: ${order.id}, amount: ${amount}, period: ${period}`);
+
+    return {
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: paymentGateway.getKeyId(),
+      invoiceNumber,
+      billingPeriod: period,
+      plan: { planId: plan.planId, name: plan.name, price: periodPrice, billingPeriod: period },
     };
   }
 }

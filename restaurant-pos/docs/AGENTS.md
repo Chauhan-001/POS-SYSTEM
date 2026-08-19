@@ -24,7 +24,7 @@
 
 ## 1. Overview
 
-The Restaurant POS project uses a comprehensive suite of **development**, **testing**, **quality**, and **AI agents** to ensure a reliable, feature-rich POS experience. The project includes full E2E testing via Playwright, unit testing via Vitest, TypeScript type checking, and AI-powered features via Google Generative AI.
+The Restaurant POS project uses a comprehensive suite of **development**, **testing**, **quality**, and **AI tooling** to ensure a reliable, feature-rich POS experience. The project includes full E2E testing via Playwright, unit testing via Vitest, TypeScript type checking, and AI-powered features via a backend provider abstraction (default OpenAI-compatible; see `docs/AI_ARCHITECTURE.md`).
 
 ---
 
@@ -34,12 +34,12 @@ The Restaurant POS project uses a comprehensive suite of **development**, **test
 
 | Property | Value |
 |---|---|
-| **Agent** | Vite 6 Development Server |
+| **Tool** | Vite 6 Development Server |
 | **Trigger** | `npm run dev` (from `Frontend/`) |
 | **Purpose** | Hot Module Replacement (HMR) for rapid frontend development |
 | **Input** | React/TypeScript source files |
 | **Output** | Browser-served application with instant updates |
-| **Port** | 5173 (typical) |
+| **Port** | 5175 |
 
 ### 2.2 Concurrent Dev Agent
 
@@ -257,14 +257,14 @@ npm run test:watch → vitest (watch mode)
 
 ## 8. AI Feature Agents
 
-### 8.1 Google Generative AI Agent
+### 8.1 LLM Provider Agent
 
 | Property | Value |
 |---|---|
-| **Agent** | Google Gemini AI |
-| **Package** | `@google/genai` |
-| **Auth** | API token + employee ID + role |
-| **Purpose** | Power AI-driven restaurant features |
+| **Agent** | Backend LLM Provider Abstraction |
+| **Config** | `AI_PROVIDER` env (`openai` default, also `anthropic` \| `ollama` \| `custom`), `AI_MODEL`, `AI_API_KEY` |
+| **Auth** | JWT token + employee ID + role |
+| **Purpose** | Power AI-driven restaurant features (deterministic engines stay authoritative for financial truth; see `docs/AI_ARCHITECTURE.md`) |
 
 ### 8.2 AI Feature Agents
 

@@ -85,10 +85,10 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-[#191b23]/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[#e1e2ed] flex flex-col max-h-[95vh]">
+    <div className="fixed inset-0 z-[90] bg-[var(--color-sidebar-bg)]/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border-default)] flex flex-col max-h-[95vh]">
         {/* Header */}
-        <div className="bg-[#191b23] text-white px-6 py-4 flex items-center justify-between">
+        <div className="bg-[var(--color-sidebar-bg)] text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-amber-400" />
             <div>
@@ -127,7 +127,7 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
                     className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-2 py-3 transition-all cursor-pointer ${
                       selected
                         ? 'border-[var(--brand-color)] bg-blue-50 shadow-md'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+                        : 'border-gray-200 bg-[var(--color-bg-white)] hover:border-gray-300 hover:bg-gray-50'
                     }`}
                   >
                     <span className={`p-2 rounded-lg border ${color}`}>
@@ -168,7 +168,7 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
                 <div
                   key={i}
                   className={`w-11 h-12 rounded-xl border-2 flex items-center justify-center transition-all ${
-                    pin.length > i ? 'border-[var(--brand-color)] bg-blue-50' : 'border-gray-200 bg-white'
+                    pin.length > i ? 'border-[var(--brand-color)] bg-blue-50' : 'border-gray-200 bg-[var(--color-bg-white)]'
                   }`}
                 >
                   <span className="w-3 h-3 rounded-full bg-[var(--brand-color)]" />
@@ -196,7 +196,7 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
                     ? 'bg-gray-100 hover:bg-gray-200 text-gray-500 text-[11px]'
                     : key === 'back'
                       ? 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-                      : 'bg-[#f3f3fe] hover:bg-[#e4e4f5] text-gray-900'
+                      : 'bg-[var(--color-primary-light)] hover:bg-[var(--color-surface-muted)] text-gray-900'
                 }`}
               >
                 {key === 'clear' ? 'CLR' : key === 'back' ? <Delete className="w-5 h-5 mx-auto" /> : key}
@@ -215,7 +215,7 @@ export default function PinLoginScreen({ employees, currentEmployee, onLoginSucc
             <button
               onClick={() => verify(pin)}
               disabled={!position || pin.length !== 4}
-              className="flex-1 py-2.5 rounded-lg bg-[var(--brand-color)] hover:bg-[#003ea8] disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer"
+              className="flex-1 py-2.5 rounded-lg bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer"
             >
               Sign In
             </button>

@@ -27,7 +27,8 @@
 
 import mongoose from 'mongoose';
 import { Recipe, RecipeVersion, RecipeConsumption, Product } from '../../../models';
-import { recipeRepo, inventoryEventRepo } from '../../../repositories';
+import ConfigurationTemplate from '../../menu-config/models/ConfigurationTemplate';
+import { inventoryEventRepo } from '../../../repositories';
 import { AppError } from '../../../utils/AppError';
 import { recipeCostEngine } from './recipeCostEngine';
 import { stockMovementService } from '../../../services/stockMovementService';
@@ -64,6 +65,161 @@ async function resolveRecipeVersion(restaurantId: string, productId: string, var
 
 export class ConsumptionService {
   /**
+   * Phase 4 — resolve the configuration-driven recipe layers for one bill line.
+   *
+   * A configured sale can consume MORE than its base recipe:
+   *   BASE recipe          → the product's own active recipe (resolved per
+   *                          variant via `variantName` by the caller)
+   *   VARIANT/MODIFIER Δ   → each selected option whose `recipeMappingId`
+   *                          points at a delta Recipe (e.g. "Cheese Burst" =
+   *                          a tiny recipe that yields +80g cheese)
+   *   ADD-ON               → each selected add-on whose `productId` references
+   *                          another menu product → that product's own recipe
+   *
+   * Everything is tenant-scoped: templates AND delta recipes are looked up with
+   * the bill's restaurantId, so one restaurant can never consume another's
+   * configuration. Option quantity × line quantity are both applied. Returns
+   * the same flattened cost-line shape as the base recipe so the caller can
+   * aggregate deltas and base through one code path.
+   */
+  private async optionRecipeLines(
+    restaurantId: string,
+    item: any,
+    saleDate: string,
+    cache: Map<string, any>
+  ): Promise<Array<{ productId: string; productName: string; variantName?: string; quantity: number; recipeVersion: number; recipeName: string; source: 'option' | 'addon'; optionName: string; costLines: Array<{ inventoryItemId?: string; itemName: string; unit: string; quantity: number; costPerUnit: number; lineCost: number }> }>> {
+    const selections = item?.configuration?.selections || item?.configurationSnapshot?.selections || [];
+    if (!Array.isArray(selections) || selections.length === 0) return [];
+
+    const productId = item?.menuItemId || item?.product?.id;
+    const productName = item?.itemName || item?.product?.name || 'Item';
+    const lineQty = Math.max(0, Number(item?.quantity) || 0);
+    if (!productId || lineQty <= 0) return [];
+
+    const out: Array<{ productId: string; productName: string; variantName?: string; quantity: number; recipeVersion: number; recipeName: string; source: 'option' | 'addon'; optionName: string; costLines: Array<{ inventoryItemId?: string; itemName: string; unit: string; quantity: number; costPerUnit: number; lineCost: number }> }> = [];
+
+    const loadTemplates = async (groupIds: string[]): Promise<void> => {
+      const missing = groupIds.filter((id) => !cache.has(`tpl:${id}`));
+      if (missing.length === 0) return;
+      try {
+        const found = await ConfigurationTemplate.find({
+          _id: { $in: missing.map((id) => new mongoose.Types.ObjectId(id)) },
+          restaurantId,
+          status: { $ne: 'archived' },
+        }).lean().exec();
+        for (const t of found) cache.set(`tpl:${String(t._id)}`, t);
+      } catch { /* malformed group ids → treated as missing below */ }
+      for (const id of missing) if (!cache.has(`tpl:${id}`)) cache.set(`tpl:${id}`, null);
+    };
+
+    const resolveDeltaRecipe = async (recipeId?: string | null, productRefId?: string | null): Promise<{ version: number; name: string; lines: Array<{ inventoryItemId?: string; itemName: string; unit: string; quantity: number; costPerUnit: number; lineCost: number }> } | null> => {
+      const recipeKey = recipeId ? `rcp:${recipeId}` : productRefId ? `rcp:prod:${productRefId}` : null;
+      if (!recipeKey) return null;
+      if (cache.has(recipeKey)) return cache.get(recipeKey) || null;
+
+      let result: { version: number; name: string; lines: Array<{ inventoryItemId?: string; itemName: string; unit: string; quantity: number; costPerUnit: number; lineCost: number }> } | null = null;
+      if (recipeId && mongoose.Types.ObjectId.isValid(recipeId)) {
+        try {
+          const recipe = await Recipe.findOne({
+            _id: new mongoose.Types.ObjectId(recipeId),
+            restaurantId,
+            status: 'active',
+            isDeleted: { $ne: true },
+          }).lean().exec();
+          if (recipe) {
+            const cost = await recipeCostEngine.costRecipe(recipe, { restaurantId });
+            result = {
+              version: recipe.version ?? 1,
+              name: recipe.name || recipe.productName || 'Recipe',
+              lines: cost.lines as Array<{ inventoryItemId?: string; itemName: string; unit: string; quantity: number; costPerUnit: number; lineCost: number }>,
+            };
+          }
+        } catch { result = null; }
+      } else if (productRefId && mongoose.Types.ObjectId.isValid(productRefId)) {
+        // Add-on → the referenced product's OWN recipe (already version-resolved
+        // with flattened cost lines — never re-cost the wrapper).
+        const resolved = await resolveRecipeVersion(restaurantId, productRefId, undefined, saleDate);
+        if (resolved) {
+          result = { version: resolved.version, name: resolved.recipeName, lines: resolved.costLines };
+        }
+      }
+      if (!result) {
+        cache.set(recipeKey, null);
+        return null;
+      }
+      cache.set(recipeKey, result);
+      return result;
+    };
+
+    await loadTemplates(selections.map((s: any) => s?.groupId).filter(Boolean));
+
+    for (const entry of selections) {
+      const template = cache.get(`tpl:${entry?.groupId}`);
+      if (!template) continue; // archived / missing / other tenant — ignored
+      const options = template?.data?.options || [];
+      const isAddOn = template?.type === 'ADD_ON_GROUP';
+      for (const optionId of entry?.optionIds || []) {
+        const option = options.find((o: any) => o?.id === optionId);
+        if (!option || option.active === false) continue;
+        // Option quantity applies to ANY group (add-on ×N, modifier ×2 cheese…)
+        // — Phase 4 §8 requires modifier quantity to multiply the delta too.
+        const optionQty = Math.max(1, Number(entry?.quantities?.[optionId]) || 1);
+        const delta = isAddOn
+          ? await resolveDeltaRecipe(null, option?.productId ? String(option.productId) : null)
+          : await resolveDeltaRecipe(option?.recipeMappingId || null, null);
+        if (!delta || delta.lines.length === 0) continue;
+        out.push({
+          productId,
+          productName,
+          quantity: lineQty, // agg loop multiplies costLines by this — keep optionQty folded in, line qty applied below
+          recipeVersion: delta.version,
+          recipeName: delta.name,
+          source: isAddOn ? 'addon' : 'option',
+          optionName: option.name,
+          costLines: delta.lines.map((l) => ({ ...l, quantity: round4(l.quantity * optionQty), lineCost: round2(l.lineCost * optionQty) })),
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Billing guard — batch-resolve which of the bill's products have an ACTIVE
+   * recipe (keyed `productId::variantName`). billService uses this to skip the
+   * legacy per-menu-product stock deduction for prepared items: a product with
+   * an active recipe is consumed through its ingredients, never through the
+   * legacy `deductBillStock` path. Returns an empty set on any error so the
+   * legacy path remains the safe fallback.
+   */
+  async activeRecipeKeys(restaurantId: string, items: any[]): Promise<Set<string>> {
+    const keys = new Set<string>();
+    if (!restaurantId) return keys;
+    const productIds = Array.from(new Set(
+      (items || [])
+        .map((i: any) => i?.menuItemId || i?.product?.id)
+        .filter(Boolean)
+    ));
+    if (productIds.length === 0) return keys;
+    try {
+      const recipes = await Recipe.find({
+        restaurantId,
+        productId: { $in: productIds },
+        status: 'active',
+        isDeleted: { $ne: true },
+      })
+        .select('productId variantName')
+        .lean()
+        .exec();
+      for (const r of recipes) {
+        keys.add(`${String(r.productId)}::${r.variantName || ''}`);
+      }
+    } catch (err: any) {
+      console.warn('[ConsumptionService] activeRecipeKeys failed (legacy fallback):', err.message);
+    }
+    return keys;
+  }
+
+  /**
    * Generate theoretical consumption for a finalized bill. Idempotent on
    * { restaurantId, billId }. Never throws — a consumption failure must never
    * fail billing (movements are best-effort, record is created regardless).
@@ -89,6 +245,7 @@ export class ConsumptionService {
     const lines: any[] = [];
     const recipeIds = new Set<string>();
     const resolvedByProduct = new Map<string, any>();
+    const deltaCache = new Map<string, any>();
 
     for (const item of (billItems || [])) {
       const productId = item?.menuItemId || item?.product?.id;
@@ -100,18 +257,28 @@ export class ConsumptionService {
         resolved = await resolveRecipeVersion(restaurantId, productId, item?.variantName, saleDate);
         resolvedByProduct.set(key, resolved);
       }
-      if (!resolved) continue; // no active recipe → legacy per-product deduction
-      const { recipe, version, recipeName, costLines } = resolved;
-      if (recipe?._id) recipeIds.add(String(recipe._id));
-      lines.push({
-        productId,
-        productName: item?.itemName || item?.product?.name || 'Item',
-        variantName: item?.variantName || undefined,
-        quantity: qty,
-        recipeVersion: version,
-        recipeName,
-        costLines,
-      });
+      if (resolved) {
+        const { recipe, version, recipeName, costLines } = resolved;
+        if (recipe?._id) recipeIds.add(String(recipe._id));
+        lines.push({
+          productId,
+          productName: item?.itemName || item?.product?.name || 'Item',
+          variantName: item?.variantName || undefined,
+          quantity: qty,
+          recipeVersion: version,
+          recipeName,
+          costLines,
+        });
+      }
+      // Phase 4 — configuration layers: selected variant/modifier options
+      // (recipeMappingId → delta recipe) and add-ons (productId → own recipe)
+      // consume IN ADDITION to the base recipe. Base + deltas flow through the
+      // same ingredient aggregation, so no stock is double-counted per layer.
+      const optionLines = await this.optionRecipeLines(restaurantId, item, saleDate, deltaCache);
+      for (const ol of optionLines) {
+        lines.push(ol);
+        if (ol.recipeName) recipeIds.add(`delta:${ol.recipeName}`);
+      }
     }
 
     if (lines.length === 0) return null; // nothing recipe-linked on this bill

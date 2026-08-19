@@ -236,7 +236,7 @@ export async function parseVoiceCommand(
     const avgLookupNames: string[] = [];
 
     for (const item of parsed.items) {
-      const aliasMatch = await resolveAlias(restaurantId, item.item);
+      const aliasMatch = await resolveAlias(restaurantId, item.item, { inventoryOnly: true });
       // LOG: alias match for each spoken item
       console.log(
         `[VoiceInventory] Alias match: "${item.item}" → "${aliasMatch.canonicalName}" (unit=${aliasMatch.unit}, conf=${aliasMatch.confidence})`
@@ -253,6 +253,10 @@ export async function parseVoiceCommand(
           (invName.includes(spoken) || spoken.includes(invName) || invName.includes((aliasMatch.canonicalName || '').toLowerCase()))
         );
       });
+
+      // Product not found: confidence is low AND no partial candidates exist.
+      // The frontend should offer a "Create Product" button with pre-filled data.
+      const productNotFound = ambiguous && candidates.length === 0;
 
       // Unit precedence: what the speaker actually said is authoritative —
       // "5 kg aloo" stays kg even when the catalog stores Potato in pcs (the
@@ -284,6 +288,7 @@ export async function parseVoiceCommand(
         resolutionConfidence: aliasMatch.confidence,
         ambiguous: ambiguous || undefined,
         candidates: ambiguous && candidates.length > 1 ? candidates.slice(0, 5) : undefined,
+        productNotFound: productNotFound || undefined,
       });
     }
 
@@ -378,6 +383,7 @@ export async function parseVoiceCommand(
       try {
         pending = await issuePendingAction({
           restaurantId,
+          branchId: authReq.user?.branchIds?.[0],
           employeeId,
           employeeName,
           auditLogId: auditResult.logId,
@@ -576,6 +582,9 @@ export async function confirmVoiceAction(
     switch (action) {
       case 'confirm': {
         // Update inventory — only after token verification above.
+        // Extract branchId from the pending action so new products are created
+        // in the correct branch scope (not orphaned as branchless).
+        const logBranchId = log?.branchId ? String(log.branchId) : undefined;
         const updateResult = await updateInventory({
           restaurantId,
           operation: log.intent as any,
@@ -587,6 +596,7 @@ export async function confirmVoiceAction(
           })),
           performedBy: employeeId,
           performedByName: employeeName,
+          branchId: logBranchId,
           source: 'voice',
           auditLogId,
           supplier: confirmSupplier,
@@ -1137,7 +1147,7 @@ export async function resolveSpokenProduct(
   const restaurantId = authReq.user?.restaurantId || '';
 
   try {
-    const result = await resolveProductViaEngine(transcript, restaurantId);
+    const result = await resolveProductViaEngine(transcript, restaurantId, { inventoryOnly: true });
 
     // Log to audit
     await recordVoiceAction({

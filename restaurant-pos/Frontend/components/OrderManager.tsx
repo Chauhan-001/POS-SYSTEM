@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, Fragment } from 'react';
 import {
   Search, Plus, Clock, Users, User, MapPin, Phone, ArrowRight,
   ShoppingBag, Package, UtensilsCrossed, Bike, Globe,
   RefreshCw, AlertCircle, ChevronRight, MoreHorizontal, Printer,
   CreditCard, Wallet, CheckCircle, XCircle, Edit3, Eye, Receipt,
-  Timer, LayoutGrid, List, Layers, Coffee, Trash, Map
+  Timer, LayoutGrid, List, Layers, Coffee, Trash
 } from 'lucide-react';
 import { Order, OrderStatus, TableInfo, TakeawayOrder, TableStatus, CartItem, Employee, Floor, Product } from '../src/types';
 import { useCurrentTime } from '../src/hooks/useCurrentTime';
@@ -26,11 +26,15 @@ interface OrderManagerProps {
   takeawayOrders: TakeawayOrder[];
   onOpenOrder: (order: Order) => void;
   onCreateOrder: (type: Order['type'], tableId?: string) => void;
+  /** Open an AVAILABLE table's billing workspace without creating an order. */
+  onOpenTableBilling: (tableId: string) => void;
   onCreateTakeawayOrder: () => void;
   onUpdateTakeawayOrder: (id: string, updates: Partial<TakeawayOrder>) => void;
   onClearCompletedTakeaways: () => void;
   onOpenBilling: (order: Order) => void;
   onOpenReceiptPreview: (order: Order) => void;
+  /** End a customer's ACTIVE table-QR seat session (the QR stays valid). */
+  onExpireSession?: (tableId: string) => void;
   employees: Employee[];
   settings: any;
   /** Plan-clamped module toggles (effective settings after subscription plan
@@ -58,6 +62,8 @@ interface OrderManagerProps {
    * swap the order in pos.orders immediately so the KDS/KOT cancellations
    * show right away instead of waiting for the next poll. */
   onOrderUpdated?: (order: any) => void;
+  /** Manual refresh — only called on explicit user action, not auto-refresh. */
+  onRefresh?: () => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -75,25 +81,28 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const TABLE_STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
-  'Available': { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
-  'Occupied': { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500' },
-  'Reserved': { bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500' },
-  'Preparing': { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500' },
-  'Food Ready': { bg: 'bg-green-50', text: 'text-green-700', dot: 'bg-green-500' },
-  'Served': { bg: 'bg-teal-50', text: 'text-teal-700', dot: 'bg-teal-500' },
-  'Waiting Payment': { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500' },
-  'Cleaning': { bg: 'bg-sky-50', text: 'text-sky-700', dot: 'bg-sky-500' },
+  'Available': { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-[var(--color-emerald-500-solid)]' },
+  'Occupied': { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-[var(--color-orange-500-solid)]' },
+  'Reserved': { bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-[var(--color-blue-500-solid)]' },
+  'Preparing': { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-[var(--color-amber-500-solid)]' },
+  'Food Ready': { bg: 'bg-green-50', text: 'text-green-700', dot: 'bg-[var(--color-green-500-solid)]' },
+  'Served': { bg: 'bg-teal-50', text: 'text-teal-700', dot: 'bg-[var(--color-teal-500-solid)]' },
+  'Waiting Payment': { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-[var(--color-orange-500-solid)]' },
+  'Cleaning': { bg: 'bg-sky-50', text: 'text-sky-700', dot: 'bg-[var(--color-sky-500-solid)]' },
   'Paid': { bg: 'bg-gray-50', text: 'text-gray-700', dot: 'bg-gray-500' },
-  'Cancelled': { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500' },
+  'Cancelled': { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-[var(--color-red-500-solid)]' },
   'Disabled': { bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400' },
-  'Merged': { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-500' },
+  'Merged': { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-[var(--color-violet-500-solid)]' },
 };
 
+/** Built-in section names offered in the table form's dropdown. */
+const DEFAULT_SECTIONS = ['Main Hall', 'Terrace', 'VIP Room', 'Garden'];
+/** Sentinel value for the "Custom…" dropdown choice — reveals a free-text input. */
+const CUSTOM_SECTION = '__custom__';
+
 export default function OrderManager({
-  orders, tables, takeawayOrders,
-  onOpenOrder, onCreateOrder, onCreateTakeawayOrder,
-  onUpdateTakeawayOrder, onClearCompletedTakeaways,
-  onOpenBilling, onOpenReceiptPreview, employees, settings,
+  orders, tables, takeawayOrders,  onOpenOrder, onCreateOrder, onOpenTableBilling, onCreateTakeawayOrder, onRefresh,
+  onUpdateTakeawayOrder, onClearCompletedTakeaways, onOpenBilling, onOpenReceiptPreview, onExpireSession, employees, settings,
   moduleSettings = settings?.moduleSettings || {}, currentEmployee, showToast,
   onAddTable, onUpdateTable, onDeleteTable, floors = [],
   activeTab: activeTabProp, onActiveTabChange,
@@ -132,7 +141,10 @@ export default function OrderManager({
   // local fallback for standalone usage — closing an order restores the exact
   // table view (grid vs floor plan) the operator was working in.
   const [internalViewMode, setInternalViewMode] = useState<'grid' | 'floorplan'>('grid');
-  const viewMode = viewModeProp ?? internalViewMode;
+  // Floor plan module is ISOLATED: the component and its logic remain in the
+  // codebase (RestaurantFloorPlan.tsx) but are no longer rendered in Orders.
+  // Force grid view even if a previous session saved the 'floorplan' mode.
+  const viewMode = 'grid' as 'grid' | 'floorplan';
   const setViewMode = useCallback((mode: 'grid' | 'floorplan') => {
     setInternalViewMode(mode);
     onViewModeChange?.(mode);
@@ -147,6 +159,14 @@ export default function OrderManager({
   const [tableSearch, setTableSearch] = useState('');
   const [editingTable, setEditingTable] = useState<TableInfo | null>(null);
   const [tableForm, setTableForm] = useState({ number: '', capacity: 4, section: 'Main Hall', status: 'Available' as TableStatus });
+  // Section dropdown: built-in sections + any sections already in use. Picking
+  // "Custom…" reveals a free-text input so new sections can be created on the fly.
+  const [isCustomSection, setIsCustomSection] = useState(false);
+  const sectionOptions = useMemo(() => {
+    const set = new Set<string>(DEFAULT_SECTIONS);
+    tables.forEach(t => { if (t.section) set.add(t.section); });
+    return Array.from(set);
+  }, [tables]);
 
   const filteredTableList = useMemo(() => {
     const base = floorFilteredTables;
@@ -244,12 +264,16 @@ export default function OrderManager({
   const openAddTableModal = () => {
     setEditingTable(null);
     setTableForm({ number: '', capacity: 4, section: 'Main Hall', status: 'Available' });
+    setIsCustomSection(false);
     setIsFormOpen(true);
   };
 
   const openEditTableModal = (table: TableInfo) => {
     setEditingTable(table);
     setTableForm({ number: String(table.number), capacity: table.capacity, section: table.section || 'Main Hall', status: table.status });
+    // The table's own section is included in sectionOptions (it's in `tables`),
+    // so it renders as a regular dropdown choice — no custom input needed.
+    setIsCustomSection(false);
     setIsFormOpen(true);
   };
 
@@ -258,11 +282,13 @@ export default function OrderManager({
       showToast('Enter a valid table number.', 'warning');
       return;
     }
+    // A cleared custom section falls back to the default hall.
+    const section = tableForm.section.trim() || 'Main Hall';
     if (editingTable) {
       onUpdateTable(editingTable.id, {
         number: Number(tableForm.number),
         capacity: tableForm.capacity,
-        section: tableForm.section,
+        section,
         status: tableForm.status,
       });
       showToast('Table updated successfully', 'success');
@@ -270,7 +296,7 @@ export default function OrderManager({
       onAddTable({
         number: Number(tableForm.number),
         capacity: tableForm.capacity,
-        section: tableForm.section,
+        section,
         status: tableForm.status,
       });
       showToast('Table added successfully', 'success');
@@ -297,6 +323,19 @@ export default function OrderManager({
     const base = activeSection === 'All' ? floorFilteredTables : floorFilteredTables.filter(t => t.section === activeSection);
     return base;
   }, [floorFilteredTables, activeSection]);
+
+  // In the "All" view, group tables by section so each section reads as its
+  // own block under a small subheading instead of one continuous list.
+  const sectionsInView = useMemo(() => {
+    const groups: Record<string, TableInfo[]> = {};
+    const order: string[] = [];
+    for (const t of filteredTables) {
+      const key = t.section || 'Main Hall';
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(t);
+    }
+    return order.map(name => ({ name, tables: groups[name] }));
+  }, [filteredTables]);
 
   // Section color mapping
   const sectionColors: Record<string, string> = {
@@ -330,9 +369,9 @@ export default function OrderManager({
   }, [orders]);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#f8f6f3] overflow-hidden">
+    <div className="flex-1 flex flex-col min-h-0 bg-[var(--color-surface-muted)] overflow-hidden">
       {/* Header section */}
-      <div className="bg-white border-b border-gray-200 px-5 py-3.5 shrink-0">
+      <div className="bg-[var(--color-bg-white)] border-b border-gray-200 px-5 py-3.5 shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-extrabold text-gray-900 tracking-tight">Order Management</h1>
@@ -341,9 +380,18 @@ export default function OrderManager({
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                className="p-2 rounded-lg text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 transition-all cursor-pointer"
+                title="Refresh orders"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={() => setIsTableModalOpen(true)}
-              className="flex items-center gap-1.5 bg-white border border-gray-200 hover:border-gray-400 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 bg-[var(--color-bg-white)] border border-gray-200 hover:border-gray-400 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
               Manage Tables
@@ -353,22 +401,13 @@ export default function OrderManager({
               <button
                 onClick={() => setViewMode('grid')}
                 className={`p-2 rounded-lg transition-colors cursor-pointer ${
-                  viewMode === 'grid' ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-500'
+                  viewMode === 'grid' ? 'bg-[var(--color-gray-900-solid)] text-white' : 'hover:bg-gray-100 text-gray-500'
                 }`}
                 title="Grid view"
               >
                 <LayoutGrid className="w-4 h-4" />
               </button>
 
-              <button
-                onClick={() => setViewMode('floorplan')}
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
-                  viewMode === 'floorplan' ? 'bg-emerald-700 text-white' : 'hover:bg-gray-100 text-gray-500'
-                }`}
-                title="Floor plan view"
-              >
-                <Map className="w-4 h-4" />
-              </button>
             </div>
           </div>
         </div>
@@ -404,14 +443,14 @@ export default function OrderManager({
               onClick={() => setActiveTab('tables')}
               className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'tables'
-                  ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
+                  ? 'bg-[var(--color-surface-muted)] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
               Tables
               {occupiedTablesCount > 0 && (
-                <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">{occupiedTablesCount}</span>
+                <span className="bg-[var(--color-gray-900-solid)] text-white text-[8px] px-1.5 py-0.5 rounded-full">{occupiedTablesCount}</span>
               )}
             </button>
           )}
@@ -420,14 +459,14 @@ export default function OrderManager({
               onClick={() => setActiveTab('takeaway')}
               className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'takeaway'
-                  ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
+                  ? 'bg-[var(--color-surface-muted)] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
               <Package className="w-3.5 h-3.5" />
               Takeaway
               {takeawayOrders.length > 0 && (
-                <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">{takeawayOrders.length}</span>
+                <span className="bg-[var(--color-gray-900-solid)] text-white text-[8px] px-1.5 py-0.5 rounded-full">{takeawayOrders.length}</span>
               )}
             </button>
           )}
@@ -436,14 +475,14 @@ export default function OrderManager({
               onClick={() => setActiveTab('online')}
               className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'online'
-                  ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
+                  ? 'bg-[var(--color-surface-muted)] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
             >
               <Globe className="w-3.5 h-3.5" />
               Online Orders
               {Object.values(onlineOrdersByPlatform).flat().length > 0 && (
-                <span className="bg-gray-900 text-white text-[8px] px-1.5 py-0.5 rounded-full">
+                <span className="bg-[var(--color-gray-900-solid)] text-white text-[8px] px-1.5 py-0.5 rounded-full">
                   {Object.values(onlineOrdersByPlatform).flat().length}
                 </span>
               )}
@@ -453,7 +492,7 @@ export default function OrderManager({
             onClick={() => setActiveTab('all')}
             className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'all'
-                ? 'bg-[#f8f6f3] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
+                ? 'bg-[var(--color-surface-muted)] text-gray-900 border-t border-l border-r border-gray-200 -mb-px'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
             }`}
           >
@@ -479,7 +518,7 @@ export default function OrderManager({
                   className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                     activeFloorId === 'All'
                       ? 'bg-[var(--brand-color)] text-white shadow-sm'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                      : 'bg-[var(--color-bg-white)] text-gray-600 border border-gray-200 hover:bg-gray-50'
                   }`}
                 >
                   All
@@ -491,7 +530,7 @@ export default function OrderManager({
                     className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                       activeFloorId === floor.id
                         ? 'bg-[var(--brand-color)] text-white shadow-sm'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                        : 'bg-[var(--color-bg-white)] text-gray-600 border border-gray-200 hover:bg-gray-50'
                     }`}
                   >
                     {floor.name}
@@ -509,8 +548,8 @@ export default function OrderManager({
                     onClick={() => setActiveSection(section)}
                     className={`px-3.5 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                       activeSection === section
-                        ? 'bg-gray-900 text-white shadow-sm'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:text-gray-800'
+                        ? 'bg-[var(--color-gray-900-solid)] text-white shadow-sm'
+                        : 'bg-[var(--color-bg-white)] text-gray-600 border border-gray-200 hover:bg-gray-50 hover:text-gray-800'
                     }`}
                   >
                     {section === 'All' ? (
@@ -538,8 +577,10 @@ export default function OrderManager({
                 orders={orders}
                 settings={settings}
                 onCreateOrder={onCreateOrder}
+                onOpenTableBilling={onOpenTableBilling}
                 onOpenBilling={onOpenBilling}
                 onOpenReceiptPreview={onOpenReceiptPreview}
+                onExpireSession={onExpireSession}
                 onAddTable={onAddTable}
                 onUpdateTable={onUpdateTable}
                 onDeleteTable={onDeleteTable}
@@ -557,6 +598,37 @@ export default function OrderManager({
                     <p className="font-semibold text-gray-500">No tables in this section</p>
                     <p className="text-xs mt-1">Switch sections or create a new order to get started</p>
                   </div>
+                ) : activeSection === 'All' ? (
+                  sectionsInView.map((group) => (
+                    <Fragment key={group.name}>
+                      {/* Section subheading — separates each section's tables */}
+                      <div className="col-span-full flex items-center gap-2 mt-1 mb-1 first:mt-0">
+                        <Layers className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${sectionColors[group.name] || 'text-gray-500 bg-gray-100'}`}>
+                          {group.name}
+                        </span>
+                        <span className="text-[9px] text-gray-400 font-mono">({group.tables.length})</span>
+                        <div className="flex-1 h-px bg-gray-200" />
+                      </div>
+                      {group.tables.map(table => (
+                        <TableCard
+                          key={table.id}
+                          table={table}
+                          order={getLinkedOrderForTable(table.id)}
+                          bill={getRunningBill(table.id)}
+                          currencySymbol={currencySymbol}
+                          sectionColors={sectionColors}
+                          TABLE_STATUS_COLORS={TABLE_STATUS_COLORS}
+                          onOpenReceiptPreview={onOpenReceiptPreview}
+                          onOpenBilling={onOpenBilling}
+                          onCreateOrder={onCreateOrder}
+                          onOpenTableBilling={onOpenTableBilling}
+                          onExpireSession={onExpireSession}
+                          getElapsedTime={getElapsedTime}
+                        />
+                      ))}
+                    </Fragment>
+                  ))
                 ) : (
                   filteredTables.map(table => (
                     <TableCard
@@ -570,6 +642,8 @@ export default function OrderManager({
                       onOpenReceiptPreview={onOpenReceiptPreview}
                       onOpenBilling={onOpenBilling}
                       onCreateOrder={onCreateOrder}
+                      onOpenTableBilling={onOpenTableBilling}
+                      onExpireSession={onExpireSession}
                       getElapsedTime={getElapsedTime}
                     />
                   ))
@@ -595,7 +669,7 @@ export default function OrderManager({
                 {takeawayOrders.filter(t => t.status === 'Completed' || t.status === 'Collected').length > 0 && (
                   <button
                     onClick={onClearCompletedTakeaways}
-                    className="flex items-center gap-1.5 bg-white border border-gray-200 hover:border-red-300 hover:text-red-600 text-gray-500 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 bg-[var(--color-bg-white)] border border-gray-200 hover:border-red-300 hover:text-red-600 text-gray-500 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
                   >
                     <Trash className="w-3 h-3" />
                     Clear Completed
@@ -603,7 +677,7 @@ export default function OrderManager({
                 )}
                 <button
                   onClick={onCreateTakeawayOrder}
-                  className="flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 bg-[var(--color-gray-900-solid)] hover:bg-[var(--color-gray-800-solid)] text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   New Takeaway
@@ -612,7 +686,7 @@ export default function OrderManager({
             </div>
 
             {takeawayOrders.length === 0 ? (
-              <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200">
+              <div className="text-center py-16 text-gray-400 bg-[var(--color-bg-white)] rounded-2xl border border-gray-200">
                 <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                 <p className="font-semibold text-gray-500">No takeaway orders</p>
                 <p className="text-xs mt-1">Create a new takeaway order to get started</p>
@@ -677,7 +751,7 @@ export default function OrderManager({
             })}
 
             {Object.values(onlineOrdersByPlatform).flat().length === 0 && (
-              <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200">
+              <div className="text-center py-16 text-gray-400 bg-[var(--color-bg-white)] rounded-2xl border border-gray-200">
                 <Globe className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                 <p className="font-semibold text-gray-500">No online orders</p>
                 <p className="text-xs mt-1">Incoming orders from platforms will appear here</p>
@@ -697,14 +771,14 @@ export default function OrderManager({
                   placeholder="Search by order #, customer, type..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-gray-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-gray-400/20 focus:border-gray-400 bg-white"
+                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-gray-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-gray-400/20 focus:border-gray-400 bg-[var(--color-bg-white)]"
                 />
               </div>
             </div>
 
             <div className="space-y-2">
               {filteredOrders.length === 0 ? (
-                <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200">
+                <div className="text-center py-16 text-gray-400 bg-[var(--color-bg-white)] rounded-2xl border border-gray-200">
                   <List className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                   <p className="font-semibold text-gray-500">No orders found</p>
                   <p className="text-xs mt-1">Create a new order to get started</p>
@@ -714,7 +788,7 @@ export default function OrderManager({
                   <div
                     key={order.id}
                     onClick={() => onOpenBilling(order)}
-                    className="bg-white rounded-xl border border-gray-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer p-4 flex items-center justify-between"
+                    className="bg-[var(--color-bg-white)] rounded-xl border border-gray-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer p-4 flex items-center justify-between"
                   >
                     <div className="flex items-center gap-4">
                       <div className="flex flex-col items-center">
@@ -767,7 +841,7 @@ export default function OrderManager({
       {/* Table Management Modal */}
       {isTableModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col border border-gray-200 overflow-hidden will-change-transform">
+          <div className="bg-[var(--color-bg-white)] rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col border border-gray-200 overflow-hidden will-change-transform">
             {/* Header */}
             <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-2">
@@ -791,12 +865,12 @@ export default function OrderManager({
                   placeholder="Search tables..."
                   value={tableSearch}
                   onChange={(e) => setTableSearch(e.target.value)}
-                  className="pl-9 pr-4 py-2 rounded-xl border border-gray-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-gray-400/20 focus:border-gray-400 bg-white"
+                  className="pl-9 pr-4 py-2 rounded-xl border border-gray-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-gray-400/20 focus:border-gray-400 bg-[var(--color-bg-white)]"
                 />
               </div>
               <button
                 onClick={openAddTableModal}
-                className="flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 bg-[var(--color-gray-900-solid)] hover:bg-[var(--color-gray-800-solid)] text-white px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Add Table
@@ -817,8 +891,8 @@ export default function OrderManager({
                       key={table.id}
                       className={`flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${
                         table.status === 'Available'
-                          ? 'bg-white border-gray-200 hover:border-emerald-300'
-                          : 'bg-white border-gray-200'
+                          ? 'bg-[var(--color-bg-white)] border-gray-200 hover:border-emerald-300'
+                          : 'bg-[var(--color-bg-white)] border-gray-200'
                       }`}
                     >
                       <div className="flex items-center gap-4">
@@ -885,7 +959,7 @@ export default function OrderManager({
           {/* Inline add/edit form overlay inside modal */}
           {isFormOpen && (
             <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
-              <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-gray-200 overflow-hidden">
+              <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-md w-full border border-gray-200 overflow-hidden">
                 <div className="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
                   <h3 className="font-bold text-sm text-gray-900">
                     {editingTable ? 'Edit Table' : 'Add New Table'}
@@ -918,22 +992,42 @@ export default function OrderManager({
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-gray-400 tracking-wider mb-1.5">Section</label>
                     <select
-                      value={tableForm.section}
-                      onChange={(e) => setTableForm({ ...tableForm, section: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-gray-400 bg-white"
+                      value={isCustomSection ? CUSTOM_SECTION : tableForm.section}
+                      onChange={(e) => {
+                        if (e.target.value === CUSTOM_SECTION) {
+                          // Picking "Custom…" reveals a text input; start blank so
+                          // the previous default doesn't leak into the new name.
+                          setIsCustomSection(true);
+                          setTableForm((prev) => ({ ...prev, section: '' }));
+                        } else {
+                          setIsCustomSection(false);
+                          setTableForm((prev) => ({ ...prev, section: e.target.value }));
+                        }
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-gray-400 bg-[var(--color-bg-white)]"
                     >
-                      <option value="Main Hall">Main Hall</option>
-                      <option value="Terrace">Terrace</option>
-                      <option value="VIP Room">VIP Room</option>
-                      <option value="Garden">Garden</option>
+                      {sectionOptions.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                      <option value={CUSTOM_SECTION}>Custom…</option>
                     </select>
+                    {isCustomSection && (
+                      <input
+                        type="text"
+                        value={tableForm.section}
+                        onChange={(e) => setTableForm({ ...tableForm, section: e.target.value })}
+                        className="mt-2 w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-gray-400"
+                        placeholder="Enter new section name (e.g. Rooftop)"
+                        autoFocus
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-gray-400 tracking-wider mb-1.5">Status</label>
                     <select
                       value={tableForm.status}
                       onChange={(e) => setTableForm({ ...tableForm, status: e.target.value as TableStatus })}
-                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-gray-400 bg-white"
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-gray-400 bg-[var(--color-bg-white)]"
                     >
                       <option value="Available">Available</option>
                       <option value="Occupied">Occupied</option>
@@ -957,7 +1051,7 @@ export default function OrderManager({
                   </button>
                   <button
                     onClick={handleTableSubmit}
-                    className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                    className="px-4 py-2 bg-[var(--color-gray-900-solid)] hover:bg-[var(--color-gray-800-solid)] text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
                   >
                     {editingTable ? 'Update Table' : 'Add Table'}
                   </button>

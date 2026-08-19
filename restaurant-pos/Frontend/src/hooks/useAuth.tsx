@@ -14,6 +14,7 @@ import {
 } from '../api/axios';
 import { setAuthToken } from '../api/client';
 import { getDBData } from '../data';
+import { saveAccount, touchAccount } from '../savedAccounts';
 
 export interface AuthUser {
   id: string;
@@ -225,11 +226,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setRefreshToken(null);
               localStorage.removeItem('pos_access_token');
               localStorage.removeItem('pos_refresh_token');
+              localStorage.removeItem('pos_current_employee');
+              localStorage.removeItem('pos_session_mode');
               setState(prev => ({
                 ...prev,
                 isAuthenticated: false,
                 isLoading: false,
                 user: null,
+                error: 'Session expired. Please login again.',
               }));
             });
         });
@@ -282,6 +286,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         employee,
         error: null,
       });
+
+      // Persist this account for fast switching on next login.
+      if (result.user && result.restaurant) {
+        saveAccount({
+          userId: result.user.id,
+          restaurantId: result.restaurant.id,
+          restaurantName: result.restaurant.name,
+          displayName: employee?.name || result.user.name,
+          username: username.trim(),
+          role: employee?.role || result.user.role,
+          branchId: employee?.branchId ?? null,
+          avatar: null,
+          offlineAuthorized: true,
+        });
+      } else if (employee) {
+        // Offline login — save what we have
+        touchAccount(employee.id, 'offline');
+      }
 
       return result;
     } catch (err: any) {

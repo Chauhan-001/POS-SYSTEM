@@ -26,6 +26,8 @@ export interface IKOTItem {
   price?: number;
   notes?: string;
   variantName?: string;
+  /** Phase 4 — human-readable configured line for the kitchen display. */
+  configSummary?: string;
   /** Set server-side when an order adjustment removes this item. */
   cancelled?: boolean;
   cancelReason?: string;
@@ -59,6 +61,9 @@ const KOTRecordSchema = new Schema<IKOTRecord>(
       price: { type: Number, min: 0 },
       notes: { type: String, trim: true },
       variantName: { type: String, trim: true },
+      /** Phase 4 — human-readable configured line for the kitchen display
+       *  ("Large • Cheese Burst • Mushroom"). Never internal ids/versions. */
+      configSummary: { type: String, trim: true, maxlength: 500 },
       cancelled: { type: Boolean, default: false },
       cancelReason: { type: String, trim: true },
       cancelledAt: { type: String, trim: true },
@@ -97,6 +102,7 @@ export function kotToFrontend(kot: any): any {
       quantity: item.quantity,
       notes: item.notes,
       variantName: item.variantName,
+      configSummary: item.configSummary,
       price: item.price || 0,
       cancelled: !!item.cancelled,
       cancelReason: item.cancelReason,

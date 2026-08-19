@@ -416,13 +416,13 @@ export class RestaurantService {
       }],
     });
 
-    const planMaxDevices = planDoc?.limits?.maxDevices ?? planDoc?.maxDevices ?? body.maxDevices ?? 3;
+    const planMaxDevicesPerBranch = planDoc?.limits?.maxDevicesPerBranch ?? (planDoc?.limits as any)?.maxDevices ?? planDoc?.maxDevices ?? body.maxDevices ?? 3;
     const featuresList = planDoc?.features || [];
     const planLimits = {
       maxRestaurants: planDoc?.limits?.maxRestaurants ?? 1,
       maxBranches: planDoc?.limits?.maxBranches ?? 1,
-      maxDevices: planMaxDevices,
-      maxEmployees: planDoc?.limits?.maxEmployees ?? planDoc?.maxUsers ?? 10,
+      maxDevicesPerBranch: planMaxDevicesPerBranch,
+      maxUsers: planDoc?.maxUsers ?? 10,
       maxProducts: planDoc?.limits?.maxProducts ?? 0,
       maxCustomers: planDoc?.limits?.maxCustomers ?? 0,
       maxMonthlyOrders: planDoc?.limits?.maxMonthlyOrders ?? 0,
@@ -454,7 +454,7 @@ export class RestaurantService {
       if (onboardingMode === 'create_only') {
         subStatus = 'suspended';
         subFeatures = [];
-        subLimits = { maxBranches: 1, maxDevices: 1, maxEmployees: 1 };
+        subLimits = { maxBranches: 1, maxDevicesPerBranch: 1 };
         subEndDate = null;
         trialEnd = null;
       } else if (onboardingMode === 'trial') {
@@ -464,7 +464,7 @@ export class RestaurantService {
           'multi_branch', 'analytics', 'custom_branding', 'advanced_reports',
           'expense_tracking', 'api_access', 'priority_support',
         ];
-        subLimits = { maxBranches: 5, maxDevices: 10, maxEmployees: 50 };
+        subLimits = { maxBranches: 5, maxDevicesPerBranch: 10 };
         subEndDate = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
         trialEnd = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
       } else {
@@ -487,7 +487,7 @@ export class RestaurantService {
         expiryDate: subExpiryDate,
         graceEnd: subGraceEnd,
         maxUsers: onboardingMode === 'trial' ? 50 : (planDoc?.maxUsers || 5),
-        maxDevices: onboardingMode === 'trial' ? 10 : planMaxDevices,
+        maxDevices: onboardingMode === 'trial' ? 10 : planMaxDevicesPerBranch,
         features: subFeatures,
         limits: subLimits,
       };
@@ -593,7 +593,7 @@ export class RestaurantService {
       status: responseStatus,
       onboardingMode,
       devices: 0,
-      maxDevices: onboardingMode === 'trial' ? 12 : planMaxDevices,
+      maxDevices: onboardingMode === 'trial' ? 12 : planMaxDevicesPerBranch,
       aiEnabled: subFeatures.includes('ai'),
       ownerUserId,
       ownerPin,
@@ -656,13 +656,14 @@ export class RestaurantService {
       if (planDoc) {
         subUpdates.plan = body.plan;
         subUpdates.features = planDoc.features || [];
-        subUpdates.limits = planDoc.limits || {
-          maxBranches: 1,
-          maxDevices: planDoc.maxDevices || 3,
-          maxEmployees: planDoc.maxUsers || 10,
+        const planLimits = (planDoc.limits as Record<string, any>) || {};
+        subUpdates.limits = {
+          ...planLimits,
+          maxBranches: planLimits.maxBranches ?? 1,
+          maxDevicesPerBranch: planLimits.maxDevicesPerBranch ?? planDoc.maxDevices ?? 3,
         };
         subUpdates.maxUsers = planDoc.maxUsers;
-        subUpdates.maxDevices = planDoc.maxDevices;
+        subUpdates.maxDevices = planLimits.maxDevicesPerBranch ?? planDoc.maxDevices;
         updates.aiEnabled = (planDoc.features || []).includes('ai');
         updates.loyaltyEnabled = (planDoc.features || []).includes('loyalty');
         updates.weatherEnabled = (planDoc.features || []).includes('weather');

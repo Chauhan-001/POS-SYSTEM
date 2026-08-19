@@ -11,7 +11,11 @@ import {defineConfig, type Plugin} from 'vite';
  * The packaged Electron app loads the build via loadFile() → file:// origin,
  * so 'self' resolves to the app's own directory. External origins are
  * explicitly whitelisted: Google Fonts (preconnect + CSS + woff2) and the
- * Razorpay checkout script/iframe (SubscriptionSettings injects checkout.js).
+ * Razorpay checkout (SubscriptionSettings injects checkout.js): the script
+ * loads from checkout.razorpay.com, while the payment modal iframe and its
+ * session load from api.razorpay.com — both must be in script/frame-src or
+ * Settings → Subscription → Upgrade Plan fails in the built app with
+ * "Failed to load payment gateway".
  */
 const PROD_CSP = [
   "default-src 'self'",
@@ -22,7 +26,7 @@ const PROD_CSP = [
   "connect-src 'self' http://localhost:* http://127.0.0.1:* https:",
   "media-src 'self' blob: mediastream:",
   "worker-src 'self' blob:",
-  "frame-src 'self' https://checkout.razorpay.com",
+  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com",
   "object-src 'none'",
   "base-uri 'self'",
 ].join('; ');

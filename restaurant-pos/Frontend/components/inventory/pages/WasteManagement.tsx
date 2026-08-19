@@ -1,4 +1,5 @@
-import { Trash2, Plus, X, Lightbulb, RefreshCw } from 'lucide-react';
+import { Trash2, Plus, X, Lightbulb } from 'lucide-react';
+import RefreshButton from '../../common/RefreshButton';
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNotify, useInventory, useInventoryEventsCtx } from '../InventoryManager';
@@ -66,8 +67,13 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
   // button — never on the 5-minute events poll (which re-creates wasteLog and
   // used to re-fire an LLM call each time). The backend cache absorbs repeats.
   const [wasteAiRefreshKey, setWasteAiRefreshKey] = useState(0);
+  const [wasteAiLoading, setWasteAiLoading] = useState(false);
   useEffect(() => {
-    analyzeWaste(wasteLog).then(setWasteAnalysis).catch(() => setWasteAnalysis(null));
+    setWasteAiLoading(true);
+    analyzeWaste(wasteLog)
+      .then(setWasteAnalysis)
+      .catch(() => setWasteAnalysis(null))
+      .finally(() => setWasteAiLoading(false));
   }, [wasteAiRefreshKey]); // mount + explicit refresh only
 
   const handleSubmit = async () => {
@@ -98,10 +104,10 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">Waste Log</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{wasteLog.length} entries · ₹{totalWaste} total</p>
+          <p className="text-xs text-gray-400 mt-0.5">{wasteLog.length} entries · ₹{Number(totalWaste || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total</p>
         </div>
         <button onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white rounded-2xl text-sm font-bold hover:bg-red-700 transition-all cursor-pointer shadow-sm"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--color-red-600-solid)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-red-700-solid)] transition-all cursor-pointer shadow-sm"
         >
           <Plus className="w-4 h-4" /> Log Waste
         </button>
@@ -111,7 +117,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
       <AnimatePresence>
         {showForm && (
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-            className="bg-white rounded-2xl border border-red-200 p-5 shadow-sm"
+            className="bg-[var(--color-bg-white)] rounded-2xl border border-red-200 p-5 shadow-sm"
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold">Log Waste</h2>
@@ -121,7 +127,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
               <div className="flex-1">
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Item</label>
                 <select value={formItem} onChange={e => setFormItem(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
                 >
                   <option value="">Select...</option>
                   {items.map(i => <option key={i.id} value={i.name}>{i.name} ({i.currentStock} {i.unit})</option>)}
@@ -130,7 +136,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
               <div className="w-full sm:w-28">
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
                 <input type="number" value={formQty} onChange={e => setFormQty(e.target.value)} placeholder="0"
-                  className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400" />
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400" />
               </div>
               <div className="flex-1">
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Reason</label>
@@ -138,7 +144,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
                   {WASTE_REASONS.map(r => (
                     <button key={r} onClick={() => setFormReason(r)}
                       className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer capitalize ${
-                        formReason === r ? 'bg-red-600 text-white shadow-sm' : 'bg-gray-50 border border-[#e1e2ed] text-gray-600 hover:border-red-300'
+                        formReason === r ? 'bg-[var(--color-red-600-solid)] text-white shadow-sm' : 'bg-gray-50 border border-[var(--color-border-default)] text-gray-600 hover:border-red-300'
                       }`}
                     >
                       {reasonIcons[r]} {r}
@@ -149,7 +155,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
             </div>
             <div className="flex justify-end mt-4">
               <button onClick={handleSubmit}
-                className="px-6 py-2.5 bg-red-600 text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-all cursor-pointer shadow-sm"
+                className="px-6 py-2.5 bg-[var(--color-red-600-solid)] text-white rounded-xl text-sm font-bold hover:bg-[var(--color-red-700-solid)] transition-all cursor-pointer shadow-sm"
               >
                 <Trash2 className="w-4 h-4 inline mr-1.5" />Log Waste
               </button>
@@ -161,22 +167,22 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
       {/* AI Waste Analysis */}
       {moduleSettings?.enableAIWasteAnalysis !== false && wasteLog.length > 0 && wasteAnalysis && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
         >
           <div className="px-5 py-3.5 bg-gradient-to-r from-purple-50 to-white border-b border-purple-100 flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-xl bg-purple-500 flex items-center justify-center">
+            <div className="w-7 h-7 rounded-xl bg-[var(--color-purple-500-solid)] flex items-center justify-center">
               <Lightbulb className="w-4 h-4 text-white" />
             </div>
             <span className="text-sm font-bold text-gray-800">AI Waste Analysis</span>
-            <button
-              type="button"
-              onClick={() => setWasteAiRefreshKey(k => k + 1)}
+            <RefreshButton
+              onRefresh={() => { setWasteAiRefreshKey(k => k + 1); return Promise.resolve(); }}
+              busy={wasteAiLoading}
               title="Refresh AI analysis (calls the AI once)"
-              className="ml-auto flex items-center gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
+              className="ml-auto gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
+              iconClassName="w-2.5 h-2.5"
             >
-              <RefreshCw className="w-2.5 h-2.5" />
               Refresh
-            </button>
+            </RefreshButton>
             <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
               wasteAnalysis.source === 'live'
                 ? 'bg-emerald-50 text-emerald-600'
@@ -202,7 +208,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
                     <div key={item.name} className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-gray-700">{item.name}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-red-500">₹{item.cost}</span>
+                        <span className="text-[10px] font-bold text-red-500">₹{Number(item.cost || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                           <div className="h-full rounded-full bg-red-400" style={{ width: `${item.percentage}%` }} />
                         </div>
@@ -218,7 +224,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
                   {wasteAnalysis.data.wasteByReason.map(r => (
                     <div key={r.reason} className="flex items-center justify-between">
                       <span className="text-xs capitalize font-semibold text-gray-700">{r.reason}</span>
-                      <span className="text-[10px] font-bold text-gray-500">{r.count}x · ₹{r.cost}</span>
+                      <span className="text-[10px] font-bold text-gray-500">{r.count}x · ₹{Number(r.cost || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   ))}
                 </div>
@@ -233,7 +239,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
               <ul className="space-y-1.5">
                 {wasteAnalysis.data.actionableAdvice.map((advice, i) => (
                   <li key={i} className="flex items-start gap-2 text-xs text-amber-900">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1 shrink-0" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-amber-500-solid)] mt-1 shrink-0" />
                     {advice}
                   </li>
                 ))}
@@ -248,7 +254,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         className="space-y-3"
       >
         {wasteLog.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-[#e1e2ed] p-10 text-center shadow-sm">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 text-center shadow-sm">
             <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-3">
               <Trash2 className="w-5 h-5 text-red-400" />
             </div>
@@ -262,7 +268,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         ) : (
           wasteLog.map((w, i) => (
             <motion.div key={w.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2, delay: i * 0.03 }}
-              className="bg-white rounded-2xl border border-[#e1e2ed] p-4 hover:shadow-md transition-all"
+              className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-4 hover:shadow-md transition-all"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -276,7 +282,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
                 </div>
                 <div className="text-right">
                   <p className="text-lg font-bold font-mono text-red-600">-{w.quantity} {w.unit}</p>
-                  <p className="text-xs text-gray-500">₹{w.cost}</p>
+                  <p className="text-xs text-gray-500">₹{Number(w.cost || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 </div>
               </div>
             </motion.div>

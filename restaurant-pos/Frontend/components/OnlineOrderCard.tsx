@@ -43,7 +43,7 @@ function OnlineOrderCard({
   return (
     <div
       onClick={() => onOpenBilling(order)}
-      className="bg-white rounded-xl border border-gray-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer p-4"
+      className="bg-[var(--color-bg-white)] rounded-xl border border-gray-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer p-4"
     >
       <div className="flex justify-between items-start mb-2">
         <div className="flex items-center gap-2">

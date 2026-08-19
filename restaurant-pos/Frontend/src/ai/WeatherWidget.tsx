@@ -3,18 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * WeatherWidget — Compact weather-based recommendation component.
- * Shows only when relevant. Can be collapsed. Integrates into Dashboard and Inventory.
+ * Shows only when relevant. Always expanded (no collapse toggle).
+ * Integrates into Dashboard and Inventory.
  */
 
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, ChevronUp, Thermometer, CloudRain, Snowflake, Sun, Loader2 } from 'lucide-react';
+import { Thermometer, CloudRain, Snowflake, Sun, Loader2, AlertCircle } from 'lucide-react';
 import { getWeatherRec } from './aiData';
 import type { WeatherRec } from './aiData';
 
-const WeatherWidget: React.FC<{ compact?: boolean; menuItems?: string[] }> = React.memo(({ compact = false, menuItems = [] }) => {
-  // Default expanded so the recommendation block is visible without clicking.
-  const [expanded, setExpanded] = useState(true);
+const WeatherWidget: React.FC<{ compact?: boolean; menuItems?: string[]; inventoryItems?: string[] }> = React.memo(({ compact = false, menuItems = [], inventoryItems = [] }) => {
   const [weather, setWeather] = useState<WeatherRec | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,27 +33,31 @@ const WeatherWidget: React.FC<{ compact?: boolean; menuItems?: string[] }> = Rea
 
   // Menu-aware suggestions — only keep recommendations that actually exist on
   // the active menu so the weather block never recommends an item you don't sell.
-  // When no menu is provided, fall back to the full suggestion list.
+  // An empty menu yields NO suggestions: we prompt to add items instead of
+  // falling back to generic dishes that aren't on the menu.
   const menuName = (n: string) => n.trim().toLowerCase();
-  const suggestedItems = menuItems.length > 0 && weather
-    ? weather.suggestedItems.filter(s =>
-        menuItems.some(m => {
-          const mName = menuName(m);
-          const sName = menuName(s.name);
-          return mName === sName || mName.includes(sName) || sName.includes(mName);
-        })
-      )
-    : weather?.suggestedItems ?? [];
+  const matchesRealList = (candidate: string, real: string[]) =>
+    real.some(m => {
+      const mName = menuName(m);
+      const cName = menuName(candidate);
+      return mName === cName || mName.includes(cName) || cName.includes(mName);
+    });
+  const hasMenu = menuItems.length > 0;
+  const suggestedItems = weather && hasMenu
+    ? weather.suggestedItems.filter(s => matchesRealList(s.name, menuItems))
+    : [];
+  // Inventory tips — only from the REAL inventory list (never raw AI items).
+  const hasInventoryList = inventoryItems.length > 0;
+  const inventoryTips = weather && hasInventoryList
+    ? weather.inventoryAdjustment.filter(a => matchesRealList(a.item, inventoryItems))
+    : [];
 
   return (
-    <div className="bg-white rounded-2xl border border-[#e1e2ed] shadow-sm overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer"
-      >
+    <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] shadow-sm overflow-hidden">
+      {/* Header — always visible, no collapse toggle */}
+      <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gray-50 border border-[#e1e2ed] flex items-center justify-center">
+          <div className="w-9 h-9 rounded-xl bg-gray-50 border border-[var(--color-border-default)] flex items-center justify-center">
             {loading ? <Loader2 className="w-4 h-4 text-gray-400 animate-spin" /> : (weather ? (iconMap[weather.condition] || <Thermometer className="w-5 h-5 text-gray-400" />) : <Thermometer className="w-5 h-5 text-gray-400" />)}
           </div>
           <div className="text-left">
@@ -65,55 +67,69 @@ const WeatherWidget: React.FC<{ compact?: boolean; menuItems?: string[] }> = Rea
             <p className="text-[10px] text-gray-400 mt-0.5">AI recommendation</p>
           </div>
         </div>
-        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-      </button>
+      </div>
 
-      {/* Body */}
-      <AnimatePresence>
-        {expanded && weather && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="border-t border-[#e1e2ed] overflow-hidden"
-          >
-            <div className="px-4 py-3 space-y-3">
-              <p className="text-xs text-gray-600 leading-relaxed">{weather.recommendation}</p>
+      {/* Body — always expanded */}
+      {weather && (
+        <div className="border-t border-[var(--color-border-default)] overflow-hidden">
+          <div className="px-4 py-3 space-y-3">
+            <p className="text-xs text-gray-600 leading-relaxed">{weather.recommendation}</p>
 
-              {suggestedItems.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Prepare extra</p>
-                  <div className="flex flex-wrap gap-2">
-                    {suggestedItems.map(item => (
-                      <div key={item.name} className="px-2.5 py-1.5 bg-blue-50 rounded-xl border border-blue-100">
-                        <p className="text-xs font-semibold text-blue-700">{item.name}</p>
-                        <p className="text-[9px] text-blue-500 mt-0.5">{item.reason}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {!hasMenu && (
+              <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 rounded-xl border border-amber-200 px-3 py-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  <strong>No menu items yet.</strong> Add products to your menu first to get weather-based dish recommendations.
+                </span>
+              </div>
+            )}
 
-              {!compact && weather.inventoryAdjustment && weather.inventoryAdjustment.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Inventory tips</p>
-                  {weather.inventoryAdjustment.map(adj => (
-                    <div key={adj.item} className="flex items-center gap-2 text-xs text-gray-600 py-1">
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        adj.action === 'increase' ? 'bg-emerald-500' :
-                        adj.action === 'decrease' ? 'bg-red-500' : 'bg-amber-500'
-                      }`} />
-                      <span className="font-medium">{adj.item}:</span>
-                      <span className="capitalize">{adj.action}</span>
-                      <span className="text-gray-400">— {adj.reason}</span>
+            {suggestedItems.length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Prepare extra</p>
+                <div className="flex flex-wrap gap-2">
+                  {suggestedItems.map(item => (
+                    <div key={item.name} className="px-2.5 py-1.5 bg-blue-50 rounded-xl border border-blue-100">
+                      <p className="text-xs font-semibold text-blue-700">{item.name}</p>
+                      <p className="text-[9px] text-blue-500 mt-0.5">{item.reason}</p>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              </div>
+            )}
+
+            {!compact && (
+              <div>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Inventory tips</p>
+                {!hasInventoryList ? (
+                  <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 rounded-xl border border-amber-200 px-3 py-2.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>No inventory items yet.</strong> Add items to your inventory first to get weather-based inventory tips.
+                    </span>
+                  </div>
+                ) : inventoryTips.length > 0 ? (
+                  <div className="space-y-1">
+                    {inventoryTips.map(adj => (
+                      <div key={adj.item} className="flex items-center gap-2 text-xs text-gray-600 py-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          adj.action === 'increase' ? 'bg-[var(--color-emerald-500-solid)]' :
+                          adj.action === 'decrease' ? 'bg-[var(--color-red-500-solid)]' : 'bg-[var(--color-amber-500-solid)]'
+                        }`} />
+                        <span className="font-medium">{adj.item}:</span>
+                        <span className="capitalize">{adj.action}</span>
+                        <span className="text-gray-400">— {adj.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400">No inventory items match today's weather.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 });

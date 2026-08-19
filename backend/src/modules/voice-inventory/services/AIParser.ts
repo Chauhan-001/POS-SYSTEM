@@ -19,6 +19,7 @@
 
 import { z } from 'zod';
 import { complete } from '../../ai/provider/llmProvider';
+import { aiConfig } from '../../ai/config';
 import { parseJsonResponse } from '../../ai/services/responseParser';
 import { executeAiCall } from '../../ai/services/aiService';
 import { buildVoiceParsePrompt } from '../prompts/voice';
@@ -175,7 +176,7 @@ export async function parseTranscript(
           },
           { role: 'user', content: prompt },
         ],
-        { timeout: options.timeoutMs || 10000, maxTokens: 512 }
+        { timeout: options.timeoutMs || 10000, maxTokens: 512, model: aiConfig.reasoningModel }
       );
 
       const parsed = parseJsonResponse(llmResponse.content);
@@ -246,12 +247,37 @@ function validateLLMOutput(
             : Math.min(Math.round(item.rate * 100) / 100, 1_000_000),
       }));
 
+    // CRITICAL: If the LLM returned a non-product token as the item name
+    // (e.g. "10" or "दस" for "Add 10 kg of mushroom"), recover the actual
+    // product name from the transcript. The LLM sometimes confuses the
+    // quantity for the item.
+    const recoveredItems = sanitizedItems.map((item) => {
+      if (item.item) {
+        const trimmed = item.item.trim();
+        const isNumeric = /^\d+(\.\d+)?$/.test(trimmed);
+        const isHindiNumber = HINDI_NUMBERS[trimmed.toLowerCase()] !== undefined;
+        // Devanagari numerals: ०-९ (U+0966-U+096F)
+        const isDevanagariNumeral = /^[०१२३४५६७८९]+$/.test(trimmed);
+        const isUnit = /^(kg|kilo|kilos|kilogram|kilograms|gram|grams|gm|g|ml|millilitre|l|litre|litres|liter|liters|ltr|pcs|piece|pieces|packet|packets|bottle|bottles|crate|dozen|sack|bori|bag|carton|किलो|केजी|ग्राम|लीटर|मिलीलीटर|पैकेट|बोरी)$/i.test(trimmed);
+        const isActionWord = /^(add|remove|waste|log|daal|daalo|dal|dalo|lao|laao|daal do|daal de|डालो|डाल दो|करो|कर दो|nikalo|hatao|kam|ghatao|में|मैं)$/i.test(trimmed);
+
+        if (isNumeric || isHindiNumber || isDevanagariNumeral || isUnit || isActionWord) {
+          const recovered = recoverProductName(originalText, item.quantity, item.unit || 'pcs');
+          if (recovered) {
+            console.log(`[AIParser] LLM returned non-product token "${item.item}" (${isHindiNumber ? 'hindi_number' : isDevanagariNumeral ? 'devanagari_numeral' : isNumeric ? 'numeric' : isUnit ? 'unit' : 'action'}) — recovered "${recovered}" from transcript`);
+            return { ...item, item: recovered };
+          }
+        }
+      }
+      return item;
+    });
+
     // Auto-detect language from original text
     const detectedLanguage = detectLanguage(originalText);
 
     return {
       intent: result.intent,
-      items: sanitizedItems,
+      items: recoveredItems,
       confidence: result.confidence,
       originalText: originalText,
       language: detectedLanguage,
@@ -469,11 +495,20 @@ function detectIntent(text: string): VoiceIntent {
  * Parse Hinglish number words from text.
  * Extracts the first number found (either digit or Hindi word).
  */
+/** Convert Devanagari numerals (०-९) to standard digits. */
+function devanagariToNumber(str: string): string {
+  const map: Record<string, string> = { '०': '0', '१': '1', '२': '2', '३': '3', '४': '4', '५': '5', '६': '6', '७': '7', '८': '8', '९': '9' };
+  return str.replace(/[०१२३४५६७८९]/g, (ch) => map[ch] || ch);
+}
+
 function extractQuantity(text: string): number {
   const lower = text.toLowerCase();
 
+  // Convert Devanagari numerals to standard digits first
+  const normalized = devanagariToNumber(lower);
+
   // Try to find digit-based quantities first
-  const digitMatch = lower.match(/\b(\d+\.?\d*)\b/);
+  const digitMatch = normalized.match(/\b(\d+\.?\d*)\b/);
   if (digitMatch) {
     return parseFloat(digitMatch[1]);
   }
@@ -490,6 +525,93 @@ function extractQuantity(text: string): number {
 }
 
 /**
+ * Recover the actual product name from a transcript when the LLM returned
+ * a numeric string as the item name.
+ *
+ * Strategy: remove the action verb, quantity, unit, and grammatical filler
+ * ("of") from the transcript. What remains is the product name.
+ *
+ * Example: "Add 10 kg of mushroom" → remove "add", "10", "kg", "of"
+ *   → "mushroom"
+ */
+function recoverProductName(
+  transcript: string,
+  quantity: number,
+  unit: string
+): string | null {
+  if (!transcript) return null;
+
+  const lower = transcript.toLowerCase();
+  const words = lower.split(/[\s,._-]+/).filter(Boolean);
+
+  // Known action verbs to strip (English + Romanized Hinglish + Devanagari)
+  const actionWords = [
+    'add', 'daal', 'daalo', 'dal', 'dalo', 'lao', 'laao', 'aa', 'aaya', 'aaye', 'aagya',
+    'do', 'karo', 'kar', 'kardo', 'karde',
+    'remove', 'nikaal', 'nikaalo', 'hata', 'hatao', 'kam', 'ghatao',
+    'waste', 'kharab', 'bigad', 'sad', 'phoonk',
+    'adjust', 'theek', 'sahi', 'badal', 'change',
+    'log', 'of',
+    // Devanagari action verbs
+    'डालो', 'डाल', 'डाल दो', 'डाल दे', 'करो', 'कर', 'कर दो', 'कर दे',
+    'लाओ', 'निकालो', 'हटाओ', 'घटाओ', 'बदल', 'ठीक', 'सही',
+  ];
+
+  // Grammatical filler words to strip (English + Hindi/Hinglish)
+  const fillerWords = ['of', 'ka', 'ki', 'ke', 'se', 'ko', 'ne', 'the', 'a', 'an', 'में', 'मैं'];
+
+  // Build the set of tokens to remove
+  const removeSet = new Set([...actionWords, ...fillerWords]);
+
+  // Also remove the quantity as a string
+  if (quantity > 0) {
+    removeSet.add(String(quantity));
+  }
+  // Remove ALL Hindi number words — they are quantities or grammatical
+  // complements (दो=give), never product names in inventory commands.
+  for (const word of Object.keys(HINDI_NUMBERS)) {
+    removeSet.add(word);
+  }
+  // Also remove Devanagari numeral strings (०१२३४५६७८९)
+  for (let d = 0; d <= 9; d++) {
+    removeSet.add(String(d));
+  }
+
+  // Remove the unit (English from LLM + Devanagari from transcript)
+  if (unit) removeSet.add(unit.toLowerCase());
+  // Also remove common unit variations (English + Devanagari)
+  const unitVariations: Record<string, string[]> = {
+    'kg': ['kilo', 'kilos', 'kilogram', 'kilograms', 'किलो', 'केजी', 'किलोग्राम'],
+    'g': ['gram', 'grams', 'gm', 'ग्राम'],
+    'L': ['litre', 'litres', 'liter', 'liters', 'ltr', 'लीटर', 'लीटर्स'],
+    'ml': ['millilitre', 'milliliters', 'milliliter', 'मिलीलीटर'],
+    'packet': ['packets', 'पैकेट'],
+    'bottle': ['bottles', 'बोतल'],
+    'pcs': ['piece', 'pieces', 'पीस'],
+    'sack': ['sack', 'bori', 'bag', 'बोरी'],
+    'crate': ['क्रेत'],
+    'dozen': ['दर्जन'],
+    'carton': ['कार्टून'],
+  };
+  for (const vars of Object.values(unitVariations)) {
+    for (const v of vars) removeSet.add(v);
+  }
+
+  // Remove tokens that are in the removeSet
+  const remaining = words.filter((w) => !removeSet.has(w));
+
+  // Join remaining words as the product name
+  const productName = remaining.join(' ').trim();
+
+  // Only return if it looks like a real product name (not empty, not a number)
+  if (productName && productName.length >= 2 && !/^\d+(\.\d+)?$/.test(productName)) {
+    return productName;
+  }
+
+  return null;
+}
+
+/**
  * Extract the canonical item name from the text.
  * First checks known item mappings, then falls back to extracting the most likely noun.
  */
@@ -503,13 +625,32 @@ function extractItem(text: string): string {
     }
   }
 
-  // Try to extract a noun — the word immediately before or after a quantity/unit
+  // Try to extract a noun — the word immediately before or after a quantity/unit.
+  // Skip numbers and grammatical fillers ("of") when looking for the product name.
   const words = lower.split(/[\s,._-]+/).filter(Boolean);
-  const unitWords = ['kg', 'kilo', 'kilos', 'litre', 'litres', 'l', 'ml', 'g', 'pcs', 'packet', 'bottle', 'crate', 'dozen', 'sack', 'bori', 'bag', 'carton', 'लीटर', 'लीटर्स', 'किलो', 'केजी', 'पैकेट', 'बोरी'];
+  const unitWords = ['kg', 'kilo', 'kilos', 'kilogram', 'kilograms', 'gram', 'grams', 'litre', 'litres', 'liter', 'liters', 'ltr', 'l', 'ml', 'g', 'gm', 'pcs', 'piece', 'pieces', 'packet', 'packets', 'bottle', 'bottles', 'crate', 'dozen', 'sack', 'bori', 'bag', 'carton', 'लीटर', 'लीटर्स', 'किलो', 'केजी', 'पैकेट', 'बोरी'];
+  const fillerWords = new Set([
+    'of', 'the', 'a', 'an', 'ka', 'ki', 'ke', 'se', 'ko',
+    'add', 'daal', 'daalo', 'dal', 'dalo', 'lao', 'laao',
+    'remove', 'waste', 'log', 'kharab', 'bigad',
+    // Hindi number words — these are quantities, NOT products
+    'एक', 'दो', 'तीन', 'चार', 'पाँच', 'पांच', 'छह', 'छः', 'सात', 'आठ', 'नौ', 'दस',
+    'ग्यारह', 'बारह', 'तेरह', 'चौदह', 'पंद्रह', 'सोलह', 'सत्रह', 'अठारह', 'उन्नीस', 'बीस',
+    'तीस', 'चालीस', 'पचास', 'साठ', 'सत्तर', 'अस्सी', 'नब्बे', 'सौ',
+  ]);
 
   for (let i = 0; i < words.length; i++) {
-    if (unitWords.includes(words[i]) && i > 0) {
-      return words[i - 1]; // Word before the unit
+    if (unitWords.includes(words[i])) {
+      // Look BEFORE the unit for the product name (skip numbers, fillers)
+      for (let j = i - 1; j >= 0; j--) {
+        if (/^\d+(\.\d+)?$/.test(words[j]) || fillerWords.has(words[j])) continue;
+        return words[j];
+      }
+      // Look AFTER the unit for the product name (skip "of", fillers)
+      for (let j = i + 1; j < words.length; j++) {
+        if (fillerWords.has(words[j])) continue;
+        return words[j];
+      }
     }
   }
 
@@ -524,8 +665,8 @@ function extractItem(text: string): string {
 function extractUnit(text: string): string {
   const lower = text.toLowerCase();
 
-  if (/(?:^|\s)(?:kg|kilo|kilos|kilogram|kilogramme|किलो|केजी)(?:\s|$)/i.test(lower)) return 'kg';
-  if (/(?:^|\s)(?:litre|litres|ltr|लीटर|लीटर्स)(?:\s|$)/i.test(lower) && !/(?:^|\s)ml(?:\s|$)/i.test(lower)) return 'L';
+  if (/(?:^|\s)(?:kg|kilo|kilos|kilogram|kilogramme|kilograms|किलो|केजी)(?:\s|$)/i.test(lower)) return 'kg';
+  if (/(?:^|\s)(?:litre|litres|liters|liter|ltr|लीटर|लीटर्स)(?:\s|$)/i.test(lower) && !/(?:^|\s)ml(?:\s|$)/i.test(lower)) return 'L';
   if (/\bl\b/i.test(lower) && !/\bml\b/i.test(lower)) return 'L';
   if (/(?:^|\s)(?:crate|क्रेत)(?:\s|$)/i.test(lower)) return 'crate';
   if (/(?:^|\s)(?:bottle|bottles|बोतल)(?:\s|$)/i.test(lower)) return 'bottle';
@@ -533,7 +674,8 @@ function extractUnit(text: string): string {
   if (/(?:^|\s)(?:dozen|dz|दर्जन)(?:\s|$)/i.test(lower)) return 'dozen';
   if (/(?:^|\s)(?:sack|bori|bag|बोरी)(?:\s|$)/i.test(lower)) return 'sack';
   if (/(?:^|\s)(?:carton|कार्टून)(?:\s|$)/i.test(lower)) return 'carton';
-  if (/(?:^|\s)(?:ml|millilitre|मिलीलीटर)(?:\s|$)/i.test(lower)) return 'ml';
+  if (/(?:^|\s)(?:ml|millilitre|milliliters|milliliter|मिलीलीटर)(?:\s|$)/i.test(lower)) return 'ml';
+  if (/(?:^|\s)(?:grams?|gram)(?:\s|$)/i.test(lower)) return 'g';
   if (/\bg\b/i.test(lower) && !/\bkg\b/i.test(lower)) return 'g';
   if (/(?:^|\s)(?:pcs|pieces?|piece|पीस)(?:\s|$)/i.test(lower)) return 'pcs';
 

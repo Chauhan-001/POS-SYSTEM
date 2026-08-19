@@ -52,7 +52,7 @@ export default function KOTModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col border border-gray-200 overflow-hidden">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col border border-gray-200 overflow-hidden">
         {/* Header */}
         <div className="px-5 py-4 border-b border-gray-200 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2">
@@ -72,7 +72,7 @@ export default function KOTModal({
           {pendingItems.length > 0 && (
             <button
               onClick={() => onPrintKOT(kotRecords.length > 0 ? 'Additional' : 'Original')}
-              className="flex items-center gap-1.5 bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer"
+              className="flex items-center gap-1.5 bg-[var(--color-gray-900-solid)] hover:bg-[var(--color-gray-800-solid)] text-white px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               Print KOT #{nextKotNumber}
@@ -100,7 +100,7 @@ export default function KOTModal({
                 {kotRecords.map((kot) => {
                   const style = KOT_TYPE_STYLES[kot.type];
                   return (
-                    <div key={kot.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                    <div key={kot.id} className="bg-[var(--color-bg-white)] border border-gray-200 rounded-xl p-4">
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-2">
                             <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${style.color}`}>
@@ -138,6 +138,9 @@ export default function KOTModal({
                               {item.product.name}
                               {item.selectedVariant && (
                                 <span className="text-[9px] text-gray-500 ml-1">({item.selectedVariant.name})</span>
+                              )}
+                              {(item as any).configSummary && (
+                                <span className="block text-[9px] text-gray-500">{(item as any).configSummary}</span>
                               )}
                               {item.notes && (
                                 <span className="block text-[9px] text-amber-600 italic">📝 {item.notes}</span>
@@ -205,7 +208,7 @@ export default function KOTModal({
                   items: pendingItems.length > 0 ? pendingItems : cartItems,
                 }}
                 settings={settings}
-                className="bg-white border border-dashed border-gray-300 p-4 shadow-sm"
+                className="bg-[var(--color-bg-white)] border border-dashed border-gray-300 p-4 shadow-sm"
               />
             </div>
           </div>

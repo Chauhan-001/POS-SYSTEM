@@ -35,8 +35,10 @@ export type OfferRecommendationSource =
   | 'weekend'
   | 'slow_day'
   | 'weak_category'
+  | 'top_category'
   | 'repeat_customer'
   | 'lost_customer'
+  | 'win_back'
   | 'vip_reward'
   | 'first_visit'
   | 'second_visit'
@@ -45,6 +47,11 @@ export type OfferRecommendationSource =
   | 'birthday'
   | 'anniversary'
   | 'referral'
+  | 'analytics_proven'
+  | 'margin_protection'
+  | 'cost_increase_warning'
+  | 'margin_deterioration'
+  | 'wastage_alert'
   | 'manual';
 
 export interface IOffer extends Document {
@@ -95,6 +102,10 @@ export interface IOffer extends Document {
   comboProductIds?: string[];
   /** For combo: combined price */
   comboPrice?: number;
+  /** For combo: per-branch combo price overrides (branchId → price). */
+  comboBranchPrices?: Record<string, number>;
+  /** When this combo offer was auto-created from a Meal Combo product, the owning Product id. */
+  linkedProductId?: string;
   /** Cashback: amount or percentage */
   cashbackValue?: number;
   /** Referral: reward for referrer */
@@ -177,6 +188,8 @@ const OfferSchema = new Schema<IOffer>(
     freeItemQty: { type: Number, min: 1 },
     comboProductIds: [{ type: String, trim: true }],
     comboPrice: { type: Number, min: 0 },
+    comboBranchPrices: { type: Map, of: Number, default: {} },
+    linkedProductId: { type: String, trim: true, index: true },
     cashbackValue: { type: Number, min: 0 },
     referrerReward: { type: String, trim: true },
     refereeReward: { type: String, trim: true },
@@ -189,7 +202,7 @@ const OfferSchema = new Schema<IOffer>(
       'high_margin_promotion', 'combo_upsell', 'time_based', 'weekend',
       'slow_day', 'weak_category', 'repeat_customer', 'lost_customer',
       'vip_reward', 'first_visit', 'second_visit', 'new_menu',
-      'seasonal_menu', 'birthday', 'anniversary', 'referral', 'manual'
+      'seasonal_menu', 'birthday', 'anniversary', 'referral', 'analytics_proven', 'manual'
     ]},
     recommendationReason: { type: String, trim: true },
     estimatedReach: { type: Number, min: 0 },
@@ -219,7 +232,14 @@ OfferSchema.index({ restaurantId: 1, status: 1 });
 OfferSchema.index({ restaurantId: 1, startDate: 1, endDate: 1 });
 OfferSchema.index({ restaurantId: 1, scheduledDate: 1, status: 1 });
 OfferSchema.index({ restaurantId: 1, type: 1 });
-OfferSchema.index({ restaurantId: 1, couponCode: 1 }, { unique: true, sparse: true });
+// Coupon codes are unique per restaurant — but only when a code actually
+// exists. A sparse index still indexes `null`, so the FIRST coupon-less offer
+// would block every later one; a partial filter indexes only real strings,
+// letting any number of offers run without a coupon.
+OfferSchema.index(
+  { restaurantId: 1, couponCode: 1 },
+  { unique: true, partialFilterExpression: { couponCode: { $type: 'string' } } },
+);
 OfferSchema.index({ restaurantId: 1, targetSegmentIds: 1 });
 OfferSchema.index({ title: 'text', description: 'text' });
 

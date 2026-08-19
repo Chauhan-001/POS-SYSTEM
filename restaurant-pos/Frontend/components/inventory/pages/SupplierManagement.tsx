@@ -146,7 +146,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           <p className="text-xs text-gray-400 mt-0.5">{suppliers.length} suppliers</p>
         </div>
         <button onClick={openAdd}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm"
         >
           <Plus className="w-4 h-4" /> Add Supplier
         </button>
@@ -162,7 +162,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           const isActive = supplier.status === 'active';
           return (
             <motion.div key={supplier.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: i * 0.04 }}
-              className="bg-white rounded-2xl border border-[#e1e2ed] p-5 hover:shadow-lg hover:border-[var(--brand-color)]/20 transition-all group"
+              className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 hover:shadow-lg hover:border-[var(--brand-color)]/20 transition-all group"
             >
               <div className="flex items-start gap-3 mb-4">
                 <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white font-bold text-sm shrink-0`}>
@@ -171,7 +171,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold truncate">{supplier.name}</p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[var(--color-emerald-500-solid)]' : 'bg-gray-400'}`} />
                     <span className="text-[10px] text-gray-400 capitalize">{supplier.status}</span>
                   </div>
                 </div>
@@ -182,14 +182,14 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
 
               <div className="flex flex-wrap gap-1.5 mb-4 min-h-[28px]">
                 {supplier.items.slice(0, 4).map(item => (
-                  <span key={item} className="px-2.5 py-1 bg-gray-50 border border-[#e1e2ed] rounded-full text-[10px] font-semibold text-gray-500">{item}</span>
+                  <span key={item} className="px-2.5 py-1 bg-gray-50 border border-[var(--color-border-default)] rounded-full text-[10px] font-semibold text-gray-500">{item}</span>
                 ))}
                 {supplier.items.length > 4 && (
-                  <span className="px-2.5 py-1 bg-gray-50 border border-[#e1e2ed] rounded-full text-[10px] font-semibold text-gray-400">+{supplier.items.length - 4}</span>
+                  <span className="px-2.5 py-1 bg-gray-50 border border-[var(--color-border-default)] rounded-full text-[10px] font-semibold text-gray-400">+{supplier.items.length - 4}</span>
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-[#e1e2ed]">
+              <div className="flex items-center justify-between pt-3 border-t border-[var(--color-border-default)]">
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <Phone className="w-3 h-3" />
                   <span>{supplier.phone}</span>
@@ -216,9 +216,9 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelected(null)}>
             <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
             <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="relative w-full max-w-sm bg-white border-l border-[#e1e2ed] overflow-y-auto" onClick={e => e.stopPropagation()}
+              className="relative w-full max-w-sm bg-[var(--color-bg-white)] border-l border-[var(--color-border-default)] overflow-y-auto" onClick={e => e.stopPropagation()}
             >
-              <div className="sticky top-0 bg-white border-b border-[#e1e2ed] px-5 py-4 flex items-center justify-between z-10">
+              <div className="sticky top-0 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] px-5 py-4 flex items-center justify-between z-10">
                 <h2 className="font-bold text-base">{selected.name}</h2>
                 <div className="flex items-center gap-1">
                   <button onClick={() => { setSelected(null); openEdit(selected); }} className="text-gray-400 hover:text-[var(--brand-color)] p-1 cursor-pointer"><Edit2 className="w-4 h-4" /></button>
@@ -254,11 +254,11 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-white rounded-xl p-4 border border-[#e1e2ed]">
+                  <div className="bg-[var(--color-bg-white)] rounded-xl p-4 border border-[var(--color-border-default)]">
                     <p className="text-[10px] text-gray-400 uppercase font-semibold">Avg Cost</p>
-                    <p className="text-xl font-bold font-mono">₹{selected.averageCost}</p>
+                    <p className="text-xl font-bold font-mono">₹{Number(selected.averageCost || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
-                  <div className="bg-white rounded-xl p-4 border border-[#e1e2ed]">
+                  <div className="bg-[var(--color-bg-white)] rounded-xl p-4 border border-[var(--color-border-default)]">
                     <p className="text-[10px] text-gray-400 uppercase font-semibold">Last Order</p>
                     <p className="text-sm font-bold">{selected.lastPurchase}</p>
                   </div>
@@ -266,11 +266,11 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
 
                 <div className="flex gap-2">
                   <button onClick={() => { setSelected(null); onNavigate?.('purchase'); }}
-                    className="flex-1 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[#003ea8] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2">
+                    className="flex-1 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2">
                     <ShoppingCart className="w-4 h-4" /> New Order
                   </button>
                   <button onClick={() => { setSelected(null); openEdit(selected); }}
-                    className="flex-1 py-3 border border-[#e1e2ed] text-gray-600 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    className="flex-1 py-3 border border-[var(--color-border-default)] text-gray-600 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <Edit2 className="w-4 h-4" /> Edit
                   </button>
@@ -288,25 +288,25 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
             <div className="col-span-2">
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier Name</label>
               <input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="e.g. Amul Dairy" />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Phone</label>
               <input type="text" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="+91 98765 43210" />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Email</label>
               <input type="text" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="email@example.com" />
             </div>
             <div className="col-span-2">
               <label className="text-xs font-semibold text-gray-700 block mb-1.5">Address</label>
               <input type="text" value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))}
-                className="w-full px-4 py-3 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 placeholder="City, State" />
             </div>
           </div>
@@ -314,13 +314,13 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           {/* Items supplied - multi-select */}
           <div>
             <label className="text-xs font-semibold text-gray-700 block mb-2">Items Supplied</label>
-            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-xl border border-[#e1e2ed]">
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-xl border border-[var(--color-border-default)]">
               {allItemNames.map(item => {
                 const selected = form.items.includes(item);
                 return (
                   <button key={item} onClick={() => toggleItem(item)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      selected ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'bg-white border border-[#e1e2ed] text-gray-600 hover:border-[var(--brand-color)]/30'
+                      selected ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-gray-600 hover:border-[var(--brand-color)]/30'
                     }`}
                   >
                     {item}
@@ -340,9 +340,9 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
             )}
           </div>
 
-          <div className="flex gap-3 justify-end pt-4 border-t border-[#e1e2ed]">
+          <div className="flex gap-3 justify-end pt-4 border-t border-[var(--color-border-default)]">
             <button onClick={closeModal} className="px-5 py-2.5 border border-gray-300 rounded-xl text-sm font-semibold hover:bg-gray-50 cursor-pointer transition-all">Cancel</button>
-            <button onClick={handleSave} className="px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-xl text-sm font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm transition-all">
+            <button onClick={handleSave} className="px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-xl text-sm font-bold hover:bg-[var(--color-primary-hover)] cursor-pointer shadow-sm transition-all">
               {modalMode === 'edit' ? 'Save Changes' : 'Add Supplier'}
             </button>
           </div>
@@ -358,9 +358,9 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
           <p className="text-base font-bold mb-1">Remove {deleteTarget?.name}?</p>
           <p className="text-sm text-gray-500">This supplier and their records will be removed.</p>
         </div>
-        <div className="flex gap-3 justify-center pt-4 border-t border-[#e1e2ed]">
+        <div className="flex gap-3 justify-center pt-4 border-t border-[var(--color-border-default)]">
           <button onClick={() => setDeleteTarget(null)} className="px-5 py-2.5 border border-gray-300 rounded-xl text-sm font-semibold hover:bg-gray-50 cursor-pointer transition-all">Cancel</button>
-          <button onClick={handleDelete} className="px-5 py-2.5 bg-red-600 text-white rounded-xl text-sm font-bold hover:bg-red-700 cursor-pointer shadow-sm transition-all">Delete</button>
+          <button onClick={handleDelete} className="px-5 py-2.5 bg-[var(--color-red-600-solid)] text-white rounded-xl text-sm font-bold hover:bg-[var(--color-red-700-solid)] cursor-pointer shadow-sm transition-all">Delete</button>
         </div>
       </Modal>
     </div>

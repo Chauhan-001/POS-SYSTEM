@@ -13,6 +13,7 @@
 import mongoose from 'mongoose';
 import Bill from '../../../models/Bill';
 import BillItem from '../../../models/BillItem';
+import DailySummary from '../../../models/DailySummary';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
@@ -41,6 +42,42 @@ export interface ReportScope {
   branchId?: string;
   startDate?: string;
   endDate?: string;
+  /** Business-day opening time (HH:mm, 24h). When present, the range is treated
+   *  as a business window: bills before opening on the START date belong to the
+   *  previous business day and are excluded, while bills before opening on the
+   *  day AFTER the end date (overnight late-close) belong to this window. */
+  openingTime?: string;
+}
+
+/**
+ * Date predicate for report queries. Without `openingTime` this is the plain
+ * inclusive date-range filter. With it, a single-day "today" report covers
+ * [start 08:00 → start+1 08:00) and a multi-day range excludes pre-opening
+ * bills on the start date while including post-midnight bills after the end
+ * date — exactly the frontend business-day semantics.
+ */
+export function dateClause(scope: ReportScope): Record<string, any> {
+  const { start, end } = dateRange(scope.startDate, scope.endDate);
+  const op = scope.openingTime ? scope.openingTime.slice(0, 5) : undefined;
+  if (!op) return { date: { $gte: start, $lte: end } };
+  if (start === end) {
+    return {
+      $and: [{
+        $or: [
+          { date: start, time: { $gte: op } },
+          { date: shiftDays(start, 1), time: { $lt: op } },
+        ],
+      }],
+    };
+  }
+  return {
+    $and: [{
+      $or: [
+        { date: { $gte: start, $lte: end }, time: { $gte: op } },
+        { date: shiftDays(end, 1), time: { $lt: op } },
+      ],
+    }],
+  };
 }
 
 export class SalesReportService {
@@ -50,11 +87,10 @@ export class SalesReportService {
    * the pipeline below subtracts refundAmount for a true net figure.
    */
   private baseMatch(scope: ReportScope): Record<string, any> {
-    const { start, end } = dateRange(scope.startDate, scope.endDate);
     const match: Record<string, any> = {
       restaurantId: objectId(scope.restaurantId),
-      date: { $gte: start, $lte: end },
       isVoided: { $ne: true },
+      ...dateClause(scope),
     };
     if (scope.branchId) match.branchId = objectId(scope.branchId);
     return match;
@@ -151,13 +187,45 @@ export class SalesReportService {
     ]).then(async (rows) => {
       if (!rows.length) return [{ revenue: 0, netRevenue: 0, orders: 0, items: 0, discount: 0, gst: 0, cashSales: 0, pointsEarned: 0, pointsRedeemed: 0 }];
       // Item count via BillItem (single aggregation, not per-bill N+1).
+      // First try the normal aggregation; if it returns 0 despite revenue,
+      // fall back to per-bill BillItem lookup (handles billId stored as string
+      // vs ObjectId mismatch that silently drops matches in $in).
       const ids = await this.billIdsInScope(scope);
       if (ids.length) {
         const itemAgg = await BillItem.aggregate([
           { $match: { billId: { $in: ids } } },
           { $group: { _id: null, items: { $sum: '$quantity' } } },
         ]).exec();
-        rows[0].items = itemAgg[0]?.items || 0;
+        let itemCount = itemAgg[0]?.items || 0;
+        // Fallback: if aggregation returned 0 items but revenue > 0, the billId
+        // type mismatch may be silently dropping matches. Try a string-based lookup.
+        if (itemCount === 0 && rows[0].revenue > 0 && ids.length > 0) {
+          const stringIds = ids.map((id: any) => String(id));
+          const fallbackAgg = await BillItem.aggregate([
+            { $match: { billId: { $in: stringIds } } },
+            { $group: { _id: null, items: { $sum: '$quantity' } } },
+          ]).exec();
+          itemCount = fallbackAgg[0]?.items || 0;
+        }
+        // Last-resort fallback: read the incrementally-upserted DailySummary.
+        // The DailySummary.totalItemsSold is bumped atomically by billService on
+        // every bill creation, so it is the authoritative items count even when
+        // the BillItem collection is unreachable or the billId type mismatch
+        // silently drops all matches.
+        if (itemCount === 0 && rows[0].revenue > 0) {
+          const { start, end } = dateRange(scope.startDate, scope.endDate);
+          const dsMatch: Record<string, any> = { date: { $gte: start, $lte: end } };
+          if (scope.restaurantId) dsMatch.restaurantId = new mongoose.Types.ObjectId(scope.restaurantId);
+          if (scope.branchId) dsMatch.branchId = new mongoose.Types.ObjectId(scope.branchId);
+          try {
+            const dsAgg = await DailySummary.aggregate([
+              { $match: dsMatch },
+              { $group: { _id: null, items: { $sum: '$totalItemsSold' } } },
+            ]).exec();
+            itemCount = dsAgg[0]?.items || 0;
+          } catch { /* non-fatal — keep 0 */ }
+        }
+        rows[0].items = itemCount;
       } else {
         rows[0].items = 0;
       }
@@ -173,10 +241,9 @@ export class SalesReportService {
 
   /** Completed / voided / refunded / cancelled bill counts. */
   private async statusBreakdown(scope: ReportScope): Promise<any> {
-    const { start, end } = dateRange(scope.startDate, scope.endDate);
     const match: Record<string, any> = {
       restaurantId: objectId(scope.restaurantId),
-      date: { $gte: start, $lte: end },
+      ...dateClause(scope),
     };
     if (scope.branchId) match.branchId = objectId(scope.branchId);
     const rows = await Bill.aggregate([
@@ -293,11 +360,33 @@ export class SalesReportService {
    * GET /api/reports/sales/hourly — raw per-hour distribution (peak hours).
    */
   async hourly(scope: ReportScope) {
+    // The bill 'time' field is in local HH:MM format. We need to extract the
+    // local hour, not the UTC hour. Since $hour returns UTC, we parse the time
+    // string directly to get the local hour — more reliable than timezone math.
     const rows = await Bill.aggregate([
       { $match: this.baseMatch(scope) },
       {
+        $addFields: {
+          _localHour: {
+            $let: {
+              vars: {
+                // Extract hour from time string like "14:30" → 14
+                h: {
+                  $toInt: {
+                    $arrayElemAt: [{ $split: ['$time', ':'] }, 0],
+                  },
+                },
+              },
+              in: {
+                $cond: [{ $gte: ['$$h', 0] }, '$$h', 0],
+              },
+            },
+          },
+        },
+      },
+      {
         $group: {
-          _id: { $hour: { $dateFromString: { dateString: { $concat: ['$date', 'T', '$time', ':00'] } } } },
+          _id: '$_localHour',
           orders: { $sum: 1 },
           revenue: { $sum: this.netRevenueExpr() },
         },

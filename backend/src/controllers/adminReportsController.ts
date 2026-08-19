@@ -228,6 +228,16 @@ export async function getAiRevenueReportEndpoint(req: AuthenticatedRequest, res:
   }
 }
 
+export async function getAiUsageMetricsEndpoint(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const q = req.query as any;
+    const data = await adminReportingService.aiUsageMetrics({ period: q.period, from: q.from, to: q.to });
+    res.json(okWithMeta(data, windowMeta(req)));
+  } catch (error: any) {
+    res.status(error?.statusCode || 500).json(fail(error?.message || 'Failed to load AI usage metrics', error?.statusCode));
+  }
+}
+
 export async function getSupportReportEndpoint(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const q = req.query as any;

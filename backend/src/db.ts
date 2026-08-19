@@ -47,34 +47,25 @@ import type { AuthorizationAction } from './models/Authorization';
 async function seedDashboardAdmin(): Promise<void> {
   try {
     const User = (await import('./models/User')).default;
-    const Restaurant = (await import('./models/Restaurant')).default;
     const Authorization = (await import('./models/Authorization')).default;
 
     const hashed = await bcrypt.hash('1008', 10);
 
-    // ─── Find or create the ADMIN restaurant ────────────────────
-    let restaurant = await Restaurant.findOne({ restaurantId: 'ADMIN' }).exec();
-    if (!restaurant) {
-      restaurant = await Restaurant.create({
-        restaurantId: 'ADMIN',
-        name: 'Admin Platform',
-        phone: '+1-555-000-0000',
-        email: 'admin@pos.com',
-        isActive: true,
-      });
-    }
-
     // ─── Upsert the admin user by userId ────────────────────────
+    // The platform super_admin has NO tenant restaurant (restaurantId null) —
+    // a fresh install must start with zero restaurants. The admin dashboard
+    // never resolves the super_admin's own restaurantId (all admin routes
+    // take the target restaurant from the URL), so no ADMIN row is created.
     let user = await User.findOne({ userId: 'admin', role: 'super_admin' }).exec();
     if (user) {
       await User.updateOne(
         { _id: user._id },
-        { $set: { password: hashed, status: 'active', name: 'Admin' } }
+        { $set: { password: hashed, status: 'active', name: 'Admin', restaurantId: null } }
       ).exec();
       console.log('[Seed] Admin user password updated: userId=admin');
     } else {
       user = await User.create({
-        restaurantId: restaurant._id,
+        restaurantId: null,
         userId: 'admin',
         phone: '+1-555-000-0001',
         name: 'Admin',

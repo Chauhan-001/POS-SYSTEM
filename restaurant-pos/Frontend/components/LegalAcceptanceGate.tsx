@@ -72,7 +72,7 @@ export default function LegalAcceptanceGate() {
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
         <div className="px-6 py-4 bg-[var(--brand-color)] text-white flex items-center gap-3">
           <ShieldCheck className="w-6 h-6 shrink-0" />
           <div>
@@ -91,7 +91,7 @@ export default function LegalAcceptanceGate() {
             </div>
           )}
           {required.map((doc) => (
-            <div key={doc.documentType} className="rounded-xl border border-[#e3e6ef] p-4">
+            <div key={doc.documentType} className="rounded-xl border border-[var(--color-surface-muted)] p-4">
               <div className="flex items-start gap-3">
                 <FileText className="w-5 h-5 text-[var(--brand-color)] shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
@@ -100,7 +100,7 @@ export default function LegalAcceptanceGate() {
                     Version {doc.version}
                     {doc.previouslyAcceptedVersion ? ` · previously accepted v${doc.previouslyAcceptedVersion}` : ''}
                   </p>
-                  <div className="mt-3 rounded-lg bg-gray-50 border border-[#eef0f6] p-3 max-h-44 overflow-y-auto">
+                  <div className="mt-3 rounded-lg bg-gray-50 border border-[var(--color-surface-muted)] p-3 max-h-44 overflow-y-auto">
                     <p className="text-[11px] leading-relaxed text-gray-600">
                       The full document is available in Settings → Legal &amp; Compliance. By accepting, you agree to
                       this version of the {doc.title} as published by the platform.
@@ -119,7 +119,7 @@ export default function LegalAcceptanceGate() {
             </div>
           ))}
         </div>
-        <div className="px-6 py-3 border-t border-[#eef0f6] bg-gray-50">
+        <div className="px-6 py-3 border-t border-[var(--color-surface-muted)] bg-gray-50">
           <p className="text-[10px] text-gray-400 leading-relaxed">
             Legal documents are managed centrally and may be updated without a software release. This screen does not
             constitute legal advice.

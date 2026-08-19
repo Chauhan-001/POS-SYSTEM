@@ -21,7 +21,7 @@ export default function SettingsPage() {
       </div>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-4">
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] divide-y divide-[#e1e2ed] shadow-sm">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] divide-y divide-[var(--color-border-default)] shadow-sm">
           <div className="p-6">
             <div className="flex items-center gap-3 mb-5">
               <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center"><Package className="w-5 h-5 text-blue-600" /></div>
@@ -32,7 +32,7 @@ export default function SettingsPage() {
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Low Stock Alert at</label>
                 <div className="flex items-center gap-2">
                   <input type="number" value={settings.lowStockThreshold} onChange={e => setSettings(s => ({ ...s, lowStockThreshold: Number(e.target.value) }))}
-                    className="w-24 px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                    className="w-24 px-4 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                   />
                   <span className="text-sm text-gray-500">% of min stock</span>
                 </div>
@@ -41,14 +41,14 @@ export default function SettingsPage() {
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Default Supplier</label>
                 <input type="text" value={settings.defaultSupplier} onChange={e => setSettings(s => ({ ...s, defaultSupplier: e.target.value }))}
                   placeholder="Supplier name"
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#c3c6d7] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                  className="w-full px-4 py-2.5 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
                 />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Units</label>
                 <div className="flex flex-wrap gap-1.5">
                   {settings.units.map(unit => (
-                    <span key={unit} className="px-3 py-1.5 bg-gray-50 border border-[#e1e2ed] rounded-xl text-xs font-semibold text-gray-600">{unit}</span>
+                    <span key={unit} className="px-3 py-1.5 bg-gray-50 border border-[var(--color-border-default)] rounded-xl text-xs font-semibold text-gray-600">{unit}</span>
                   ))}
                 </div>
               </div>
@@ -76,7 +76,7 @@ export default function SettingsPage() {
                     <button onClick={() => toggle(item.key)}
                       className={`relative w-12 h-6 rounded-full transition-all cursor-pointer ${isOn ? 'bg-[var(--brand-color)]' : 'bg-gray-200'}`}
                     >
-                      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-all ${isOn ? 'left-6' : 'left-0.5'}`} />
+                      <div className={`absolute top-0.5 w-5 h-5 bg-[var(--color-bg-white)] rounded-full shadow-sm transition-all ${isOn ? 'left-6' : 'left-0.5'}`} />
                     </button>
                   </div>
                 );
@@ -85,7 +85,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <button onClick={() => notify('Settings saved', 'success')} className="w-full py-3.5 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-2xl text-sm font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm">
+        <button onClick={() => notify('Settings saved', 'success')} className="w-full py-3.5 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white rounded-2xl text-sm font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm">
           <Save className="w-4 h-4" /> Save Settings
         </button>
       </motion.div>

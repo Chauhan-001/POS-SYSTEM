@@ -44,7 +44,7 @@ const SidebarNavItem = memo(function SidebarNavItem({ item, isActive, onNavigate
     <button
       onClick={() => onNavigate(item.id)}
       className={`relative w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-        isActive ? "bg-[#2563eb] text-white shadow-md" : "text-gray-400 hover:text-white hover:bg-[#2e3039]"
+        isActive ? "bg-[#2563eb] text-white shadow-md" : "text-gray-400 hover:text-white hover:bg-[var(--color-sidebar-border)]"
       }`}
       title={`${item.label} (${item.shortcut})${showBadge ? ` — ${badge} pending call${badge === 1 ? '' : 's'}` : ''}`}
     >
@@ -92,7 +92,7 @@ export default function AppSidebar({ activeWorkspace, onNavigate, onLogout, onKe
 
   return (
     <>
-      <aside className="w-16 bg-[#191b23] border-r border-[#2e3039] flex flex-col items-center py-3 gap-1 shrink-0 overflow-y-auto">
+      <aside className="w-16 bg-[var(--color-sidebar-bg)] border-r border-[var(--color-sidebar-border)] flex flex-col items-center py-3 gap-1 shrink-0 overflow-y-auto">
         {filteredNavItems.map((item) => (
           <SidebarNavItem
             key={item.id}
@@ -105,7 +105,7 @@ export default function AppSidebar({ activeWorkspace, onNavigate, onLogout, onKe
         <div className="flex-1" />
         <button
           onClick={() => setConfirmExitOpen(true)}
-          className="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-gray-400 hover:text-red-400 hover:bg-[#2e3039] transition-all cursor-pointer"
+          className="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-gray-400 hover:text-red-400 hover:bg-[var(--color-sidebar-border)] transition-all cursor-pointer"
           title="Close Shift"
         >
           <LogOut className="w-5 h-5" />
@@ -113,7 +113,7 @@ export default function AppSidebar({ activeWorkspace, onNavigate, onLogout, onKe
         </button>
         <button
           onClick={onKeys}
-          className="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-gray-400 hover:text-white hover:bg-[#2e3039] transition-all cursor-pointer"
+          className="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-gray-400 hover:text-white hover:bg-[var(--color-sidebar-border)] transition-all cursor-pointer"
           title="Keyboard Shortcuts"
         >
           <Keyboard className="w-5 h-5" />
@@ -128,7 +128,7 @@ export default function AppSidebar({ activeWorkspace, onNavigate, onLogout, onKe
           onClick={() => setConfirmExitOpen(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center"
+            className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-3">
@@ -147,7 +147,7 @@ export default function AppSidebar({ activeWorkspace, onNavigate, onLogout, onKe
               </button>
               <button
                 onClick={confirmExit}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                className="flex-1 py-2.5 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] text-white font-bold rounded-xl text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
               >
                 <LogOut className="w-3.5 h-3.5" /> Yes, Exit
               </button>

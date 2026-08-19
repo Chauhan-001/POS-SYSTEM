@@ -33,7 +33,9 @@
 
 import mongoose, { Schema, Document } from 'mongoose';
 
-export interface IAIUsageLog extends Document {
+// Omit 'model': Mongoose's Document already declares a `model` method, which
+// would clash with this interface's data field of the same name.
+export interface IAIUsageLog extends Omit<Document, 'model'> {
   restaurantId: mongoose.Types.ObjectId | null;
   ownerId: mongoose.Types.ObjectId | null;
   feature: string;
@@ -51,6 +53,19 @@ export interface IAIUsageLog extends Document {
   retried: boolean;
   cancelled: boolean;
   timeout: boolean;
+  /** Phase 8 — stable prompt version that produced this call (e.g. offers-v3). */
+  promptVersion: string;
+  /** Phase 8 — explicit user refresh (cache busted) for this call. */
+  cacheBust: boolean;
+  /** Phase 8 — fact-consistency validation outcome (null when not validated). */
+  validationPassed: boolean | null;
+  validationFailed: boolean | null;
+  /** Phase 8 — why the deterministic fallback was used (provider down, schema mismatch, fact INVALID, …). */
+  fallbackReason: string | null;
+  /** Phase 8 — privacy-safe prompt hash (never the full prompt). */
+  promptHash: string;
+  /** Phase 8 — correlation id for this request. */
+  requestId: string;
   createdAt: Date;
 }
 
@@ -132,6 +147,37 @@ const AIUsageLogSchema = new Schema<IAIUsageLog>(
     timeout: {
       type: Boolean,
       default: false,
+    },
+    promptVersion: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    cacheBust: {
+      type: Boolean,
+      default: false,
+    },
+    validationPassed: {
+      type: Boolean,
+      default: null,
+    },
+    validationFailed: {
+      type: Boolean,
+      default: null,
+    },
+    fallbackReason: {
+      type: String,
+      default: null,
+    },
+    promptHash: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    requestId: {
+      type: String,
+      default: '',
+      index: true,
     },
   },
   {

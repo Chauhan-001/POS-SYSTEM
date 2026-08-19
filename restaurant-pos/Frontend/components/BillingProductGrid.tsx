@@ -50,11 +50,11 @@ export default function BillingProductGrid({
     .filter(p => p.availability);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#f8fafc] p-4 gap-4">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[var(--color-surface-muted)] p-4 gap-4">
       {/* Top Bar: Search input + Back button + Favorites toggle */}
       <div className="flex items-center gap-3 shrink-0">
         <button onClick={onBackToOrders}
-          className="p-3 bg-white border border-gray-300 rounded-xl text-gray-700 hover:text-[var(--brand-color)] hover:border-[var(--brand-color)] hover:shadow transition-all shrink-0 cursor-pointer"
+          className="p-3 bg-[var(--color-bg-white)] border border-gray-300 rounded-xl text-gray-700 hover:text-[var(--brand-color)] hover:border-[var(--brand-color)] hover:shadow transition-all shrink-0 cursor-pointer"
           title="Back to Orders"
         >
           <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
@@ -68,15 +68,15 @@ export default function BillingProductGrid({
             value={billingSearch}
             onChange={(e) => onSetSearch(e.target.value)}
             onKeyDown={onSearchKeyDown}
-            className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-gray-300 text-sm font-semibold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] focus:border-transparent shadow-sm bg-white"
+            className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-gray-300 text-sm font-semibold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] focus:border-transparent shadow-sm bg-[var(--color-bg-white)]"
           />
         </div>
         <button
           onClick={onToggleFavorites}
           className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer shadow-sm ${
             showFavoritesOnly
-              ? 'bg-amber-500 text-white border border-amber-600 shadow-md'
-              : 'bg-white text-gray-700 border border-gray-300 hover:bg-amber-50 hover:border-amber-300'
+              ? 'bg-[var(--color-amber-500-solid)] text-white border border-amber-600 shadow-md'
+              : 'bg-[var(--color-bg-white)] text-gray-700 border border-gray-300 hover:bg-amber-50 hover:border-amber-300'
           }`}
           title="Toggle Favorites"
         >
@@ -100,7 +100,7 @@ export default function BillingProductGrid({
               className={`px-4 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wide transition-all flex items-center gap-2 shrink-0 border cursor-pointer ${
                 isActive
                   ? 'text-white shadow-md border-transparent scale-[1.02]'
-                  : 'text-gray-800 bg-white border-gray-300 hover:bg-gray-100 hover:border-gray-400'
+                  : 'text-gray-800 bg-[var(--color-bg-white)] border-gray-300 hover:bg-gray-100 hover:border-gray-400'
               }`}
               style={isActive ? { backgroundColor: activeBg } : {}}
             >
@@ -140,7 +140,7 @@ export default function BillingProductGrid({
         </div>
 
         {filteredProducts.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-400 bg-white rounded-2xl border border-dashed border-gray-300 my-4">
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 bg-[var(--color-bg-white)] rounded-2xl border border-dashed border-gray-300 my-4">
             <Search className="w-12 h-12 mb-3 text-gray-300" />
             <p className="text-base font-bold text-gray-700">No products found</p>
             <p className="text-xs text-gray-500 mt-1">Try selecting a different category or clearing the search</p>

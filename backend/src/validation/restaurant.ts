@@ -85,6 +85,16 @@ export const restaurantIdParamsSchema = z.object({
   id: objectId,
 }).strict();
 
+/**
+ * Admin grant/revoke of add-on features on a restaurant's current plan.
+ * Feature keys are validated against the central catalog in the controller
+ * (FEATURE_KEYS); here we only enforce array shape + sane limits.
+ */
+export const subscriptionFeatureGrantSchema = z.object({
+  grant: z.array(z.string().min(1).max(80)).max(100).optional(),
+  revoke: z.array(z.string().min(1).max(80)).max(100).optional(),
+}).strict();
+
 /** Restaurant status change request. */
 export const restaurantStatusSchema = z.object({
   status: z.enum(['active', 'suspended', 'pending']).optional(),
@@ -126,4 +136,5 @@ export default {
   restaurantIdParamsSchema,
   restaurantStatusSchema,
   restaurantListQuerySchema,
+  subscriptionFeatureGrantSchema,
 };

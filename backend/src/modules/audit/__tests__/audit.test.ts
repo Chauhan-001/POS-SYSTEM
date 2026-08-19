@@ -230,7 +230,7 @@ describe('retention', () => {
   it('archives then restores a row preserving the chain', async () => {
     await auditService.log({ action: 'restaurant.created', entityType: 'Restaurant', performedBy: 'admin' });
     const before = await queryAuditLogs({});
-    const rowId: string = before.data[0].id;
+    const rowId: string = String(before.data[0].id);
 
     const archivedResult = await runRetentionCleanup({ force: true });
     expect(archivedResult.archived).toBe(1);

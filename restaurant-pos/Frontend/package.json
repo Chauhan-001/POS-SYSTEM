@@ -14,7 +14,12 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
-    "build:analyze": "cross-env VISUALIZE=true npm run build"
+    "e2e:owner-recommendation": "playwright test --config=playwright.owner-recommendation.config.ts",
+    "e2e:owner-recommendation:headed": "playwright test --config=playwright.owner-recommendation.config.ts --headed",
+    "e2e:owner-recommendation:debug": "playwright test --config=playwright.owner-recommendation.config.ts --debug",
+    "e2e:owner-recommendation:preserve": "E2E_PRESERVE=1 playwright test --config=playwright.owner-recommendation.config.ts",
+    "build:analyze": "cross-env VISUALIZE=true npm run build",
+    "audit:security": "npm audit --audit-level=high"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -32,7 +37,8 @@
     "react-dom": "^19.0.1",
     "react-router-dom": "^7.18.1",
     "recharts": "^3.9.2",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "jsqr": "^1.4.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",

@@ -26,7 +26,7 @@ export default function OTPVerificationModal({ state, onTypedCodeChange, onVerif
 
   return (
     <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full border border-[#e1e2ed] p-6">
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--color-border-default)] p-6">
         <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
           <Shield className="w-4 h-4 text-[var(--brand-color)]" />
           SMS Verification
@@ -53,14 +53,14 @@ export default function OTPVerificationModal({ state, onTypedCodeChange, onVerif
             placeholder="Enter OTP"
             value={state.typedCode}
             onChange={(e) => onTypedCodeChange(e.target.value.replace(/\D/g, ""))}
-            className="w-full px-3 py-2 text-center text-lg font-mono font-bold border border-[#c3c6d7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+            className="w-full px-3 py-2 text-center text-lg font-mono font-bold border border-[var(--color-border-input)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
             autoFocus
           />
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="flex-1 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 cursor-pointer">
               Cancel
             </button>
-            <button type="submit" className="flex-1 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[#003ea8] cursor-pointer shadow-sm">
+            <button type="submit" className="flex-1 py-2 bg-[var(--brand-color)] text-white rounded-lg text-xs font-bold hover:bg-[var(--color-primary-hover)] cursor-pointer shadow-sm">
               Verify
             </button>
           </div>

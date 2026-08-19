@@ -21,6 +21,28 @@ export interface IBillItem extends Document {
   notes?: string;
   variantName?: string;
   isFree: boolean;
+  /** Phase 3 — configured-product selection (groupId → option ids + qty). */
+  configurationSnapshot?: {
+    selections: Array<{
+      groupId: string;
+      optionIds: string[];
+      quantities?: Record<string, number>;
+    }>;
+  };
+  /** Phase 3 — immutable pricing snapshot used at the time of sale. */
+  pricingSnapshot?: {
+    basePrice: number;
+    variantDelta: number;
+    modifierDelta: number;
+    addonDelta: number;
+    grossItemPrice: number;
+    lineTotal: number;
+    configVersion: number;
+    pricingVersion: number;
+    origin: 'online' | 'offline';
+  };
+  /** Human-readable selection summary for receipts ("Large • Cheese Burst"). */
+  configSummary?: string;
   createdAt: Date;
 }
 
@@ -36,6 +58,34 @@ const BillItemSchema = new Schema<IBillItem>(
     notes: { type: String, trim: true },
     variantName: { type: String, trim: true },
     isFree: { type: Boolean, default: false },
+    configurationSnapshot: {
+      type: new Schema({
+        selections: {
+          type: [new Schema({
+            groupId: { type: String, trim: true },
+            optionIds: [{ type: String, trim: true }],
+            quantities: { type: Map, of: Number, default: undefined },
+          }, { _id: false })],
+          default: undefined,
+        },
+      }, { _id: false }),
+      default: undefined,
+    },
+    pricingSnapshot: {
+      type: new Schema({
+        basePrice: { type: Number, default: 0, min: 0 },
+        variantDelta: { type: Number, default: 0, min: 0 },
+        modifierDelta: { type: Number, default: 0, min: 0 },
+        addonDelta: { type: Number, default: 0, min: 0 },
+        grossItemPrice: { type: Number, default: 0, min: 0 },
+        lineTotal: { type: Number, default: 0, min: 0 },
+        configVersion: { type: Number, default: 0, min: 0 },
+        pricingVersion: { type: Number, default: 0, min: 0 },
+        origin: { type: String, enum: ['online', 'offline'], default: 'online' },
+      }, { _id: false }),
+      default: undefined,
+    },
+    configSummary: { type: String, trim: true, maxlength: 500 },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );

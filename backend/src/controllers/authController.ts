@@ -176,11 +176,41 @@ export async function registerOwner(req: Request, res: Response): Promise<void> 
     const result = await authService.registerOwner(req.body);
     res.status(201).json({ success: true, token: result.accessToken, employee: result.employee, user: result.user, restaurant: result.restaurant });
   } catch (error: any) {
-    if (error.message?.includes('already exists')) {
-      res.status(409).json({ error: error.message });
+    const msg = error.message || '';
+    if (msg.includes('already exists')) {
+      res.status(409).json({ error: msg });
+      return;
+    }
+    // Client-correctable onboarding errors (plan / payment / login-id) are 400.
+    if (/plan|payment|User ID|signature|register-order|tampering|complete the payment/i.test(msg)) {
+      res.status(400).json({ error: msg });
       return;
     }
     console.error('[AuthController] registerOwner error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * POST /api/auth/register-order — public: create a payment order for a plan
+ * BEFORE the owner account exists. registerOwner() claims the order after the
+ * checkout completes.
+ */
+export async function createRegisterOrder(req: Request, res: Response): Promise<void> {
+  try {
+    const { planId, billingPeriod } = req.body || {};
+    const order = await authService.createRegisterOrder(
+      planId ? String(planId) : undefined,
+      billingPeriod ? String(billingPeriod) : undefined,
+    );
+    res.json(order);
+  } catch (error: any) {
+    const msg = error.message || '';
+    if (/plan/i.test(msg)) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[AuthController] register-order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

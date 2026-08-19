@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { Sparkles, RefreshCw } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { OpportunityCard } from './MarketingHome';
 import { EmptyState, Spinner } from './shared';
 
@@ -16,11 +16,14 @@ interface RecommendationsPageProps {
   recommendations: any[];
   loading: boolean;
   currencySymbol: string;
-  onRefresh: () => void;
   onCreate: (suggestion: any) => void;
 }
 
-export default function RecommendationsPage({ recommendations, loading, currencySymbol, onRefresh, onCreate }: RecommendationsPageProps) {
+export default function RecommendationsPage({ recommendations, loading, currencySymbol, onCreate }: RecommendationsPageProps) {
+  // LIFECYCLE: Filter out converted/cooldown recommendations from active view
+  const activeRecommendations = recommendations.filter((r: any) =>
+    !['converted', 'cooldown', 'reevaluate'].includes(r.status)
+  );
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -33,17 +36,11 @@ export default function RecommendationsPage({ recommendations, loading, currency
             Ideas detected from your weather, festivals, inventory, sales and customers. Pick one to start.
           </p>
         </div>
-        <button
-          onClick={onRefresh}
-          className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-800 font-bold transition-colors cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" /> Refresh
-        </button>
       </div>
 
       {loading ? (
         <Spinner label="Scanning for opportunities…" />
-      ) : recommendations.length === 0 ? (
+      ) : activeRecommendations.length === 0 ? (
         <EmptyState
           icon="🪄"
           title="Nothing to recommend right now"
@@ -59,7 +56,7 @@ export default function RecommendationsPage({ recommendations, loading, currency
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {recommendations.map((rec, i) => (
+          {activeRecommendations.map((rec, i) => (
             <OpportunityCard key={i} suggestion={rec} currencySymbol={currencySymbol} onCreate={() => onCreate(rec)} />
           ))}
         </div>

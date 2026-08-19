@@ -64,6 +64,40 @@ describe('OfferValidationService (Phase 1.6)', () => {
     expect((await offerValidationService.validate(REST, { offerId: draft._id.toString(), billSubtotal: 500 })).valid).toBe(false);
   });
 
+  it('resolves per-branch combo prices for combo offers', async () => {
+    const p1 = new mongoose.Types.ObjectId().toString();
+    const p2 = new mongoose.Types.ObjectId().toString();
+    const branchB = new mongoose.Types.ObjectId().toString();
+    const offer = await makeOffer({
+      type: 'combo',
+      value: 0,
+      comboProductIds: [p1, p2],
+      comboPrice: 149, // head-office default
+      comboBranchPrices: { [branchB]: 129 }, // branch B prices the bundle lower
+    });
+    const billItems = [
+      { productId: p1, quantity: 1, price: 120 },
+      { productId: p2, quantity: 1, price: 60 },
+    ];
+    // No branch → default comboPrice (180 − 149 = 31).
+    const headOffice = await offerValidationService.validate(REST, {
+      offerId: offer._id.toString(),
+      billItems,
+      billSubtotal: 180,
+    });
+    expect(headOffice.valid).toBe(true);
+    expect(headOffice.discount).toBe(31);
+    // Branch B → its combo price wins (180 − 129 = 51).
+    const branch = await offerValidationService.validate(REST, {
+      offerId: offer._id.toString(),
+      billItems,
+      billSubtotal: 180,
+      branchId: branchB,
+    });
+    expect(branch.valid).toBe(true);
+    expect(branch.discount).toBe(51);
+  });
+
   it('rejects bills below the minimum order value', async () => {
     const offer = await makeOffer({ minOrderValue: 500 });
     const low = await offerValidationService.validate(REST, { offerId: offer._id.toString(), billSubtotal: 100 });

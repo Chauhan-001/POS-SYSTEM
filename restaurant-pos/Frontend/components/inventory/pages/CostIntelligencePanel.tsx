@@ -67,7 +67,7 @@ export default function CostIntelligencePanel() {
 
   if (!synced && data === null) {
     return (
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] p-10 flex flex-col items-center text-sm text-gray-400">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 flex flex-col items-center text-sm text-gray-400">
         <Loader2 className="w-6 h-6 animate-spin text-[var(--brand-color)] mb-2" />
         Loading cost intelligence…
       </div>
@@ -76,7 +76,7 @@ export default function CostIntelligencePanel() {
 
   if (!data) {
     return (
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] p-10 text-center text-sm text-gray-400">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 text-center text-sm text-gray-400">
         Cost intelligence unavailable. Check your connection and try again.
       </div>
     );
@@ -99,7 +99,7 @@ export default function CostIntelligencePanel() {
           { label: 'Food Cost %', value: pct(s.overallFoodCostPercent || 0), icon: Percent, color: 'text-amber-600 bg-amber-50' },
           { label: 'Wastage Cost', value: fmt(s.wastageCost || 0), icon: Package, color: 'text-rose-600 bg-rose-50' },
         ].map((c) => (
-          <div key={c.label} className="bg-white rounded-2xl border border-[#e1e2ed] p-4">
+          <div key={c.label} className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-4">
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${c.color} mb-2`}>
               <c.icon className="w-4 h-4" />
             </div>
@@ -120,7 +120,7 @@ export default function CostIntelligencePanel() {
           <button
             onClick={generateInsights}
             disabled={aiLoading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-indigo-600-solid)] text-white rounded-xl text-xs font-bold hover:bg-[var(--color-indigo-700-solid)] transition-all cursor-pointer disabled:opacity-50"
           >
             {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             {insights ? 'Regenerate insights' : 'Generate insights'}
@@ -150,8 +150,8 @@ export default function CostIntelligencePanel() {
       </div>
 
       {/* Product profitability */}
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-[var(--brand-color)]" />
           <p className="text-sm font-bold text-gray-800">Product Profitability</p>
         </div>
@@ -173,7 +173,7 @@ export default function CostIntelligencePanel() {
                 <tr><td colSpan={7} className="px-4 py-6 text-center text-xs text-gray-400">No recipe-linked products yet — create recipes to see profitability.</td></tr>
               )}
               {products.map((p: any) => (
-                <tr key={p.productId} className="border-t border-[#eef0f7] text-xs">
+                <tr key={p.productId} className="border-t border-[var(--color-surface-muted)] text-xs">
                   <td className="px-4 py-2 font-semibold text-gray-800">{p.productName}</td>
                   <td className="px-4 py-2">{fmt(p.sellingPrice)}</td>
                   <td className="px-4 py-2">{p.hasRecipe ? fmt(p.recipeCost) : <span className="text-gray-300">—</span>}</td>
@@ -190,12 +190,12 @@ export default function CostIntelligencePanel() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Ingredient cost changes */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
             <ArrowUpRight className="w-4 h-4 text-amber-600" />
             <p className="text-sm font-bold text-gray-800">Ingredient Cost Changes</p>
           </div>
-          <div className="divide-y divide-[#eef0f7]">
+          <div className="divide-y divide-[var(--color-surface-muted)]">
             {(costChanges.length === 0) && (
               <p className="px-4 py-6 text-xs text-gray-400 text-center">No ingredient cost history yet.</p>
             )}
@@ -225,13 +225,13 @@ export default function CostIntelligencePanel() {
         </div>
 
         {/* Wastage */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
             <Package className="w-4 h-4 text-rose-600" />
             <p className="text-sm font-bold text-gray-800">Recorded Wastage</p>
             <span className="ml-auto text-xs font-bold text-rose-600">{fmt(wastage.totalCost || 0)}</span>
           </div>
-          <div className="divide-y divide-[#eef0f7]">
+          <div className="divide-y divide-[var(--color-surface-muted)]">
             {(!wastage.topItems || wastage.topItems.length === 0) && (
               <p className="px-4 py-6 text-xs text-gray-400 text-center">No recorded wastage this period.</p>
             )}
@@ -246,8 +246,8 @@ export default function CostIntelligencePanel() {
       </div>
 
       {/* Consumption variance */}
-      <div className="bg-white rounded-2xl border border-[#e1e2ed] overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
           <Scale className="w-4 h-4 text-indigo-600" />
           <p className="text-sm font-bold text-gray-800">Theoretical vs Actual Consumption</p>
           <span className="ml-auto text-xs font-bold text-gray-400">variance cost {fmt(variance.totalVarianceCost || 0)}</span>
@@ -269,7 +269,7 @@ export default function CostIntelligencePanel() {
               {(variance.rows || []).map((r: any, i: number) => {
                 const over = (r.varianceQty || 0) > 0;
                 return (
-                  <tr key={i} className="border-t border-[#eef0f7] text-xs">
+                  <tr key={i} className="border-t border-[var(--color-surface-muted)] text-xs">
                     <td className="px-4 py-2 font-semibold text-gray-800">{r.name}</td>
                     <td className="px-4 py-2 text-gray-500">{r.theoreticalQty ?? 0} {r.unit || ''}</td>
                     <td className="px-4 py-2 text-gray-500">{r.actualQty ?? 0} {r.unit || ''}</td>
@@ -286,12 +286,12 @@ export default function CostIntelligencePanel() {
 
       {/* Offer economics */}
       {offers.length > 0 && (
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
             <Tag className="w-4 h-4 text-purple-600" />
             <p className="text-sm font-bold text-gray-800">Offer Economics</p>
           </div>
-          <div className="divide-y divide-[#eef0f7]">
+          <div className="divide-y divide-[var(--color-surface-muted)]">
             {offers.map((o: any) => (
               <div key={o.offerId} className="px-4 py-2.5 text-xs flex items-center justify-between">
                 <span className="font-semibold text-gray-700">{o.title}</span>

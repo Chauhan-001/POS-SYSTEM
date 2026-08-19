@@ -289,10 +289,10 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
     <div id="customer_manager_workspace" className="p-6 h-full flex gap-6 font-sans">
       
       {/* Left Column: List and search */}
-      <div className="w-1/2 flex flex-col bg-white rounded-xl border border-[#e1e2ed] shadow-sm overflow-hidden h-full">
-        <div className="p-4 border-b border-[#e1e2ed] bg-gray-50 flex justify-between items-center">
+      <div className="w-1/2 flex flex-col bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] shadow-sm overflow-hidden h-full">
+        <div className="p-4 border-b border-[var(--color-border-default)] bg-gray-50 flex justify-between items-center">
           <div className="flex flex-col gap-0.5">
-            <h3 className="font-bold text-[#191b23] text-sm">Customer Loyalty Directory</h3>
+            <h3 className="font-bold text-[var(--color-text-primary)] text-sm">Customer Loyalty Directory</h3>
             <p className="text-[10px] text-gray-500">Search profiles, enroll new visitors, or adjust member records.</p>
           </div>
           
@@ -315,7 +315,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
             </button>
             <button
               onClick={() => { setIsAdding(true); setSelectedCustomer(null); }}
-              className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-3 py-1.5 rounded-lg font-semibold text-xs transition-colors shadow-sm cursor-pointer"
+              className="flex items-center gap-1 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white px-3 py-1.5 rounded-lg font-semibold text-xs transition-colors shadow-sm cursor-pointer"
             >
               <UserPlus className="w-3.5 h-3.5" />
               Enroll Member
@@ -332,13 +332,13 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
               placeholder="Search by name or 10-digit phone number..."
               value={search}
               onChange={(e: { target: { value: any; }; }) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
             />
           </div>
         </div>
 
         {/* List scroll */}
-        <div className="flex-1 overflow-y-auto divide-y divide-[#e7e7f3]">
+        <div className="flex-1 overflow-y-auto divide-y divide-[var(--color-surface-muted)]">
           {filtered.length === 0 ? (
             <div className="p-12 text-center text-gray-400">
               <User className="w-10 h-10 text-gray-300 mx-auto mb-2" />
@@ -353,13 +353,13 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 onClick={() => selectCustomerProfile(cust)}
                 className={`p-3 flex justify-between items-center cursor-pointer transition-all ${
                   selectedCustomer?.phone === cust.phone 
-                    ? 'bg-[#f3f3fe] border-l-4 border-l-[var(--brand-color)]' 
+                    ? 'bg-[var(--color-primary-light)] border-l-4 border-l-[var(--brand-color)]' 
                     : 'hover:bg-gray-50'
                 }`}
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-xs text-[#191b23]">{cust.name}</span>
+                    <span className="font-bold text-xs text-[var(--color-text-primary)]">{cust.name}</span>
                     {cust.tier && (
                       <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold ${
                         cust.tier === 'Diamond' ? 'bg-indigo-100 text-indigo-700'
@@ -394,7 +394,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
               </div>
             ))}
             {/* Pagination */}
-            <div className="flex items-center justify-between px-3 py-2 border-t border-[#e7e7f3]">
+            <div className="flex items-center justify-between px-3 py-2 border-t border-[var(--color-surface-muted)]">
               <span className="text-[9px] text-gray-400">
                 {paginatedCustomers.length} of {filtered.length} shown
               </span>
@@ -402,7 +402,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={safePage <= 1}
-                  className="px-2 py-1 text-[9px] font-bold rounded border border-[#c3c6d7] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
+                  className="px-2 py-1 text-[9px] font-bold rounded border border-[var(--color-border-input)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
                 >
                   Prev
                 </button>
@@ -412,7 +412,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 <button
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                   disabled={safePage >= totalPages}
-                  className="px-2 py-1 text-[9px] font-bold rounded border border-[#c3c6d7] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
+                  className="px-2 py-1 text-[9px] font-bold rounded border border-[var(--color-border-input)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition-all cursor-pointer"
                 >
                   Next
                 </button>
@@ -424,13 +424,13 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
       </div>
 
       {/* Right Column: Profile Detail or Enroll Form */}
-      <div className="w-1/2 bg-white rounded-xl border border-[#e1e2ed] shadow-sm overflow-hidden flex flex-col h-full">
+      <div className="w-1/2 bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] shadow-sm overflow-hidden flex flex-col h-full">
         {isAdding ? (
           /* Enrollment Form */
           <form onSubmit={handleRegisterCustomer} className="p-6 space-y-4 flex flex-col h-full justify-between">
             <div>
-              <div className="border-b border-[#e1e2ed] pb-3 mb-4">
-                <h3 className="font-bold text-[#191b23] text-sm">Enroll New Loyalty Card</h3>
+              <div className="border-b border-[var(--color-border-default)] pb-3 mb-4">
+                <h3 className="font-bold text-[var(--color-text-primary)] text-sm">Enroll New Loyalty Card</h3>
                 <p className="text-[10px] text-gray-500">Provide registration details. Members instantly receive enrollment points.</p>
               </div>
 
@@ -450,7 +450,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., 9876543210"
                     value={newPhone}
                     onChange={(e: { target: { value: string; }; }) => setNewPhone(e.target.value.replace(/\D/g, ''))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -463,7 +463,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., Ramesh Deshmukh"
                     value={newName}
                     onChange={(e: { target: { value: any; }; }) => setNewName(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                     required
                   />
                 </div>
@@ -476,7 +476,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., ramesh@gmail.com"
                     value={newEmail}
                     onChange={(e: { target: { value: any; }; }) => setNewEmail(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   />
                 </div>
 
@@ -487,7 +487,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     type="date"
                     value={newBday}
                     onChange={(e: { target: { value: any; }; }) => setNewBday(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                   />
                 </div>
 
@@ -498,7 +498,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     placeholder="e.g., Prefers corner table, gluten intolerant, coffee sweetener..."
                     value={newNotes}
                     onChange={(e: { target: { value: any; }; }) => setNewNotes(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] h-16 resize-none"
+                    className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] h-16 resize-none"
                   />
                 </div>
               </div>
@@ -514,7 +514,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer flex items-center gap-1"
+                className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white rounded-lg text-xs font-bold shadow-md cursor-pointer flex items-center gap-1"
               >
                 <Check className="w-4 h-4" />
                 Register Member
@@ -526,14 +526,14 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
           <div className="p-6 space-y-5 flex flex-col h-full overflow-y-auto">
             
             {/* Header Profile */}
-            <div className="flex items-center justify-between border-b border-[#e1e2ed] pb-4">
+            <div className="flex items-center justify-between border-b border-[var(--color-border-default)] pb-4">
               <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-full border text-lg flex items-center justify-center font-bold shadow-inner ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-200 text-red-600' : 'bg-[#f3f3fe] border-[#c3c6d7] text-[var(--brand-color)]'}`}>
+                <div className={`w-12 h-12 rounded-full border text-lg flex items-center justify-center font-bold shadow-inner ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-200 text-red-600' : 'bg-[var(--color-primary-light)] border-[var(--color-border-input)] text-[var(--brand-color)]'}`}>
                   {selectedCustomer.name.charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-sm text-[#191b23]">{selectedCustomer.name}</h3>
+                    <h3 className="font-bold text-sm text-[var(--color-text-primary)]">{selectedCustomer.name}</h3>
                     {selectedCustomer.isBlocked && (
                       <span className="bg-red-100 text-red-700 text-[9px] px-1.5 py-0.2 rounded font-black uppercase">Blocked</span>
                     )}
@@ -559,7 +559,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
 
             {/* Quick Metrics Cards — Phase 1.6 (tier, wallet, lifetime spend) */}
             <div className="grid grid-cols-4 gap-2.5">
-              <div className="bg-[#faf8ff] p-3 rounded-lg border border-[#e7e7f3] text-center">
+              <div className="bg-[var(--color-bg-page)] p-3 rounded-lg border border-[var(--color-surface-muted)] text-center">
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
                   <Award className="w-3 h-3" /> Points
                 </span>
@@ -567,7 +567,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 <span className="text-[8px] text-gray-400 block">Lifetime {selectedCustomer.lifetimePoints ?? 0}</span>
               </div>
               
-              <div className="bg-[#faf8ff] p-3 rounded-lg border border-[#e7e7f3] text-center">
+              <div className="bg-[var(--color-bg-page)] p-3 rounded-lg border border-[var(--color-surface-muted)] text-center">
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
                   <Wallet className="w-3 h-3" /> Wallet
                 </span>
@@ -575,17 +575,17 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 <span className="text-[8px] text-gray-400 block">Tier: {selectedCustomer.tier || 'Bronze'}</span>
               </div>
 
-              <div className="bg-[#faf8ff] p-3 rounded-lg border border-[#e7e7f3] text-center">
+              <div className="bg-[var(--color-bg-page)] p-3 rounded-lg border border-[var(--color-surface-muted)] text-center">
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
                   <TrendingUp className="w-3 h-3" /> Spend
                 </span>
-                <span className="text-md font-bold text-[#191b23] font-mono">{currencySymbol}{(selectedCustomer.totalSpend ?? 0).toFixed(2)}</span>
+                <span className="text-md font-bold text-[var(--color-text-primary)] font-mono">{currencySymbol}{(selectedCustomer.totalSpend ?? 0).toFixed(2)}</span>
                 <span className="text-[8px] text-gray-400 block">Avg {currencySymbol}{(selectedCustomer.averageSpend ?? 0).toFixed(2)}</span>
               </div>
 
-              <div className="bg-[#faf8ff] p-3 rounded-lg border border-[#e7e7f3] text-center">
+              <div className="bg-[var(--color-bg-page)] p-3 rounded-lg border border-[var(--color-surface-muted)] text-center">
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Visits</span>
-                <span className="text-md font-bold text-[#191b23] font-mono">{selectedCustomer.visits}</span>
+                <span className="text-md font-bold text-[var(--color-text-primary)] font-mono">{selectedCustomer.visits}</span>
                 <span className="text-[8px] text-gray-400 block truncate">{selectedCustomer.lastVisit || 'N/A'}</span>
               </div>
             </div>
@@ -596,7 +596,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 type="button"
                 onClick={() => loadServerProfile(selectedCustomer)}
                 disabled={isProfileLoading}
-                className="flex items-center gap-1 text-[9px] font-semibold text-[var(--brand-color)] hover:text-[#003ea8] disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-1 text-[9px] font-semibold text-[var(--brand-color)] hover:text-[var(--color-primary-hover)] disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw className={`w-3 h-3 ${isProfileLoading ? 'animate-spin' : ''}`} />
                 {isProfileLoading ? 'Syncing profile…' : 'Refresh from server'}
@@ -624,7 +624,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                 value={customerNote}
                 onChange={(e: { target: { value: any; }; }) => setCustomerNote(e.target.value)}
                 placeholder="Register VIP tables preferences, beverage sweetness, allergies..."
-                className="w-full px-3 py-1.5 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] h-16 resize-none bg-gray-50 focus:bg-white"
+                className="w-full px-3 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-1 focus:ring-[var(--brand-color)] h-16 resize-none bg-gray-50 focus:bg-[var(--color-bg-white)]"
               />
               <div className="flex justify-end">
                 <button
@@ -650,7 +650,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                   (selectedCustomer.purchaseHistory || []).map((pur: PurchaseHistoryItem) => (
                     <div 
                       key={pur.id} 
-                      className="p-2 flex justify-between items-center text-xs font-mono hover:bg-white cursor-pointer"
+                      className="p-2 flex justify-between items-center text-xs font-mono hover:bg-[var(--color-bg-white)] cursor-pointer"
                       onClick={() => setSelectedBillItems(pur)}
                     >
                       <div>
@@ -661,7 +661,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                         </span>
                       </div>
                       <div className="text-right">
-                        <span className="font-bold text-[#191b23] block">{currencySymbol}{pur.grandTotal.toFixed(2)}</span>
+                        <span className="font-bold text-[var(--color-text-primary)] block">{currencySymbol}{pur.grandTotal.toFixed(2)}</span>
                         <span className="text-[9px] text-gray-400 font-sans">{pur.itemsCount} products</span>
                       </div>
                     </div>
@@ -676,8 +676,8 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
 
             {/* Import CSV Modal — Phase 1.6 */}
             {isImportOpen && (
-              <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full border border-[#e1e2ed] p-6">
+              <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-lg w-full border border-[var(--color-border-default)] p-6">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-gray-800">Import Customers (CSV)</h3>
                     <button onClick={() => { setIsImportOpen(false); setImportStatus(null); setImportText(''); }} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
@@ -689,14 +689,14 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
                     value={importText}
                     onChange={(e) => setImportText(e.target.value)}
                     placeholder={'phone,name,email\n9876543210,Aarav Mehta,aarav@example.com\n9123456789,Priya Sharma,priya@example.com'}
-                    className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] h-40 resize-y"
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] h-40 resize-y"
                   />
                   {importStatus && (
                     <p className="mt-2 text-[10px] font-semibold text-[var(--brand-color)] bg-blue-50 border border-blue-100 rounded px-2 py-1.5">{importStatus}</p>
                   )}
                   <div className="flex gap-2 justify-end mt-4">
                     <button onClick={() => { setIsImportOpen(false); setImportStatus(null); setImportText(''); }} className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 cursor-pointer">Cancel</button>
-                    <button onClick={handleImportCsv} className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white rounded-lg text-xs font-bold cursor-pointer">Import</button>
+                    <button onClick={handleImportCsv} className="px-5 py-2 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white rounded-lg text-xs font-bold cursor-pointer">Import</button>
                   </div>
                 </div>
               </div>
@@ -704,8 +704,8 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
 
             {/* Bill Items Modal — SAFE ACCESS: handle missing/partial product data */}
             {selectedBillItems && (
-              <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full border border-[#e1e2ed] p-6">
+              <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--color-border-default)] p-6">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-gray-800">Bill Details</h3>
                     <button onClick={() => setSelectedBillItems(null)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
@@ -819,7 +819,7 @@ export default function CustomerManager({ customers, onUpdateCustomers, currency
           /* Empty State */
           <div className="p-12 text-center text-gray-400 flex-1 flex flex-col items-center justify-center">
             <User className="w-12 h-12 text-gray-300 mb-3" />
-            <p className="font-semibold text-sm text-[#191b23]">Select Customer Profile</p>
+            <p className="font-semibold text-sm text-[var(--color-text-primary)]">Select Customer Profile</p>
             <p className="text-xs text-gray-400 mt-1">Pick a profile from the sidebar to review purchase histories, point statements, and birthday lists.</p>
           </div>
         )}

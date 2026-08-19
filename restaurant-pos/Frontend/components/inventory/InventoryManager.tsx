@@ -21,6 +21,7 @@ import {
   deletePurchase,
   fetchInventoryEvents,
   createInventoryEvent as apiCreateInventoryEvent,
+  deleteInventoryEvent,
   CACHE_INVALIDATED_EVENT,
 } from '../../src/api/client';
 
@@ -195,6 +196,8 @@ type InventoryEventsCtxType = {
   addEvent: (data: { type: 'waste' | 'adjusted'; item: string; quantity: number; unit: string; details?: string }) => Promise<boolean>;
   /** Re-fetches the activity feed from the backend (used after a stock write). */
   refreshEvents: () => Promise<void>;
+  /** Delete an activity event (undo). Returns true on success. */
+  deleteEvent: (id: string) => Promise<boolean>;
 };
 
 const InventoryEventsCtx = createContext<InventoryEventsCtxType>(null!);
@@ -254,9 +257,14 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
   // fallback: an empty array means the restaurant has no inventory products,
   // and null (API unreachable) leaves the catalog empty with synced=false so
   // pages show an honest offline state — never fabricated rows.
+  //
+  // INVENTORY-ONLY: only products with availability=false are inventory items
+  // (raw materials / pre-manufactured stock like cold drinks — hidden from the
+  // billing menu). Menu items (availability=true, e.g. kitchen dishes) belong
+  // to the billing menu and must never appear in the inventory module.
   const loadItems = useCallback(async () => {
     try {
-      const data = await fetchProducts();
+      const data = await fetchProducts({ availability: 'false' });
       if (Array.isArray(data)) {
         setItems(data.map(productToInventoryItem));
         setItemsSynced(true);
@@ -437,11 +445,25 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     removePurchase,
   };
 
+  const deleteEvent = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await deleteInventoryEvent(id);
+      if (res?.data || res?.success) {
+        setEvents((prev) => (prev || []).filter((e) => e.id !== id));
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const eventsCtx: InventoryEventsCtxType = {
     events,
     synced: eventsSynced,
     addEvent,
     refreshEvents: () => loadEvents(),
+    deleteEvent,
   };
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
@@ -539,7 +561,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     <ToastCtx.Provider value={showToast}>
       <div className="flex flex-col h-full">
         {/* Slim header bar */}
-        <div className="bg-white border-b border-[#e1e2ed] px-5 py-2.5 flex items-center gap-3 shrink-0">
+        <div className="bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] px-5 py-2.5 flex items-center gap-3 shrink-0">
           <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to POS">
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -570,7 +592,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
                             </span>
                           )}
                           {expiryBadge.expired > 0 && (
-                            <span className="min-w-[16px] h-4 px-1 inline-flex items-center justify-center rounded-full text-[9px] font-black bg-red-500 text-white" title={`${expiryBadge.expired} item${expiryBadge.expired === 1 ? '' : 's'} expired`}>
+                            <span className="min-w-[16px] h-4 px-1 inline-flex items-center justify-center rounded-full text-[9px] font-black bg-[var(--color-red-500-solid)] text-white" title={`${expiryBadge.expired} item${expiryBadge.expired === 1 ? '' : 's'} expired`}>
                               {expiryBadge.expired}
                             </span>
                           )}
@@ -592,7 +614,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
         </div>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-y-auto bg-[#faf8ff]">
+        <main className="flex-1 overflow-y-auto bg-[var(--color-bg-page)]">
           <motion.div key={page} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
             {page === 'dashboard' && <Dashboard onNavigate={setPage} moduleSettings={moduleSettings} />}
             {page === 'items' && <ItemsPage />}
@@ -621,8 +643,8 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
           {toasts.map(t => (
             <motion.div key={t.id} initial={{ opacity: 0, y: -10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10 }}
               className={`px-5 py-3 rounded-2xl shadow-xl text-sm font-bold flex items-center gap-3 ${
-                t.type === 'success' ? 'bg-emerald-600 text-white' :
-                t.type === 'warning' ? 'bg-amber-500 text-white' : 'bg-[#191b23] text-white'
+                t.type === 'success' ? 'bg-[var(--color-emerald-600-solid)] text-white' :
+                t.type === 'warning' ? 'bg-[var(--color-amber-500-solid)] text-white' : 'bg-[var(--color-sidebar-bg)] text-white'
               }`}
             >
               {t.type === 'success' && <CheckCircle className="w-5 h-5 shrink-0" />}

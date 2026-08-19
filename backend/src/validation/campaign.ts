@@ -10,7 +10,7 @@ export const createCampaignSchema = z.object({
     customerPhones: z.array(z.string().regex(/^\d{10}$/)).default([]),
   }).default({ segmentIds: [], customerPhones: [] }),
   template: z.object({
-    channel: z.enum(['sms', 'whatsapp', 'email', 'app_notification', 'webhook']),
+    channel: z.enum(['sms', 'whatsapp', 'email', 'app_notification', 'webhook', 'website']),
     subject: optString,
     message: nonEmptyString.max(5000),
   }),

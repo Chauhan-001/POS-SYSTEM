@@ -11,15 +11,15 @@ export default function StatusBadge({ status, size = 'sm' }: { status: string; s
     cancelled: 'bg-red-50 text-red-700 border-red-200',
   };
   const dots: Record<string, string> = {
-    healthy: 'bg-emerald-500',
-    normal: 'bg-blue-500',
-    low: 'bg-amber-500',
-    critical: 'bg-red-500',
-    active: 'bg-emerald-500',
+    healthy: 'bg-[var(--color-emerald-500-solid)]',
+    normal: 'bg-[var(--color-blue-500-solid)]',
+    low: 'bg-[var(--color-amber-500-solid)]',
+    critical: 'bg-[var(--color-red-500-solid)]',
+    active: 'bg-[var(--color-emerald-500-solid)]',
     inactive: 'bg-gray-400',
-    completed: 'bg-emerald-500',
-    pending: 'bg-amber-500',
-    cancelled: 'bg-red-500',
+    completed: 'bg-[var(--color-emerald-500-solid)]',
+    pending: 'bg-[var(--color-amber-500-solid)]',
+    cancelled: 'bg-[var(--color-red-500-solid)]',
   };
   const sizes = { sm: 'text-[10px] px-2 py-0.5', md: 'text-xs px-2.5 py-1', lg: 'text-sm px-3 py-1.5' };
   return (

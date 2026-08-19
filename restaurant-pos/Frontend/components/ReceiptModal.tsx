@@ -100,7 +100,7 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
   }, [bill.invoiceNumber, receiptRef]);
 
   return (
-    <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto print-container-modal">
+    <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto print-container-modal">
       <style>{`
         @media print {
           /* Force exact print colors so background graphics are printed */
@@ -165,10 +165,10 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
           }
         }
       `}</style>
-      <div className="bg-[#f3f3fe] rounded-xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-[#e1e2ed]">
+      <div className="bg-[var(--color-primary-light)] rounded-xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-[var(--color-border-default)]">
         
         {/* Header bar */}
-        <div className="bg-white px-6 py-4 border-b border-[#e1e2ed] flex justify-between items-center print-modal-chrome">
+        <div className="bg-[var(--color-bg-white)] px-6 py-4 border-b border-[var(--color-border-default)] flex justify-between items-center print-modal-chrome">
           <div className="flex items-center gap-2">
             {isPreview ? <Eye className="w-5 h-5 text-blue-600" /> : <CheckCircle className="w-5 h-5 text-green-600" />}
             <div>
@@ -190,10 +190,10 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
         </div>
 
         {/* Action Panel */}
-        <div className="p-4 bg-[#e7e7f3] border-b border-[#e1e2ed] flex gap-3 justify-center print-modal-chrome">
+        <div className="p-4 bg-[var(--color-surface-muted)] border-b border-[var(--color-border-default)] flex gap-3 justify-center print-modal-chrome">
           <button
             onClick={handlePrint}
-            className="flex items-center gap-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
+            className="flex items-center gap-2 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             {isPreview ? 'Print Running Bill' : `Print (${settings.printSize})`}
@@ -202,7 +202,7 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
           {!isPreview && (
             <button
               onClick={handleDownloadPDF}
-              className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
+              className="flex items-center gap-2 bg-[var(--color-emerald-700-solid)] hover:bg-emerald-800 text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
             >
               <Download className="w-4 h-4" />
               Download PDF
@@ -212,7 +212,7 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
           {isPreview ? (
             <button
               onClick={onOpenBilling || onClose}
-              className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
+              className="flex items-center gap-2 bg-[var(--color-blue-700-solid)] hover:bg-blue-800 text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
             >
               <Receipt className="w-4 h-4" />
               Open Billing
@@ -220,7 +220,7 @@ export default function ReceiptModal({ bill, settings, onClose, onNewOrder, auto
           ) : (
             <button
               onClick={onNewOrder}
-              className="flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
+              className="flex items-center gap-2 bg-[var(--color-green-700-solid)] hover:bg-green-800 text-white px-4 py-2 rounded-lg font-semibold text-xs transition-colors shadow-md cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               New POS Order

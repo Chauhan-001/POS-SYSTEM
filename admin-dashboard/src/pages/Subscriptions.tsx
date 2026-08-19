@@ -50,6 +50,7 @@ export default function Subscriptions() {
     sub: Subscription
     amount: number
     paymentMethod: PaymentMethod
+    billingPeriod: 'monthly' | 'yearly'
     notes: string
   } | null>(null)
   const [cashResult, setCashResult] = useState<{ invoiceNumber: string; amount: number; paymentMethod: string } | null>(null)
@@ -68,8 +69,8 @@ export default function Subscriptions() {
   })
 
   const renewMut = useMutation({
-    mutationFn: ({ id, amount, notes, paymentMethod }: { id: string; amount: number; notes: string; paymentMethod: string }) =>
-      renewSubscription(id, { amount, notes, paymentMethod }),
+    mutationFn: ({ id, amount, notes, paymentMethod, billingPeriod }: { id: string; amount: number; notes: string; paymentMethod: string; billingPeriod: 'monthly' | 'yearly' }) =>
+      renewSubscription(id, { amount, notes, paymentMethod, billingPeriod }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
       if (cashPayment) {
@@ -99,15 +100,22 @@ export default function Subscriptions() {
     onError: (err: any) => toast.error(err?.response?.data?.message || 'Operation failed'),
   })
 
+  const periodPrice = useCallback((plan: SubscriptionPlan | undefined, period: 'monthly' | 'yearly') => {
+    if (period === 'yearly' && plan?.yearlyPrice) return plan.yearlyPrice
+    return plan?.price || 0
+  }, [])
+
   const handleOpenCashPayment = useCallback((sub: Subscription) => {
     const plan = planMap.get(sub.plan)
+    const period = sub.billingPeriod || 'monthly'
     setCashPayment({
       sub,
-      amount: plan?.price || sub.price || 0,
+      amount: periodPrice(plan, period) || sub.price || 0,
       paymentMethod: 'cash',
+      billingPeriod: period,
       notes: '',
     })
-  }, [planMap])
+  }, [planMap, periodPrice])
 
   const handleConfirmRenew = useCallback(() => {
     if (!cashPayment) return
@@ -116,6 +124,7 @@ export default function Subscriptions() {
       amount: cashPayment.amount,
       notes: cashPayment.notes,
       paymentMethod: cashPayment.paymentMethod,
+      billingPeriod: cashPayment.billingPeriod,
     })
   }, [cashPayment, renewMut])
 
@@ -134,12 +143,22 @@ export default function Subscriptions() {
       return <Badge variant="info">{plan?.name || s.plan}</Badge>
     }},
     { key: 'status', header: 'Status', render: (s) => (
-      <Badge variant={s.status === 'active' ? 'success' : s.status === 'paused' ? 'warning' : s.status === 'expired' ? 'danger' : 'neutral'}>
-        {s.status}
+      <Badge variant={s.status === 'active' ? 'success' : (s.status === 'paused' || s.status === 'grace') ? 'warning' : s.status === 'expired' ? 'danger' : 'neutral'}>
+        {s.status === 'grace' ? 'Warning' : s.status}
       </Badge>
     )},
     { key: 'price', header: 'Price', render: (s) => formatCurrency(s.price), hideOnMobile: true },
-    { key: 'expiryDate', header: 'Expiry', render: (s) => formatDate(s.expiryDate), hideOnMobile: true },
+    { key: 'billingPeriod', header: 'Billing', render: (s) => (
+      <Badge variant={s.billingPeriod === 'yearly' ? 'success' : 'neutral'}>{s.billingPeriod === 'yearly' ? 'Yearly' : 'Monthly'}</Badge>
+    ), hideOnMobile: true },
+    { key: 'expiryDate', header: 'Expiry', render: (s) => {
+      // During the 2-day warning window, surface the free-tier countdown instead of the past expiry date.
+      if (s.status === 'grace' && s.graceEnd) {
+        const days = Math.max(0, Math.ceil((new Date(s.graceEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+        return <span className="text-xs font-semibold text-warning">Free in {days}d</span>
+      }
+      return formatDate(s.expiryDate)
+    }, hideOnMobile: true },
     { key: 'maxDevices', header: 'Max Devices', hideOnMobile: true },
     { key: 'aiEnabled', header: 'AI', render: (s) => s.aiEnabled ? <Badge variant="success">Yes</Badge> : <Badge variant="neutral">No</Badge> },
     { key: 'lastPayment', header: 'Last Payment', render: (s) => s.lastPayment ? (
@@ -196,6 +215,7 @@ export default function Subscriptions() {
               className="rounded-lg border border-surface-300 bg-white px-3 py-2 text-sm text-surface-700 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-300">
               <option value="">All Status</option>
               <option value="active">Active</option>
+              <option value="grace">Warning (grace)</option>
               <option value="paused">Paused</option>
               <option value="expired">Expired</option>
             </select>
@@ -262,6 +282,41 @@ export default function Subscriptions() {
                   <span className="text-surface-500 dark:text-surface-400">Restaurant</span>
                   <p className="font-medium text-surface-900 dark:text-surface-100">{cashPayment.sub.restaurantName}</p>
                 </div>
+              </div>
+            </div>
+
+            {/* Billing Period */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Billing Period
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                {(['monthly', 'yearly'] as const).map((period) => {
+                  const plan = planMap.get(cashPayment.sub.plan)
+                  const selected = cashPayment.billingPeriod === period
+                  const amount = periodPrice(plan, period)
+                  return (
+                    <button
+                      key={period}
+                      type="button"
+                      onClick={() => setCashPayment({
+                        ...cashPayment,
+                        billingPeriod: period,
+                        amount: amount > 0 ? amount : cashPayment.amount,
+                      })}
+                      className={`rounded-xl border p-3 text-left transition-colors cursor-pointer ${
+                        selected
+                          ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 ring-1 ring-primary-600'
+                          : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                      }`}
+                    >
+                      <p className={`text-sm font-semibold capitalize ${selected ? 'text-primary-700 dark:text-primary-300' : 'text-surface-900 dark:text-surface-100'}`}>{period}</p>
+                      <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                        {amount > 0 ? formatCurrency(amount) : '—'}/{period === 'yearly' ? 'yr' : 'mo'}
+                      </p>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
@@ -355,7 +410,7 @@ export default function Subscriptions() {
         title="Confirm Renewal"
         message={
           cashPayment
-            ? `Renew the subscription for "${cashPayment.sub.restaurantName}"? This will charge ₹${cashPayment.amount.toLocaleString('en-IN')} via ${paymentMethodLabels[cashPayment.paymentMethod]} and extend the subscription by 30 days.`
+            ? `Renew the subscription for "${cashPayment.sub.restaurantName}"? This will charge ₹${cashPayment.amount.toLocaleString('en-IN')} via ${paymentMethodLabels[cashPayment.paymentMethod]} and extend the subscription by ${cashPayment.billingPeriod === 'yearly' ? '365' : '30'} days.`
             : 'Proceed with renewal?'
         }
         confirmLabel={`Renew — ₹${cashPayment?.amount.toLocaleString('en-IN') || '0'}`}

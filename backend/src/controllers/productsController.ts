@@ -11,7 +11,10 @@ import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { productService, stockMovementService } from '../services';
 import { resolveMenuProductScope } from '../services/productService';
+import { AppError } from '../utils/AppError';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware';
+import { resolveMenuProduct } from '../modules/voice-inventory/services/ProductResolver';
+import { getPriceIntelligence } from '../services/priceIntelligenceService';
 
 /**
  * True when a restaurant-scoped caller may access the product:
@@ -61,9 +64,17 @@ export async function adjustProductStock(req: Request, res: Response): Promise<v
       performedById: (req as AuthenticatedRequest).user?.userId,
       purchasePrice: req.body?.purchasePrice,
     });
+    // Live broadcast: other terminals see updated stock levels instantly.
+    try {
+      const { emitToRestaurant } = await import('../socket');
+      emitToRestaurant(restId, 'product:updated', {
+        productId: req.params.id,
+        stockUpdate: { delta, newStock: result?.after },
+      });
+    } catch { /* socket not ready — non-fatal */ }
     res.json({ data: result });
   } catch (error: any) {
-    if (error?.statusCode === 400 || error?.statusCode === 403 || error?.statusCode === 404 || error?.statusCode === 409) {
+    if (error instanceof AppError && [400, 403, 404, 409].includes(error.statusCode)) {
       res.status(error.statusCode).json({ error: error.message });
       return;
     }
@@ -153,8 +164,17 @@ export async function createProduct(req: Request, res: Response): Promise<void> 
       body.restaurantId = new Types.ObjectId(restId);
     }
     const product = await productService.create(body);
+    // Live broadcast: other terminals see the new product instantly.
+    try {
+      const { emitToRestaurant } = await import('../socket');
+      emitToRestaurant(restId, 'product:created', { product });
+    } catch { /* socket not ready — non-fatal */ }
     res.status(201).json({ data: product });
   } catch (error) {
+    if (error instanceof AppError && [400, 403, 404, 409].includes(error.statusCode)) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('[ProductsController] create error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -187,8 +207,18 @@ export async function updateProduct(req: Request, res: Response): Promise<void> 
       res.status(404).json({ error: 'Product not found' });
       return;
     }
+    // Live broadcast: other terminals see the update (availability, price, stock, etc.) instantly.
+    try {
+      const { emitToRestaurant } = await import('../socket');
+      const rid = restId || String((product as any).restaurantId || '');
+      emitToRestaurant(rid, 'product:updated', { product, productId: req.params.id });
+    } catch { /* socket not ready — non-fatal */ }
     res.json({ data: product });
   } catch (error) {
+    if (error instanceof AppError && [400, 403, 404, 409].includes(error.statusCode)) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('[ProductsController] update error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -219,9 +249,69 @@ export async function deleteProduct(req: Request, res: Response): Promise<void> 
       res.status(404).json({ error: 'Product not found' });
       return;
     }
+    // Live broadcast: other terminals remove the product from their grid instantly.
+    try {
+      const { emitToRestaurant } = await import('../socket');
+      emitToRestaurant(restId, 'product:deleted', { productId: req.params.id });
+    } catch { /* socket not ready — non-fatal */ }
     res.json({ success: true });
   } catch (error) {
+    if (error instanceof AppError && [400, 403, 404, 409].includes(error.statusCode)) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('[ProductsController] delete error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// ─── PHASE 11 — PRODUCT RESOLUTION (POS typed search / SKU / barcode) ─
+
+/**
+ * POST /api/products/resolve — resolve a typed/scan query to a product.
+ * Deterministic-first cascade (exact → alias → SKU → fuzzy); the LLM semantic
+ * stage runs ONLY when allowSemantic=true AND deterministic stages missed.
+ * Tenant-scoped from the JWT. Ambiguous queries return ranked alternatives
+ * instead of silently picking one.
+ */
+export async function resolveProductQuery(req: Request, res: Response): Promise<void> {
+  try {
+    const restId = (req as AuthenticatedRequest).user?.restaurantId;
+    const restaurantId = restId ? String(restId) : undefined;
+    const query = String(req.body?.query || req.query?.q || '').trim();
+    if (!query) { res.status(400).json({ error: 'Query is required' }); return; }
+    if (!restaurantId) { res.status(400).json({ error: 'Restaurant context required' }); return; }
+    const result = await resolveMenuProduct(restaurantId, query, {
+      allowSemantic: req.body?.allowSemantic === true,
+    });
+    res.json(result);
+  } catch (error: any) {
+    console.error('[ProductsController] resolve error:', error.message);
+    res.status(500).json({ error: 'Product resolution failed' });
+  }
+}
+
+// ─── PHASE 10 — PRICE INTELLIGENCE (read-only advisory) ──────────────
+
+/**
+ * GET /api/products/price-intelligence — deterministic price-floor and
+ * deterioration advisory per costed product. READ-ONLY: it never changes a
+ * selling price; the owner edits the price through the existing product
+ * editor (authorization + audit flow). Optional branchId scopes pricing to
+ * the branch's price override.
+ */
+export async function productPriceIntelligence(req: Request, res: Response): Promise<void> {
+  try {
+    const restId = (req as AuthenticatedRequest).user?.restaurantId;
+    const restaurantId = restId ? String(restId) : undefined;
+    if (!restaurantId) { res.status(400).json({ error: 'Restaurant context required' }); return; }
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const minUnits = req.query.minUnits ? Number(req.query.minUnits) : undefined;
+    const includeHealthy = req.query.healthy !== '0';
+    const rows = await getPriceIntelligence(restaurantId, { branchId, minUnits, includeHealthy });
+    res.json({ products: rows, targetMargin: 25 });
+  } catch (error: any) {
+    console.error('[ProductsController] price-intelligence error:', error.message);
+    res.status(500).json({ error: 'Price intelligence failed' });
   }
 }

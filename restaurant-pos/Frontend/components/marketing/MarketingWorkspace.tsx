@@ -4,9 +4,9 @@
  *
  * MarketingWorkspace — the redesigned Marketing module.
  *
- * Mental model: Discover → Create → Promote → Sell → Measure.
+ * Mental model: Discover → Advise → Promote → Sell → Measure.
  *   Home             — marketing command center (what should I promote now?)
- *   Create           — 30-60s progressive promotion builder
+ *   Advisory         — AI business advisor + create your own offer
  *   Recommendations  — AI/rule-detected opportunities
  *   Offers           — manage live / upcoming / draft / expired offers
  *   Promote          — tell customers about an offer (campaigns)
@@ -20,7 +20,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  ArrowLeft, LayoutGrid, Plus, Sparkles, Tag, Megaphone, BarChart3, Settings, RefreshCw, CheckCircle,
+  ArrowLeft, LayoutGrid, Plus, Sparkles, Tag, Megaphone, BarChart3, MoreHorizontal, RefreshCw, CheckCircle, Briefcase, Package, ChevronDown, ArrowUpRight,
 } from 'lucide-react';
 import type { LoyaltyReward, SystemSettings, Product } from '../../src/types';
 import { useMarketingData } from './useMarketingData';
@@ -31,11 +31,14 @@ import OffersPage from './OffersPage';
 import PromotePage from './PromotePage';
 import AnalyticsOverview from './AnalyticsOverview';
 import MarketingSettingsPanel from './MarketingSettingsPanel';
-import EasyOfferMaker from './EasyOfferMaker';
+import CampaignWizard from './CampaignWizard';
+import RecommendationPreview from './RecommendationPreview';
+import BusinessAdvisor from './BusinessAdvisor';
 import * as api from '../../src/api/client';
 import { debugWarn } from '../../src/utils/debugLog';
 
-export type MarketingTab = 'home' | 'create' | 'recommendations' | 'offers' | 'promote' | 'analytics' | 'settings';
+
+export type MarketingTab = 'home' | 'advisory' | 'recommendations' | 'offers' | 'promote' | 'analytics' | 'settings';
 
 interface MarketingWorkspaceProps {
   onBack?: () => void;
@@ -45,17 +48,148 @@ interface MarketingWorkspaceProps {
   settings?: SystemSettings;
   onUpdateSettings?: (updated: SystemSettings) => void;
   products?: Product[];
+  /** Active branches — enables per-branch offer targeting in the builder. */
+  branches?: { id: string; name: string; isActive?: boolean }[];
+}
+
+// ─── Promote a Product card (Advisory tab) ──────────────────────
+function PromoteProductCard({
+  products, currencySymbol, branches, onCreateSuggestion, showToast,
+}: {
+  products: Product[];
+  currencySymbol: string;
+  branches: { id: string; name: string }[];
+  onCreateSuggestion: (s: any) => void;
+  showToast: (msg: string) => void;
+}) {
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const filteredProducts = useMemo(() => {
+    if (!products || products.length === 0) return [];
+    const q = search.toLowerCase().trim();
+    const list = q ? products.filter(p => p.name.toLowerCase().includes(q) || (p as any).category?.toLowerCase().includes(q)) : products;
+    return list.slice(0, 50);
+  }, [products, search]);
+
+  const selectedProduct = useMemo(() => {
+    return products?.find(p => p.id === selectedProductId || (p as any)._id === selectedProductId);
+  }, [products, selectedProductId]);
+
+  const handlePromote = () => {
+    if (!selectedProduct) {
+      showToast('Select a product first');
+      return;
+    }
+    // Create an offer pre-filled for this product, then open the campaign wizard
+    onCreateSuggestion({
+      recommendationSource: 'promote_product',
+      recommendationType: 'promotion',
+      title: `Promote ${selectedProduct.name}`,
+      offerSuggestion: {
+        type: 'percentage',
+        value: 10,
+        title: `${selectedProduct.name} Special`,
+        description: `Check out our ${selectedProduct.name} — available now!`,
+        applicableProducts: [selectedProduct.id || (selectedProduct as any)._id],
+        applicableCategories: selectedProduct.category ? [selectedProduct.category] : [],
+        promoteProduct: true,
+        productName: selectedProduct.name,
+      },
+      action: 'create_offer',
+      confidence: 'High',
+      score: 90,
+      why: `Promote ${selectedProduct.name} to drive more sales of this item.`,
+      evidence: [`Product: ${selectedProduct.name}`, `Price: ${currencySymbol}${selectedProduct.price}`],
+      expectedImpact: 'Increased visibility and sales for this product',
+      supportingSignals: [],
+    });
+  };
+
+  return (
+    <div className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-sm">
+            <Package className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Promote a Product</h3>
+            <p className="text-[11px] text-slate-500">Pick any menu item and create a targeted promotion to boost its sales</p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 relative">
+        <button
+          onClick={() => setShowDropdown(!showDropdown)}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-left cursor-pointer hover:border-[var(--brand-color)] transition-colors"
+        >
+          <span className={selectedProduct ? 'text-slate-900 font-semibold' : 'text-slate-400'}>
+            {selectedProduct ? `${selectedProduct.name} — ${currencySymbol}${selectedProduct.price}` : 'Search for a product…'}
+          </span>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+        </button>
+        {showDropdown && (
+          <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+            <div className="p-2 border-b border-slate-100">
+              <input
+                autoFocus
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Type to search products…"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:border-[var(--brand-color)]"
+              />
+            </div>
+            <div className="max-h-56 overflow-y-auto">
+              {filteredProducts.length === 0 ? (
+                <p className="px-3 py-4 text-xs text-slate-400 text-center">No products found</p>
+              ) : (
+                filteredProducts.map((p) => (
+                  <button
+                    key={p.id || (p as any)._id}
+                    onClick={() => {
+                      setSelectedProductId(p.id || (p as any)._id);
+                      setShowDropdown(false);
+                      setSearch('');
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-blue-50 cursor-pointer transition-colors ${
+                      (p.id || (p as any)._id) === selectedProductId ? 'bg-blue-50 text-[var(--brand-color)] font-bold' : 'text-slate-700'
+                    }`}
+                  >
+                    <span className="truncate">{p.name}</span>
+                    <span className="text-slate-400 shrink-0 ml-2">{currencySymbol}{p.price}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      <button
+        onClick={handlePromote}
+        disabled={!selectedProduct}
+        className="mt-3 flex items-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-sm"
+      >
+        <Megaphone className="w-3.5 h-3.5" /> Promote this Product
+        <ArrowUpRight className="w-3 h-3 ml-0.5" />
+      </button>
+    </div>
+  );
 }
 
 export default function MarketingWorkspace({
-  onBack, rewards, onUpdateRewards, currencySymbol, settings, onUpdateSettings, products = [],
+  onBack, rewards, onUpdateRewards, currencySymbol, settings, onUpdateSettings, products = [], branches = [],
 }: MarketingWorkspaceProps) {
   const data = useMarketingData();
   const [tab, setTab] = useState<MarketingTab>('home');
   const [toast, setToast] = useState('');
   const [createPrefill, setCreatePrefill] = useState<any>(null);
   const [promoteOfferId, setPromoteOfferId] = useState<string | null>(null);
-  const [easyOpen, setEasyOpen] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [previewSuggestion, setPreviewSuggestion] = useState<any>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -63,24 +197,41 @@ export default function MarketingWorkspace({
   }, []);
 
   // ─── Cross-tab navigation helpers ──────────────────────────────
+  // Clicking a recommendation card opens a PREVIEW first — nothing is applied
+  // until the owner picks a path. Real recommendations show the preview sheet;
+  // manual "New promotion" placeholders go straight to the builder.
   const goCreateWithSuggestion = useCallback((suggestion: any) => {
-    setCreatePrefill({ mode: 'suggestion', suggestion });
-    setTab('create');
+    if (suggestion?.recommendationSource && suggestion.recommendationSource !== 'manual') {
+      setPreviewSuggestion(suggestion);
+    } else {
+      // Pass the suggestion data directly (flat) so the wizard can prefill
+      setCreatePrefill(suggestion);
+      setCreateModalOpen(true);
+    }
   }, []);
+
+  const handlePreviewEdit = useCallback((suggestion: any) => {
+    setPreviewSuggestion(null);
+    // Pass the suggestion data directly (flat) so the wizard can prefill
+    setCreatePrefill(suggestion);
+    setCreateModalOpen(true);
+  }, []);
+
+
 
   const goCreateWithGoal = useCallback((goal: string) => {
     setCreatePrefill({ mode: 'goal', goal });
-    setTab('create');
+    setCreateModalOpen(true);
   }, []);
 
   const goEditOffer = useCallback((offer: any) => {
     setCreatePrefill({ mode: 'edit', offer });
-    setTab('create');
+    setCreateModalOpen(true);
   }, []);
 
   const goPromoteOffer = useCallback((offerId: string) => {
     setPromoteOfferId(offerId);
-    setTab('promote');
+    setPromoteOpen(true);
   }, []);
 
   const handleStatusChange = useCallback(async (id: string, status: string) => {
@@ -146,11 +297,12 @@ export default function MarketingWorkspace({
 
   const tabs: { id: MarketingTab; label: string; icon: React.ElementType }[] = [
     { id: 'home', label: 'Home', icon: LayoutGrid },
-    { id: 'create', label: 'Create', icon: Plus },
+    { id: 'advisory', label: 'Advisory', icon: Briefcase },
     { id: 'recommendations', label: 'Recommendations', icon: Sparkles },
     { id: 'offers', label: 'Offers', icon: Tag },
     { id: 'promote', label: 'Promote', icon: Megaphone },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'settings', label: 'More', icon: MoreHorizontal },
   ];
 
   const activeCounts = useMemo(() => {
@@ -159,10 +311,18 @@ export default function MarketingWorkspace({
     return { live, recs };
   }, [data.offers, data.recommendations]);
 
+  // One refresh control for the whole module: the header button. It refreshes
+  // everything; while on the Recommendations tab it also asks the LLM for
+  // fresh AI suggestions (same behaviour the old per-page button had).
+  const handleRefresh = useCallback(() => {
+    if (tab === 'recommendations') void data.refreshWithAi();
+    else void data.refresh();
+  }, [tab, data]);
+
   return (
-    <div className="flex flex-col h-full font-sans select-none bg-[#fbfbff]">
+    <div className="flex flex-col h-full font-sans select-none bg-[var(--color-surface-muted)]">
       {/* Header */}
-      <div className="bg-white border-b border-[#e1e2ed] px-5 py-2.5 flex items-center gap-3 shrink-0">
+      <div className="bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] px-5 py-2.5 flex items-center gap-3 shrink-0">
         <button
           onClick={onBack}
           className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"
@@ -202,19 +362,12 @@ export default function MarketingWorkspace({
         </div>
         <div className="flex-1" />
         <button
-          onClick={() => data.refresh()}
+          onClick={handleRefresh}
           className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"
           title="Refresh"
+          aria-label="Refresh"
         >
-          <RefreshCw className={`w-4 h-4 ${data.refreshing ? 'animate-spin' : ''}`} />
-        </button>
-        <button
-          onClick={() => setTab('settings')}
-          className={`p-1.5 rounded-lg transition-all cursor-pointer ${tab === 'settings' ? 'bg-[var(--brand-color)] text-white' : 'text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50'}`}
-          title="Marketing settings — automations, segments, loyalty"
-          aria-label="Marketing settings"
-        >
-          <Settings className="w-4 h-4" />
+          <RefreshCw className={`w-4 h-4 ${data.refreshing || data.aiRefreshing ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
@@ -225,32 +378,56 @@ export default function MarketingWorkspace({
             <MarketingHome
               data={data}
               currencySymbol={currencySymbol}
-              onCreate={() => { setCreatePrefill(null); setTab('create'); }}
               onViewRecommendations={() => setTab('recommendations')}
               onUseSuggestion={goCreateWithSuggestion}
             />
           )}
-          {tab === 'create' && (
-            <CreatePromotion
-              currencySymbol={currencySymbol}
-              products={products}
-              segments={data.segments}
-              prefill={createPrefill}
-              onDone={(status) => {
-                showToast(status === 'draft' ? 'Draft saved' : status === 'scheduled' ? 'Offer scheduled' : 'Offer is now live');
-                setCreatePrefill(null);
-                data.refresh();
-                setTab('offers');
-              }}
-              onCancel={() => { setCreatePrefill(null); setTab('home'); }}
-            />
+          {tab === 'advisory' && (
+            <div className="space-y-5">
+              {/* Create Your Own Offer — manual entry point */}
+              <div className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-sm">
+                      <Plus className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Create Your Own Offer</h3>
+                      <p className="text-[11px] text-slate-500">Build a promotion from scratch — set type, value, rules and publish it live</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setCreatePrefill(null); setCreateModalOpen(true); }}
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-[var(--brand-color)] text-white rounded-xl text-xs font-bold hover:opacity-90 transition-all cursor-pointer shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Create Offer
+                  </button>
+                </div>
+              </div>
+              {/* Promote a Product */}
+              <PromoteProductCard
+                products={products}
+                currencySymbol={currencySymbol}
+                branches={branches}
+                onCreateSuggestion={goCreateWithSuggestion}
+                showToast={showToast}
+              />
+              {/* AI Business Advisor */}
+              <BusinessAdvisor
+                currencySymbol={currencySymbol}
+                branches={branches}
+                onCreateSuggestion={goCreateWithSuggestion}
+                onReviewInventory={() => showToast('Open Inventory from the main menu to review stock')}
+                onViewOffers={() => setTab('offers')}
+                notify={showToast}
+              />
+            </div>
           )}
           {tab === 'recommendations' && (
             <RecommendationsPage
               recommendations={data.recommendations}
               loading={data.loading}
               currencySymbol={currencySymbol}
-              onRefresh={data.refresh}
               onCreate={goCreateWithSuggestion}
             />
           )}
@@ -259,27 +436,59 @@ export default function MarketingWorkspace({
               offers={data.offers}
               loading={data.loading}
               currencySymbol={currencySymbol}
-              onRefresh={data.refresh}
+              branches={branches}
               onEdit={goEditOffer}
               onStatusChange={handleStatusChange}
               onDelete={handleDelete}
               onDuplicate={handleDuplicate}
-              onPromote={goPromoteOffer}
-              onCreate={() => { setCreatePrefill(null); setTab('create'); }}
-              onOpenEasy={() => setEasyOpen(true)}
             />
           )}
-          {easyOpen && (
-            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={() => setEasyOpen(false)}>
-              <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                <EasyOfferMaker
-                  onClose={() => setEasyOpen(false)}
-                  onSaved={() => { setEasyOpen(false); data.refresh(); }}
-                  products={products}
-                  currencySymbol={currencySymbol}
-                />
-              </div>
+          {quickCreateOpen && (
+            <div className="fixed inset-0 z-[90] overflow-y-auto bg-[var(--color-bg-page)]">
+              <CampaignWizard
+                currencySymbol={currencySymbol}
+                products={products}
+                branches={branches}
+                segments={data.segments}
+                settings={settings}
+                prefill={{ mode: 'quick' }}
+                onDone={(offerId, campaignId) => {
+                  showToast('Campaign created!');
+                  setQuickCreateOpen(false);
+                  data.refresh();
+                  setTab('offers');
+                }}
+                onClose={() => setQuickCreateOpen(false)}
+              />
             </div>
+          )}
+          {createModalOpen && (
+            <div className="fixed inset-0 z-[90] overflow-y-auto bg-[var(--color-bg-page)]">
+              <CampaignWizard
+                currencySymbol={currencySymbol}
+                products={products}
+                branches={branches}
+                segments={data.segments}
+                settings={settings}
+                prefill={createPrefill}
+                onDone={(offerId, campaignId) => {
+                  showToast('Campaign broadcast successfully!');
+                  setCreatePrefill(null);
+                  setCreateModalOpen(false);
+                  data.refresh();
+                  setTab('offers');
+                }}
+                onClose={() => { setCreateModalOpen(false); setCreatePrefill(null); }}
+              />
+            </div>
+          )}
+          {previewSuggestion && (
+            <RecommendationPreview
+              suggestion={previewSuggestion}
+              currencySymbol={currencySymbol}
+              onEdit={handlePreviewEdit}
+              onClose={() => setPreviewSuggestion(null)}
+            />
           )}
           {tab === 'promote' && (
             <PromotePage
@@ -287,11 +496,29 @@ export default function MarketingWorkspace({
               segments={data.segments}
               campaigns={data.campaigns}
               currencySymbol={currencySymbol}
-              initialOfferId={promoteOfferId}
-              onClearOffer={() => setPromoteOfferId(null)}
+              initialOfferId={null}
+              onClearOffer={() => {}}
               onRefreshed={data.refresh}
               notify={showToast}
+              onBack={() => setTab('home')}
             />
+          )}
+          {promoteOpen && (
+            <div className="fixed inset-0 z-[90] overflow-y-auto bg-[var(--color-bg-page)]">
+              <div className="p-6 max-w-4xl mx-auto">
+                <PromotePage
+                  offers={data.offers}
+                  segments={data.segments}
+                  campaigns={data.campaigns}
+                  currencySymbol={currencySymbol}
+                  initialOfferId={promoteOfferId}
+                  onClearOffer={() => setPromoteOfferId(null)}
+                  onRefreshed={data.refresh}
+                  notify={showToast}
+                  onBack={() => { setPromoteOpen(false); setPromoteOfferId(null); }}
+                />
+              </div>
+            </div>
           )}
           {tab === 'analytics' && (
             <AnalyticsOverview
@@ -299,7 +526,6 @@ export default function MarketingWorkspace({
               offers={data.offers}
               loading={data.loading}
               currencySymbol={currencySymbol}
-              onRefresh={data.refresh}
             />
           )}
           {tab === 'settings' && (

@@ -134,8 +134,11 @@ export default function MenuAvailabilityPage({
   const isMongoObjectId = (id?: string) => /^[a-fA-F0-9]{24}$/.test(String(id || ''));
   const effectiveRows = useMemo<MenuAvailabilityState[]>(() => {
     if (menu.length > 0) return menu;
+    // Offline fallback — menu items only (availability !== false), so
+    // inventory-only raw materials never surface on this screen, matching
+    // the billing menu's menu-item definition.
     return products
-      .filter((p) => isMongoObjectId(p.id))
+      .filter((p) => isMongoObjectId(p.id) && p.availability !== false)
       .map((p) => ({
         productId: p.id,
         name: p.name,
@@ -238,11 +241,11 @@ export default function MenuAvailabilityPage({
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+      <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
         <button onClick={onBack} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back">
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <span className="text-sm font-bold text-[#191b23]">Menu Availability</span>
+        <span className="text-sm font-bold text-[var(--color-text-primary)]">Menu Availability</span>
         <span className="text-[10px] text-gray-400 ml-auto hidden sm:block">Online ordering control — no inventory needed</span>
         {pendingSync > 0 && (
           <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold">
@@ -251,7 +254,7 @@ export default function MenuAvailabilityPage({
         )}
       </div>
 
-      <div className="px-4 py-3 bg-white border-b border-[#e1e2ed] flex flex-wrap items-center gap-2 shrink-0">
+      <div className="px-4 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] flex flex-wrap items-center gap-2 shrink-0">
         {/* Summary chips */}
         <span className="px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold">
           {availableCount} available
@@ -269,7 +272,7 @@ export default function MenuAvailabilityPage({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search items…"
-            className="pl-8 pr-3 py-1.5 rounded-lg border border-[#e1e2ed] text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 w-40 sm:w-52"
+            className="pl-8 pr-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 w-40 sm:w-52"
           />
         </div>
 
@@ -277,7 +280,7 @@ export default function MenuAvailabilityPage({
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as any)}
-          className="px-2 py-1.5 rounded-lg border border-[#e1e2ed] text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+          className="px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-blue-100"
         >
           <option value="ALL">All items</option>
           <option value="AVAILABLE">Available</option>
@@ -289,7 +292,7 @@ export default function MenuAvailabilityPage({
           <select
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
-            className="px-2 py-1.5 rounded-lg border border-[#e1e2ed] text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+            className="px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-blue-100"
             title="Scope availability to a branch"
           >
             <option value="">All branches (default)</option>
@@ -301,7 +304,7 @@ export default function MenuAvailabilityPage({
       </div>
 
       {/* Category chips */}
-      <div className="px-4 py-2 flex gap-1.5 overflow-x-auto border-b border-[#e1e2ed] bg-[#fafbfc] shrink-0">
+      <div className="px-4 py-2 flex gap-1.5 overflow-x-auto border-b border-[var(--color-border-default)] bg-[var(--color-surface-muted)] shrink-0">
         {categories.map((c) => (
           <button
             key={c}
@@ -309,7 +312,7 @@ export default function MenuAvailabilityPage({
             className={`px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all cursor-pointer ${
               category === c
                 ? 'bg-[var(--brand-color)] text-white shadow-sm'
-                : 'bg-white text-gray-500 border border-[#e1e2ed] hover:border-gray-300'
+                : 'bg-[var(--color-bg-white)] text-gray-500 border border-[var(--color-border-default)] hover:border-gray-300'
             }`}
           >
             {c}
@@ -318,7 +321,7 @@ export default function MenuAvailabilityPage({
       </div>
 
       {/* List */}
-      <div className="flex-1 min-h-0 overflow-y-auto bg-[#fafbfc]">
+      <div className="flex-1 min-h-0 overflow-y-auto bg-[var(--color-surface-muted)]">
         {error && !loading && (
           <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200 text-xs">{error}</div>
         )}
@@ -343,8 +346,8 @@ export default function MenuAvailabilityPage({
               return (
                 <div
                   key={row.productId}
-                  className={`bg-white rounded-xl border transition-all ${
-                    available ? 'border-[#e1e2ed] hover:shadow-sm' : 'border-red-100 bg-red-50/40'
+                  className={`bg-[var(--color-bg-white)] rounded-xl border transition-all ${
+                    available ? 'border-[var(--color-border-default)] hover:shadow-sm' : 'border-red-100 bg-red-50/40'
                   }`}
                 >
                   <div className="flex items-center gap-3 p-3">
@@ -356,7 +359,7 @@ export default function MenuAvailabilityPage({
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-[#191b23] truncate">{row.name}</p>
+                      <p className="text-xs font-bold text-[var(--color-text-primary)] truncate">{row.name}</p>
                       <p className="text-[10px] text-gray-400">
                         {currencySymbol}{row.price.toFixed(2)} · {row.category}
                       </p>
@@ -377,7 +380,7 @@ export default function MenuAvailabilityPage({
                         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold hover:bg-green-100 transition-all cursor-pointer disabled:opacity-50 shrink-0"
                         title="Mark unavailable for online ordering"
                       >
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
+                        <span className="w-2 h-2 rounded-full bg-[var(--color-green-500-solid)]" />
                         ON
                       </button>
                     ) : (
@@ -387,7 +390,7 @@ export default function MenuAvailabilityPage({
                         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-red-50 text-red-600 border border-red-200 text-[10px] font-bold hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50 shrink-0"
                         title="Restore for online ordering"
                       >
-                        <span className="w-2 h-2 rounded-full bg-red-500" />
+                        <span className="w-2 h-2 rounded-full bg-[var(--color-red-500-solid)]" />
                         OFF
                       </button>
                     )}
@@ -395,8 +398,8 @@ export default function MenuAvailabilityPage({
 
                   {/* Unavailable-until panel (when turning OFF) */}
                   {isEditing && (
-                    <div className="px-3 pb-3 border-t border-[#e1e2ed] pt-2.5">
-                      <p className="text-[10px] font-bold text-[#191b23] mb-2">Unavailable for online ordering…</p>
+                    <div className="px-3 pb-3 border-t border-[var(--color-border-default)] pt-2.5">
+                      <p className="text-[10px] font-bold text-[var(--color-text-primary)] mb-2">Unavailable for online ordering…</p>
                       <div className="flex flex-wrap gap-1.5 mb-2">
                         {PRESETS.map((p) => (
                           <button
@@ -416,7 +419,7 @@ export default function MenuAvailabilityPage({
                         value={draftReason}
                         onChange={(e) => setDraftReason(e.target.value)}
                         placeholder="Reason (e.g. Sold out)"
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-[#e1e2ed] text-xs mb-2 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs mb-2 focus:outline-none focus:ring-2 focus:ring-blue-100"
                       />
                       <div className="flex items-center gap-2">
                         <button
@@ -428,7 +431,7 @@ export default function MenuAvailabilityPage({
                         <button
                           onClick={() => applyToggle(row, 'UNAVAILABLE', presetToDate(draftPreset), draftReason || undefined)}
                           disabled={saving}
-                          className="ml-auto flex items-center gap-1 px-3.5 py-1.5 rounded-lg bg-red-600 text-white text-[10px] font-bold hover:bg-red-700 transition-all cursor-pointer disabled:opacity-50"
+                          className="ml-auto flex items-center gap-1 px-3.5 py-1.5 rounded-lg bg-[var(--color-red-600-solid)] text-white text-[10px] font-bold hover:bg-[var(--color-red-700-solid)] transition-all cursor-pointer disabled:opacity-50"
                         >
                           {isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                           Mark unavailable

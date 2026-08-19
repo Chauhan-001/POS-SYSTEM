@@ -10,7 +10,7 @@
  * Auth is handled via aiClient.setAiAuth() called from App.tsx.
  */
 
-import type { InventoryItem, WasteEntry } from '../../components/inventory/types';
+import type { InventoryItem, Purchase, WasteEntry } from '../../components/inventory/types';
 import { aiPost } from './aiClient';
 
 // ============================================================
@@ -18,7 +18,7 @@ import { aiPost } from './aiClient';
 // ============================================================
 
 /** Whether a value came from the live AI backend or the local fallback. */
-export type AiSource = 'live' | 'local' | 'delta';
+export type AiSource = 'live' | 'local' | 'delta' | 'data';
 
 /** Wraps AI-backed data with its provenance so UIs can label local fallbacks. */
 export interface AiResult<T> {
@@ -39,30 +39,12 @@ export interface InventoryHealthScore {
   recommendations: string[];
 }
 
-function isHealthScore(d: any): d is InventoryHealthScore {
-  return !!d
-    && typeof d.overall === 'number'
-    && typeof d.stockHealth === 'number'
-    && typeof d.wasteRate === 'number'
-    && typeof d.expiryRisk === 'number'
-    && Array.isArray(d.recommendations);
-}
-
-export async function computeHealthScore(items: InventoryItem[], wasteTotal: number): Promise<AiResult<InventoryHealthScore>> {
-  // Empty catalog: the backend schema requires items to have >= 1 entries and
-  // would reject an empty array with a 400 — skip the pointless API call and
-  // use the local fallback (which returns a 100 score with an onboarding hint).
-  if (items.length === 0) return { data: computeHealthScoreLocal(items, wasteTotal), source: 'local' };
-  try {
-    const result = await aiPost<InventoryHealthScore>('/inventory-health', { items, wasteTotal });
-    // Guard: only trust a payload that has the full expected shape AND was
-    // produced by the live LLM — a backend `fallback: true` response is an
-    // algorithmic substitute and must be labeled local, never live.
-    if (result.success && !result.fallback && isHealthScore(result.data)) return { data: result.data, source: 'live' };
-  } catch { /* fall through to local */ }
-
-  // ── Local fallback ──────────────────────────────────────────
-  return { data: computeHealthScoreLocal(items, wasteTotal), source: 'local' };
+export async function computeHealthScore(items: InventoryItem[], wasteTotal: number): Promise<AiResult<InventoryHealthScore | null>> {
+  // Deterministic by design: the score is arithmetic over the real catalog
+  // (stock statuses, expiry dates and logged waste). An LLM must never
+  // produce these numbers — it hallucinated scores that contradicted the
+  // KPI cards next to them. The local engine mirrors what the data shows.
+  return { data: computeHealthScoreLocal(items, wasteTotal), source: 'data' };
 }
 
 /** Days from today until the given YYYY-MM-DD expiry (negative = already expired). */
@@ -74,15 +56,20 @@ function daysUntil(expiryDate: string): number {
   return Math.round((t.getTime() - today.getTime()) / 86_400_000);
 }
 
-function computeHealthScoreLocal(items: InventoryItem[], wasteTotal: number): InventoryHealthScore {
+function computeHealthScoreLocal(items: InventoryItem[], wasteTotal: number): InventoryHealthScore | null {
   const total = items.length;
-  if (total === 0) return { overall: 100, stockHealth: 100, wasteRate: 100, expiryRisk: 100, trend: 'stable', recommendations: ['Add inventory items to see health score.'] };
+  if (total === 0) return null;
 
   const healthy = items.filter(i => i.status === 'healthy' || i.status === 'normal').length;
   const critical = items.filter(i => i.status === 'critical').length;
   const stockHealth = Math.round((healthy / total) * 100);
 
-  const wasteRate = Math.max(0, 100 - Math.min(wasteTotal / 50, 1) * 30);
+  // Waste Control from REAL logged waste cost (₹, last 30 days) relative to
+  // the current stock value — 100 when there is no waste, losing up to 30
+  // points as waste reaches 30% of stock value. Never a fabricated count.
+  const stockValue = items.reduce((s, i) => s + i.currentStock * i.averageCost, 0);
+  const wasteRatio = stockValue > 0 ? wasteTotal / stockValue : 0;
+  const wasteRate = Math.max(0, Math.round(100 - Math.min(wasteRatio / 0.3, 1) * 30));
 
   // Expiry risk from REAL batch dates — items already past expiry or inside
   // the 7-day window are the risk drivers (presence alone is not a risk).
@@ -108,7 +95,7 @@ function computeHealthScoreLocal(items: InventoryItem[], wasteTotal: number): In
     const names = expiringSoon.map(e => e.name).slice(0, 3).join(', ');
     recommendations.push(`${expiringSoon.length} item${expiringSoon.length > 1 ? 's' : ''} expire within 7 days (${names}${expiringSoon.length > 3 ? '…' : ''}) — use first-in-first-out or run a quick promotion.`);
   }
-  if (wasteTotal > 200) recommendations.push('Waste is above average. Review portion sizes and storage practices.');
+  if (wasteRatio > 0.1) recommendations.push('Waste is above average. Review portion sizes and storage practices.');
   if (stockHealth > 80 && expiredCount === 0 && expiringSoon.length === 0) recommendations.push('Stock levels are healthy. Keep up the good inventory discipline.');
   if (recommendations.length === 0) recommendations.push('Inventory is in good shape. No urgent actions needed.');
 
@@ -160,17 +147,11 @@ function dedupeRecs(recs: PurchaseRecommendation[]): PurchaseRecommendation[] {
 }
 
 export async function generatePurchaseRecs(items: InventoryItem[]): Promise<AiResult<PurchaseRecommendation[]>> {
-  // Empty catalog: skip the API call (backend rejects items: [] with a 400) and
-  // return the local fallback — no items means nothing to recommend yet.
-  if (items.length === 0) return { data: dedupeRecs(generatePurchaseRecsLocal(items)), source: 'local' };
-  try {
-    const result = await aiPost<{ recommendations: PurchaseRecommendation[] }>('/purchase-recs', { items });
-    // Live only when the backend LLM answered (fallback:false) with a valid shape.
-    if (result.success && !result.fallback && Array.isArray(result.data?.recommendations)) {
-      return { data: dedupeRecs(result.data.recommendations), source: 'live' };
-    }
-  } catch { /* fall through */ }
-  return { data: dedupeRecs(generatePurchaseRecsLocal(items)), source: 'local' };
+  // Deterministic by design: recommendations are derived only from items that
+  // REALLY exist in the catalog (below threshold or expiring). The LLM
+  // previously recommended items that were not in the inventory at all — the
+  // local engine can never name a phantom item because it iterates the catalog.
+  return { data: dedupeRecs(generatePurchaseRecsLocal(items)), source: 'data' };
 }
 
 function generatePurchaseRecsLocal(items: InventoryItem[]): PurchaseRecommendation[] {
@@ -223,16 +204,11 @@ export interface LowStockPrediction {
   suggestedAction: string;
 }
 
-export async function predictLowStock(items: InventoryItem[]): Promise<AiResult<LowStockPrediction[]>> {
-  // Empty catalog: skip the API call (backend rejects items: [] with a 400) and
-  // return the local fallback — an empty inventory has no stockouts to predict.
-  if (items.length === 0) return { data: predictLowStockLocal(items), source: 'local' };
-  try {
-    const result = await aiPost<{ predictions: LowStockPrediction[] }>('/low-stock', { items });
-    // Live only when the backend LLM answered (fallback:false) with a valid shape.
-    if (result.success && !result.fallback && Array.isArray(result.data?.predictions)) return { data: result.data.predictions, source: 'live' };
-  } catch { /* fall through */ }
-  return { data: predictLowStockLocal(items), source: 'local' };
+export async function predictLowStock(items: InventoryItem[], purchases?: Purchase[]): Promise<AiResult<LowStockPrediction[]>> {
+  // Deterministic by design: predictions are computed from real stock levels
+  // and real consumption (purchase history, falling back to a known-name
+  // table) — never from an LLM, which can name items not in the catalog.
+  return { data: predictLowStockLocal(items, purchases), source: 'data' };
 }
 
 // ============================================================
@@ -241,7 +217,7 @@ export async function predictLowStock(items: InventoryItem[]): Promise<AiResult<
 
 /** Result of computing all three inventory AI cards with the local engines. */
 export interface InventoryCardsLocal {
-  health: InventoryHealthScore;
+  health: InventoryHealthScore | null;
   purchaseRecs: PurchaseRecommendation[];
   lowStock: LowStockPrediction[];
 }
@@ -252,25 +228,50 @@ export interface InventoryCardsLocal {
  * page is open, so stock edits / purchases / waste refresh instantly without
  * burning tokens. Mirrors exactly what the LLM-backed functions fall back to.
  */
-export function computeInventoryCardsLocal(items: InventoryItem[], wasteTotal: number): InventoryCardsLocal {
+export function computeInventoryCardsLocal(items: InventoryItem[], wasteTotal: number, purchases?: Purchase[]): InventoryCardsLocal {
   return {
     health: computeHealthScoreLocal(items, wasteTotal),
     purchaseRecs: dedupeRecs(generatePurchaseRecsLocal(items)),
-    lowStock: predictLowStockLocal(items),
+    lowStock: predictLowStockLocal(items, purchases),
   };
 }
 
-function predictLowStockLocal(items: InventoryItem[]): LowStockPrediction[] {
+/** Known daily consumption rates (per unit) used only when there is no
+ * purchase history for an item — never for items with real purchase data. */
+const KNOWN_DAILY_CONSUMPTION: Record<string, number> = {
+  'Milk': 18, 'Tea Powder': 0.8, 'Bread': 12, 'Potato': 15,
+  'Cooking Oil': 3, 'Sugar': 2, 'Lemon': 20, 'Tomato': 8,
+  'Onion': 6, 'Flour (Atta)': 4, 'Rice': 3, 'Butter': 0.5,
+  'Cheese': 0.3, 'Paneer': 1, 'Chicken': 5,
+};
+
+function predictLowStockLocal(items: InventoryItem[], purchases?: Purchase[]): LowStockPrediction[] {
+  // Real daily consumption from purchase history: units bought in the last 30
+  // days ÷ 30. Falls back to the known-name table for items without purchase
+  // data, and never guesses for items with no consumption signal at all (no
+  // fabricated predictions).
+  const thirtyDaysAgo = Date.now() - 30 * 86_400_000;
+  const bought = new Map<string, number>();
+  (purchases || []).forEach((p) => {
+    if (p.status !== 'completed') return;
+    const t = new Date(p.date).getTime();
+    if (!Number.isFinite(t) || t < thirtyDaysAgo) return;
+    const qty = Number(p.quantity) || 0;
+    if (qty <= 0) return;
+    bought.set(p.item.toLowerCase(), (bought.get(p.item.toLowerCase()) || 0) + qty);
+  });
+
+  const consumptionOf = (name: string): number | null => {
+    const fromHistory = bought.get(name.toLowerCase());
+    if (fromHistory && fromHistory > 0) return fromHistory / 30;
+    const known = KNOWN_DAILY_CONSUMPTION[name];
+    return known && known > 0 ? known : null; // null = no signal → skip
+  };
+
   const predictions: LowStockPrediction[] = [];
   for (const item of items) {
-    const dailyConsumption: Record<string, number> = {
-      'Milk': 18, 'Tea Powder': 0.8, 'Bread': 12, 'Potato': 15,
-      'Cooking Oil': 3, 'Sugar': 2, 'Lemon': 20, 'Tomato': 8,
-      'Onion': 6, 'Flour (Atta)': 4, 'Rice': 3, 'Butter': 0.5,
-      'Cheese': 0.3, 'Paneer': 1, 'Chicken': 5,
-    };
-    const daily = dailyConsumption[item.name] || 1;
-    if (daily <= 0) continue;
+    const daily = consumptionOf(item.name);
+    if (daily === null || daily <= 0) continue;
     const daysUntilOut = Math.floor(item.currentStock / daily);
     if (daysUntilOut <= 7) {
       predictions.push({
@@ -304,6 +305,109 @@ export interface DailyAISummary {
   alerts: { message: string; severity: 'info' | 'warning' | 'critical' }[];
 }
 
+/** "HH:MM" → minutes since midnight (safe for undefined/partial values). */
+function minutesOf(time: string | undefined, fallback: string): number {
+  const t = (time || fallback).slice(0, 5);
+  const [h, m] = t.split(':').map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+/** Round a rupee figure to a clean display value (nearest 100 ≥ ₹1k, else 50). */
+function money(n: number): string {
+  const r = n >= 1000 ? Math.round(n / 100) * 100 : Math.round(n / 50) * 50;
+  return Math.max(0, r).toLocaleString('en-IN');
+}
+
+/**
+ * Deterministic revenue projection — computed from TODAY'S ACTUAL revenue and
+ * the run-rate so far, never invented by an LLM. Guarantees correctness:
+ *   - No sales yet        → honest "projection appears after the first order"
+ *   - Past closing        → the business day is complete, report actuals
+ *   - Mid-day             → revenue so far + (pace × hours remaining), ±15%
+ */
+export function computeRevenueProjection(
+  todayRevenue: number,
+  openingTime?: string,
+  closingTime?: string,
+): string {
+  if (todayRevenue <= 0) {
+    return 'No sales yet today — a projection appears after the first order.';
+  }
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const openMin = minutesOf(openingTime, '08:00');
+  const closeMin = minutesOf(closingTime, '23:59');
+
+  // Past BOTH opening and closing → the open→close window has elapsed and the
+  // business day is complete. (A pre-opening check wraps instead: the current
+  // window started "yesterday" and its close is still ahead today.)
+  if (nowMin >= closeMin && nowMin >= openMin) {
+    return `₹${money(todayRevenue)} — the business day is complete.`;
+  }
+  // Hours elapsed since the business day opened (wraps past midnight — the
+  // window may have started "yesterday" for a pre-opening check).
+  let elapsed = (nowMin - openMin) / 60;
+  if (elapsed < 0) elapsed += 24;
+  // Hours remaining until closing.
+  let remaining = (closeMin - nowMin) / 60;
+  if (remaining < 0) remaining += 24;
+  if (remaining <= 0 || remaining >= 24) {
+    return `₹${money(todayRevenue)} — the business day is complete.`;
+  }
+
+  const pace = todayRevenue / Math.max(0.25, elapsed); // ₹ per hour so far
+  const projected = todayRevenue + pace * remaining;
+  const low = Math.max(todayRevenue, Math.round(projected * 0.85));
+  const high = Math.round(projected * 1.15);
+  return `Projected ₹${money(low)}–₹${money(high)} by ${closingTime || 'close'} at the current pace of ₹${money(Math.round(pace))}/hr.`;
+}
+
+/**
+ * Deterministic key insight — derived ONLY from the real numbers on screen
+ * (revenue vs yesterday, orders, top seller, stock). Never states anything
+ * the data doesn't support.
+ */
+export function computeKeyInsight(facts: {
+  todayRevenue: number;
+  yesterdayRevenue: number;
+  orderCount: number;
+  itemCount: number;
+  averageOrderValue: number;
+  topItems: { name: string; qty: number; revenue?: number }[];
+  lowStockCount: number;
+  openOrderCount: number;
+}): string {
+  const { todayRevenue, yesterdayRevenue, orderCount, averageOrderValue, topItems, lowStockCount, openOrderCount } = facts;
+  const n = (v: number) => v.toLocaleString('en-IN');
+
+  if (todayRevenue > 0) {
+    // Revenue trend vs the previous business day — only when both have data.
+    if (yesterdayRevenue > 0) {
+      const diff = todayRevenue - yesterdayRevenue;
+      const pct = Math.round((Math.abs(diff) / yesterdayRevenue) * 100);
+      return diff >= 0
+        ? `Revenue is ₹${n(todayRevenue)} — up ${pct}% vs yesterday (₹${n(yesterdayRevenue)}).`
+        : `Revenue is ₹${n(todayRevenue)} — down ${pct}% vs yesterday (₹${n(yesterdayRevenue)}).`;
+    }
+    // First sales of the day — lead with what is driving them.
+    if (topItems.length > 0 && orderCount > 0) {
+      const top = topItems[0];
+      const aov = averageOrderValue > 0 ? ` · avg order ₹${n(averageOrderValue)}` : '';
+      return `₹${n(todayRevenue)} from ${orderCount} order${orderCount === 1 ? '' : 's'} today — ${top.name} is the top seller (${top.qty}×)${aov}.`;
+    }
+    return `₹${n(todayRevenue)} in revenue from ${orderCount} order${orderCount === 1 ? '' : 's'} so far today.`;
+  }
+
+  // No revenue recorded yet — say why, factually.
+  if (openOrderCount > 0) {
+    return `${openOrderCount} open order${openOrderCount === 1 ? '' : 's'} in progress — revenue posts when they are billed.`;
+  }
+  if (lowStockCount > 0) {
+    return `No sales yet today — ${lowStockCount} item${lowStockCount === 1 ? '' : 's'} already low on stock.`;
+  }
+  return 'No sales yet today — the day is just getting started.';
+}
+
 export async function generateDailySummary(
   todayRevenue: number,
   yesterdayRevenue: number,
@@ -321,7 +425,10 @@ export async function generateDailySummary(
     paymentMethods: { method: string; amount: number; count?: number }[];
     categoryBreakdown: { category: string; qty: number; revenue?: number }[];
   }>,
+  /** Business-day window (settings.openingTime/closingTime) for the projection. */
+  businessHours?: { openingTime?: string; closingTime?: string },
 ): Promise<DailyAISummary> {
+  let summary: DailyAISummary;
   try {
     // Real sales context — the LLM must see the actual order/item/top-seller
     // numbers, not zeros. Previously orderCount/itemCount were hardcoded 0,
@@ -341,10 +448,30 @@ export async function generateDailySummary(
     const result = await aiPost<DailyAISummary>('/summary', { sales, lowStockCount, openOrderCount, wasteToday, customerCount });
     // Guard: only trust a payload that has the full expected shape.
     if (result.success && result.data && typeof result.data.keyInsight === 'string' && Array.isArray(result.data.itemSuggestions) && Array.isArray(result.data.alerts)) {
-      return { ...result.data, date: new Date().toLocaleDateString(), greeting: getLocalGreeting() };
+      summary = { ...result.data, date: new Date().toLocaleDateString(), greeting: getLocalGreeting() };
+    } else {
+      summary = generateDailySummaryLocal(todayRevenue, yesterdayRevenue, lowStockCount, openOrderCount, wasteToday, customerCount);
     }
-  } catch { /* fall through */ }
-  return generateDailySummaryLocal(todayRevenue, yesterdayRevenue, lowStockCount, openOrderCount, wasteToday, customerCount);
+  } catch { /* fall through */
+    summary = generateDailySummaryLocal(todayRevenue, yesterdayRevenue, lowStockCount, openOrderCount, wasteToday, customerCount);
+  }
+
+  // GUARANTEE CORRECTNESS — the revenue projection and the key insight are
+  // derived from the REAL numbers, never left to the LLM (which can invent
+  // ranges like "₹0–₹20k" on a zero-revenue day, or claim "no sales" despite
+  // revenue). The AI still supplies top priority, suggestions and alerts.
+  summary.revenuePrediction = computeRevenueProjection(todayRevenue, businessHours?.openingTime, businessHours?.closingTime);
+  summary.keyInsight = computeKeyInsight({
+    todayRevenue,
+    yesterdayRevenue,
+    orderCount: salesContext?.orderCount ?? 0,
+    itemCount: salesContext?.itemCount ?? 0,
+    averageOrderValue: salesContext?.averageOrderValue ?? 0,
+    topItems: salesContext?.topItems ?? [],
+    lowStockCount,
+    openOrderCount,
+  });
+  return summary;
 }
 
 function getLocalGreeting(): string {
@@ -599,7 +726,7 @@ function generateClosingAssistantLocal(
   const revenuePrediction = `AI projects ₹${(totalRevenue * 1.1).toFixed(0)}–₹${(totalRevenue * 1.3).toFixed(0)} tomorrow based on today's performance.`;
 
   return {
-    todaySummary: `₹${totalRevenue.toLocaleString()} from ${orderCount} order${orderCount > 1 ? 's' : ''}`,
+    todaySummary: `₹${totalRevenue.toLocaleString('en-IN')} from ${orderCount} order${orderCount > 1 ? 's' : ''}`,
     tomorrowPrep: [
       lowStockItems > 0 ? `Reorder ${lowStockItems} low-stock item${lowStockItems > 1 ? 's' : ''} first thing.` : 'Stock levels are healthy for tomorrow.',
       wasteCost > 200 ? 'Review portion sizes for high-waste items.' : 'Waste is under control.',

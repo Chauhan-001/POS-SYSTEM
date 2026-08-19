@@ -23,8 +23,10 @@ function authCtx(req: Request) {
 export async function listFloors(req: Request, res: Response): Promise<void> {
   try {
     const { branchId, active } = req.query;
+    // Missing 'active' must stay undefined (not false) — otherwise every
+    // floor with isActive:true is filtered out when no filter is requested.
     const result = await floorService.list(
-      { branchId: branchId as string, active: active === 'true' },
+      { branchId: branchId as string, active: active === undefined ? undefined : active === 'true' },
       authCtx(req)
     );
     res.json({ data: result.data, total: result.total });

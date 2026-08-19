@@ -19,6 +19,7 @@ import { orderRepo, orderItemRepo, kotRecordRepo, timelineEventRepo, takeawayOrd
 import { tableStateService, type ReconcileCtx } from './tableStateService';
 import { OrderCounter, Order, TakeawayOrder } from '../models';
 import KOTRecord, { kotToFrontend } from '../models/KOTRecord';
+import { AppError } from '../utils/AppError';
 
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
 
@@ -163,6 +164,33 @@ export class OrderService {
    * Reconciles the linked table (Dine-In) via the state machine.
    */
   async create(data: any, ctx: ReconcileCtx = {}) {
+    // Tenant authority — the authenticated restaurant always owns the order.
+    // Never trust a client-supplied restaurantId (multi-tenant isolation):
+    // POS-created orders historically omitted it and ended up orphaned
+    // (invisible to every tenant-scoped read).
+    if (ctx.restaurantId) data.restaurantId = ctx.restaurantId;
+
+    // ONE live order per table — the same rule the QR ordering module
+    // enforces. A Dine-In order may only be created on a table with no other
+    // live order, so a customer's QR/website order on the same table and the
+    // cashier's first-KOT order can never coexist (a table can be occupied by
+    // exactly one order at a time). Without this, the reverse race slipped
+    // through: customer scans + orders first, then the cashier's KOT created
+    // a SECOND order on the same table.
+    if (data.tableId && (data.type || '').toLowerCase() === 'dine in') {
+      const occupying = await orderRepo.findOne({
+        tableId: String(data.tableId),
+        status: { $nin: TERMINAL_ORDER_STATUSES },
+      } as any);
+      if (occupying) {
+        const err: any = new AppError(
+          409,
+          `Table already has an open order (#${(occupying as any).orderNumber}). Open that order to add more items.`
+        );
+        (err as any).code = 'TABLE_ALREADY_OCCUPIED';
+        throw err;
+      }
+    }
     const order = await orderRepo.create(data);
 
     await timelineEventRepo.create({
@@ -197,6 +225,10 @@ export class OrderService {
    */
   async update(id: string, data: any, ctx: ReconcileCtx = {}) {
     const { items, timelineEvent, kotRecords, ...orderData } = data;
+    // Tenant authority — stamp from the authenticated context so orphaned
+    // rows (created before tenant stamping) heal on their next update and a
+    // client can never move an order to another restaurant.
+    if (ctx.restaurantId) orderData.restaurantId = ctx.restaurantId;
 
     // Record timeline event if there's a status change
     if (orderData.status && timelineEvent !== false) {
@@ -207,6 +239,14 @@ export class OrderService {
         actor: orderData.updatedBy || ctx.operator || 'System',
       } as any);
     }
+
+    // The previous status is needed to detect a REOPEN (terminal → live): a
+    // Paid/Closed/Cancelled/Refunded order moving back to a live status must
+    // re-activate its online-order notification so the card returns to the
+    // pending list and acknowledgment is re-gated for the new bill cycle.
+    const previousStatus = orderData.status
+      ? String(((await orderRepo.findById(id)) as any)?.status || '')
+      : '';
 
     const order = await orderRepo.update(id, orderData);
     if (!order) return null;
@@ -253,6 +293,7 @@ export class OrderService {
               price: Number.isFinite(Number(item.price)) ? Number(item.price) : undefined,
               notes: item.notes,
               variantName: item.selectedVariant?.name || item.variantName,
+              configSummary: item.configSummary || undefined,
               cancelled: !!item.cancelled,
               cancelReason: item.cancelReason,
               cancelledAt: item.cancelledAt,
@@ -275,6 +316,87 @@ export class OrderService {
     const tableId = (order as any).tableId || orderData.tableId;
     if (tableId) {
       await tableStateService.reconcileTable(tableId, ctx).catch(() => undefined);
+    }
+
+    // A terminal status frees the table for the next seating — release any
+    // active QR seat-claim immediately (a stale claim would otherwise block
+    // the table until its 15-minute TTL after the bill is settled).
+    if (tableId && orderData.status && TERMINAL_ORDER_STATUSES.includes(String(orderData.status))) {
+      const { publicStoreOrderService } = await import('../modules/public-store/services/publicStoreOrderService');
+      await publicStoreOrderService.releaseTableClaims(tableId).catch(() => undefined);
+    }
+
+    // Resolve the ONLINE_ORDER notification once the order's bill closes
+    // (Paid/Closed/Cancelled/Refunded). The cashier can silence the reminder
+    // earlier (SEEN) while the card stays live; reaching a terminal status is
+    // what actually completes it. Idempotent — a second terminal update finds
+    // nothing left in PENDING/SEEN.
+    if (orderData.status && TERMINAL_ORDER_STATUSES.includes(String(orderData.status))) {
+      const CustomerRequest = (await import('../modules/qr-ordering/models/CustomerRequest')).default;
+      await CustomerRequest.updateMany(
+        { type: 'ONLINE_ORDER', orderId: id, status: { $in: ['PENDING', 'SEEN'] } },
+        {
+          $set: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            completedBy: orderData.updatedBy || ctx.operator || 'System',
+          },
+        }
+      ).exec().catch(() => undefined);
+    }
+
+    // REOPEN — the reverse of the block above: a terminal order returning to
+    // a LIVE status (a Paid bill reopened to add items, a Held order resumed)
+    // re-activates its ONLINE_ORDER notification. The card comes back to the
+    // pending list so the reminder rings again and acknowledgment is
+    // re-gated (silence keeps it live until the bill closes again) instead of
+    // sitting silently in Acknowledged while the order is actually active.
+    // Idempotent — only COMPLETED rows are touched, so live-status updates on
+    // already-live orders change nothing. Refunds stay terminal → terminal,
+    // so a refunded order keeps its completed card (bill closed either way).
+    if (
+      orderData.status &&
+      previousStatus &&
+      TERMINAL_ORDER_STATUSES.includes(previousStatus) &&
+      !TERMINAL_ORDER_STATUSES.includes(String(orderData.status))
+    ) {
+      const CustomerRequest = (await import('../modules/qr-ordering/models/CustomerRequest')).default;
+      const reactivated = await CustomerRequest.find({
+        type: 'ONLINE_ORDER',
+        orderId: id,
+        status: 'COMPLETED',
+      })
+        .lean()
+        .exec()
+        .catch(() => []);
+      if (reactivated.length > 0) {
+        await CustomerRequest.updateMany(
+          { type: 'ONLINE_ORDER', orderId: id, status: 'COMPLETED' },
+          {
+            $set: { status: 'PENDING' },
+            $unset: { completedAt: '', completedBy: '', seenAt: '', seenBy: '' },
+          }
+        ).exec().catch(() => undefined);
+        // Live push: every POS terminal moves the card from Acknowledged back
+        // to Pending instantly (the 15s poll would heal it too, but the card
+        // must not sit in the wrong section meanwhile).
+        const { emitToRestaurant } = await import('../socket');
+        for (const r of reactivated) {
+          emitToRestaurant(r.restaurantId, 'waiter:call:reactivated', {
+            id: String(r._id),
+            status: 'PENDING',
+            type: r.type,
+            orderType: r.orderType,
+            branchId: r.branchId ? String(r.branchId) : null,
+            tableId: r.tableId ? String(r.tableId) : null,
+            carId: r.carId || null,
+            orderId: r.orderId ? String(r.orderId) : null,
+            orderNumber: r.orderNumber ?? null,
+            message: r.message ?? null,
+            createdAt: r.createdAt,
+          });
+        }
+      }
     }
 
     // Sync status to TakeawayOrder if linked
@@ -320,6 +442,11 @@ export class OrderService {
 
     if (tableId && !TERMINAL_ORDER_STATUSES.includes(String((existing as any).status))) {
       await tableStateService.reconcileTable(tableId, ctx).catch(() => undefined);
+    }
+    // Cancelled/deleted orders release the table for the next guest too.
+    if (tableId) {
+      const { publicStoreOrderService } = await import('../modules/public-store/services/publicStoreOrderService');
+      await publicStoreOrderService.releaseTableClaims(tableId).catch(() => undefined);
     }
     return deleted;
   }

@@ -1,4 +1,4 @@
-import { Layers, Users, Award, Shield, DollarSign, Activity, FileText, RefreshCw, TrendingDown, BarChart3, CalendarClock, Building2, Receipt, TrendingUp, Monitor, ToggleLeft, QrCode } from 'lucide-react';
+import { Layers, Users, Award, Shield, DollarSign, Activity, FileText, RefreshCw, TrendingDown, BarChart3, CalendarClock, Building2, Receipt, TrendingUp, Monitor, ToggleLeft, QrCode, MessageSquare } from 'lucide-react';
 
 import { useState, useEffect } from 'react';
 import type { RolePermissions } from '../src/types';
@@ -134,7 +134,8 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
     ...(isAnalyticsEnabled ? [{ icon: TrendingUp, label: 'Analytics', desc: 'Business intelligence & trends', action: () => onNavigate('Analytics'), color: 'text-indigo-600' as const }] : []),
     ...(isFinanceEnabled ? [{ icon: BarChart3, label: 'Finance', desc: 'Profit & Loss statement', action: () => onNavigate('Finance'), color: 'text-emerald-600' as const }] : []),
     ...(isLoyaltyEnabled ? [{ icon: Users, label: 'Customers', desc: 'Loyalty management', action: () => onNavigate('Customers'), color: 'text-green-600' as const }] : []),
-    ...(isOffersEnabled ? [{ icon: Award, label: 'Offers', desc: 'Reward tiers', action: () => onNavigate('Offers'), color: 'text-amber-600' as const }] : []),
+    ...(isOffersEnabled ? [{ icon: Award, label: 'Marketing', desc: 'Offers, campaigns & promotions', action: () => onNavigate('Offers'), color: 'text-amber-600' as const }] : []),
+    { icon: MessageSquare, label: 'Feedback', desc: 'Customer reviews from QR scans', action: () => onNavigate('Feedback'), color: 'text-teal-600' },
     ...(isStaffEnabled ? [{ icon: Shield, label: 'Staff', desc: 'Employee management', action: () => onNavigate('Staff'), color: 'text-blue-600' as const }] : []),
     ...(isMultiBranchEnabled ? [{ icon: Building2, label: 'Branches', desc: 'Multi-location management', action: () => onNavigate('Branches'), color: 'text-purple-600' as const }] : []),
     { icon: DollarSign, label: 'Daily Sales', desc: 'View today revenue', action: onOpenDailySales, color: 'text-green-600' },
@@ -148,14 +149,14 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
   const filteredItems = items.filter(item => canAccess(item.label));
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 bg-[#faf8ff]">
+    <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4 bg-[var(--color-bg-page)]">
       <h2 className="text-xl font-bold">More Options</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {filteredItems.map((item) => {
           const Icon = item.icon;
           return (
             <button key={item.label} onClick={item.action}
-              className="p-6 bg-white rounded-xl border border-[#e1e2ed] hover:shadow-md hover:border-[var(--brand-color)]/30 transition-all text-left cursor-pointer">
+              className="p-6 bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] hover:shadow-md hover:border-[var(--brand-color)]/30 transition-all text-left cursor-pointer">
               <Icon className={`w-8 h-8 ${item.color} mb-2`} />
               <p className="text-sm font-bold">{item.label}</p>
               <p className="text-xs text-gray-500">{item.desc}</p>

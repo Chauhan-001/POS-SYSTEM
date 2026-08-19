@@ -13,11 +13,13 @@
  * Rules enforced:
  *   1. Blocked devices  → login/refresh/registration rejected (403).
  *   2. Active devices   → metadata refreshed (lastLoginAt, reactivated).
- *   3. New devices      → plan device limit (maxDevices) enforced per restaurant.
+ *   3. New devices      → plan device limit (maxDevicesPerBranch) enforced PER
+ *                         BRANCH — each branch may register up to its own limit.
  *
- * The device limit comes from the restaurant's Subscription (maxDevices or
- * limits.maxDevices, defaulting to 3). A new device is allowed only while the
- * number of non-blocked registered devices is below the limit.
+ * The device limit comes from the restaurant's Subscription limits snapshot
+ * (limits.maxDevicesPerBranch, legacy limits.maxDevices / maxDevices fallback,
+ * defaulting to 3). A new device is allowed only while the number of
+ * non-blocked devices at ITS branch is below the limit.
  *
  * Error contract:
  *   DeviceBlockedError        → 403, code DEVICE_BLOCKED
@@ -65,39 +67,49 @@ export interface DevicePolicyOptions {
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 /**
- * Resolve the plan's device limit for a restaurant.
- * Precedence: subscription.maxDevices → subscription.limits.maxDevices → 3.
- * 0 = unlimited.
+ * Resolve the plan's device limit (per branch) for a restaurant.
+ * Precedence: subscription.limits.maxDevicesPerBranch → legacy
+ * subscription.limits.maxDevices → subscription.maxDevices → 3. 0 = unlimited.
  */
 export async function getMaxDevices(restaurantId: string): Promise<number> {
   try {
     const sub = await Subscription.findOne({ restaurantId: restaurantId as any }).exec();
-    return sub?.maxDevices ?? sub?.limits?.maxDevices ?? 3;
+    return sub?.limits?.maxDevicesPerBranch ?? (sub?.limits as any)?.maxDevices ?? sub?.maxDevices ?? 3;
   } catch {
     return 3;
   }
 }
 
 /**
- * Check whether a restaurant has capacity for another device (Phase 2.5).
+ * Check whether a branch has capacity for another device (Phase 2.5).
  * Reused by the deviceService registration flow so limits are enforced BEFORE
- * any device record is created. `currentCount` counts non-blocked devices for
- * the restaurant OR the principal (legacy rows keyed only by userId), deduped
- * per document — the same semantics enforceDevicePolicy uses.
+ * any device record is created. The limit is PER BRANCH: when `branchId` is
+ * provided, `currentCount` counts non-blocked devices registered to that
+ * branch; legacy device rows without a branchId are only counted for the
+ * restaurant when no branch is specified.
  */
 export async function checkDeviceCapacity(
   restaurantId: string | undefined,
   userId: string,
+  branchId?: string,
 ): Promise<{ allowed: boolean; maxDevices: number; currentCount: number }> {
   if (!restaurantId) return { allowed: true, maxDevices: 0, currentCount: 0 };
   const maxDevices = await getMaxDevices(restaurantId);
   // 0 = unlimited.
   if (maxDevices === 0) return { allowed: true, maxDevices, currentCount: 0 };
-  const currentCount = await Device.countDocuments({
-    $or: [{ restaurantId: restaurantId as any }, { userId: userId as any }],
+  const filter: Record<string, any> = {
     status: { $ne: 'blocked' },
     isDeleted: { $ne: true },
-  }).exec();
+  };
+  if (branchId) {
+    // Per-branch limit — count only devices registered to this branch.
+    filter.restaurantId = restaurantId as any;
+    filter.branchId = branchId as any;
+  } else {
+    // No branch context (legacy) — restaurant-wide count.
+    filter.$or = [{ restaurantId: restaurantId as any }, { userId: userId as any }];
+  }
+  const currentCount = await Device.countDocuments(filter).exec();
   return { allowed: currentCount < maxDevices, maxDevices, currentCount };
 }
 

@@ -459,8 +459,7 @@ describe('getSubscriptionLimits', () => {
     expect(result!.planName).toBe('Professional Plan');
     expect(result!.status).toBe('active');
     expect(result!.limits.maxBranches).toBe(2);
-    expect(result!.limits.maxDevices).toBe(3);
-    expect(result!.limits.maxEmployees).toBe(10);
+    expect(result!.limits.maxDevicesPerBranch).toBe(3);
     expect(result!.features).toEqual(['core_pos', 'basic_reports', 'multi_branch', 'ai']);
   });
 

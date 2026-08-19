@@ -14,6 +14,7 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../../../middleware/authMiddleware';
 import { AppError } from '../../../utils/AppError';
+import Restaurant from '../../../models/Restaurant';
 import { settingsService, SettingsService } from '../services/settingsService';
 
 function actorOf(req: AuthenticatedRequest) {
@@ -54,6 +55,15 @@ export function makeSettingsController(service: SettingsService = settingsServic
     async patch(req: Request, res: Response): Promise<void> {
       try {
         const result = await service.patch(req.body, actorOf(req as AuthenticatedRequest));
+        // Live broadcast: other terminals pull the updated settings on next poll.
+        try {
+          const { emitToRestaurant } = await import('../../../socket');
+          const rid = (req as AuthenticatedRequest).user?.restaurantId;
+          emitToRestaurant(rid, 'settings:updated', {
+            scope: req.body?.scope || 'restaurant',
+            settingsVersion: result?.settingsVersion,
+          });
+        } catch { /* socket not ready — non-fatal */ }
         res.json(result);
       } catch (error) { handleError(res, error, 'patch'); }
     },
@@ -87,6 +97,37 @@ export function makeSettingsController(service: SettingsService = settingsServic
         const result = await service.listAudit(restaurantId, page, limit);
         res.json(result);
       } catch (error) { handleError(res, error, 'listAudit'); }
+    },
+
+    /** GET /api/settings/restaurant-profile — Restaurant profile data from the registration / admin panel. */
+    async getRestaurantProfile(req: Request, res: Response): Promise<void> {
+      try {
+        const { restaurantId } = (req as AuthenticatedRequest).user!;
+        const restaurant = await Restaurant.findOne({ _id: restaurantId, isDeleted: { $ne: true } })
+          .select('name brandName legalName gst fssai pan businessRegNumber ownerName ownerPhone ownerEmail phone altPhone email address area city district state country pinCode logoUrl currency')
+          .lean().exec();
+        if (!restaurant) {
+          res.status(404).json({ error: 'Restaurant not found' });
+          return;
+        }
+        res.json({
+          restaurantName: restaurant.brandName || restaurant.name || '',
+          gstin: restaurant.gst || '',
+          fssai: restaurant.fssai || '',
+          pan: restaurant.pan || '',
+          businessRegNumber: restaurant.businessRegNumber || '',
+          ownerName: restaurant.ownerName || '',
+          phone: restaurant.phone || '',
+          altPhone: restaurant.altPhone || '',
+          email: restaurant.email || '',
+          address: [restaurant.address, restaurant.area].filter(Boolean).join(', '),
+          city: restaurant.city || '',
+          state: restaurant.state || '',
+          pinCode: restaurant.pinCode || '',
+          logoUrl: restaurant.logoUrl || '',
+          currency: restaurant.currency || 'INR',
+        });
+      } catch (error) { handleError(res, error, 'getRestaurantProfile'); }
     },
 
     /** Health probe for the settings engine (no external deps). */

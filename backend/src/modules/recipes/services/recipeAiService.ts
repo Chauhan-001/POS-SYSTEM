@@ -24,6 +24,7 @@ import { complete } from '../../ai/provider/llmProvider';
 import { parseJsonResponse } from '../../ai/services/responseParser';
 import { AppError } from '../../../utils/AppError';
 import { normalizeUnit, familyOf } from './unitConversion';
+import { builtinCanonicalName } from '../../voice-inventory/services/AliasResolver';
 
 // ─── Structured output contract (LLM MUST return exactly this) ────
 const aiIngredientSchema = z.object({
@@ -159,6 +160,12 @@ export class RecipeAiService {
       // ("paneer" with 4 paneer dishes) is surfaced as ambiguous (MEDIUM)
       // instead of silently picking the first one.
       const q = ing.ingredientText.toLowerCase();
+      // Built-in food dictionary ("doodh" → "Fresh Milk") — a spoken term with
+      // ZERO token overlap to the inventory name still resolves, e.g. saying
+      // "2 litre doodh" matches the "Fresh Milk" inventory item. Null when
+      // the term isn't a known built-in alias.
+      const canonical = builtinCanonicalName(ing.ingredientText);
+      const canonicalNorm = canonical ? canonical.toLowerCase().trim() : null;
       let best: any = null;
       let bestScore = 0;
       let secondScore = 0;
@@ -167,7 +174,16 @@ export class RecipeAiService {
           .map((a: any) => String(a?.alias ?? a ?? '').toLowerCase());
         if (item.name.toLowerCase() === q) { best = item; bestScore = 1; secondScore = 0; break; }
         if (aliases.includes(q)) { best = item; bestScore = 0.95; secondScore = 0; break; }
-        const s = nameScore(ing.ingredientText, item.name);
+        let s = nameScore(ing.ingredientText, item.name);
+        // Dictionary canonical boost: "doodh" → canonical "Fresh Milk". An
+        // exact canonical name match is a near-certain resolve (HIGH); a
+        // containment match ("Amul Fresh Milk" vs canonical "Fresh Milk") is
+        // a strong signal too. Never overrides a better direct token score.
+        if (canonicalNorm) {
+          const itemNorm = item.name.toLowerCase().trim();
+          if (itemNorm === canonicalNorm) s = Math.max(s, 0.97);
+          else if (itemNorm.includes(canonicalNorm) || canonicalNorm.includes(itemNorm)) s = Math.max(s, 0.9);
+        }
         if (s > bestScore) { secondScore = bestScore; best = item; bestScore = s; }
         else if (s > secondScore) secondScore = s;
       }
@@ -243,11 +259,19 @@ export class RecipeAiService {
   async searchInventory(restaurantId: string, query: string): Promise<any[]> {
     if (!query || query.trim().length < 1) return [];
     const rx = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    // Expand with the built-in dictionary canonical name so searching "doodh"
+    // also surfaces the "Fresh Milk" inventory item (same alias coverage as
+    // the quick-create matcher).
+    const canonical = builtinCanonicalName(query);
+    const or: any[] = [{ name: rx }, { 'voiceAliases.alias': rx }, { 'searchAliases.alias': rx }];
+    if (canonical && canonical.toLowerCase() !== query.trim().toLowerCase()) {
+      or.push({ name: new RegExp(canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });
+    }
     return Product.find({
       restaurantId,
       isDeleted: { $ne: true },
-      $or: [{ name: rx }, { 'voiceAliases.alias': rx }, { 'searchAliases.alias': rx }],
-    }).select('_id name unit averageCost availability currentStock').limit(10).lean().exec();
+      $or: or,
+    }).select('_id name unit averageCost availability currentStock image').limit(10).lean().exec();
   }
 }
 

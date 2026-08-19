@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SubscriptionService } from '../subscriptionService';
+import { FEATURE_CATALOG } from '../../../constants/planFeatures';
 
 // ─── Mock Mongoose Models ─────────────────────────────────────
 const mockSave = vi.fn();
@@ -140,11 +141,7 @@ function mockSub(overrides: Record<string, any> = {}) {
     startDate: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
     maxUsers: 5,
     maxDevices: 3,
-    features: [
-      'core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty',
-      'reservations', 'multi_branch', 'analytics', 'custom_branding',
-      'advanced_reports', 'expense_tracking', 'api_access', 'priority_support',
-    ],
+    features: FEATURE_CATALOG.map((f) => f.key),
     subscriptionId: null,
     save: mockSave,
     updatedAt: new Date(),
@@ -216,17 +213,21 @@ describe('SubscriptionService', () => {
       expect(mockSave).toHaveBeenCalled();
     });
 
-    it('transitions trial → suspended when trial AND grace both ended', async () => {
+    it('transitions trial → Free tier when the 2-day warning elapsed', async () => {
       const sub = mockSub({
         trialEnd: new Date(Date.now() - 11 * 24 * 60 * 60 * 1000), // 11 days ago
         graceEnd: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),  // 1 day ago
       });
       mockExec.mockResolvedValueOnce(sub);
+      mockExec.mockResolvedValueOnce(mockPlan({ planId: 'free', name: 'Free Plan', price: 0, yearlyPrice: 0, features: ['core_pos'] })); // Free plan lookup
       mockExec.mockResolvedValueOnce({ name: 'Test' });
 
       const result = await service.getSubscriptionStatus('rest_id_123');
 
-      expect(result.status).toBe('suspended');
+      // Not suspended — downgraded to the Free tier (core POS only).
+      expect(result.status).toBe('active');
+      expect(result.plan).toBe('free');
+      expect(result.features).toEqual(['core_pos']);
       expect(mockSave).toHaveBeenCalled();
     });
 
@@ -259,18 +260,22 @@ describe('SubscriptionService', () => {
       expect(mockSave).toHaveBeenCalled();
     });
 
-    it('transitions grace → suspended when grace ends', async () => {
+    it('transitions grace → Free tier when grace ends', async () => {
       const sub = mockSub({
         status: 'grace',
         trialEnd: new Date(Date.now() - 11 * 24 * 60 * 60 * 1000),
         graceEnd: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
       });
       mockExec.mockResolvedValueOnce(sub);
+      mockExec.mockResolvedValueOnce(mockPlan({ planId: 'free', name: 'Free Plan', price: 0, yearlyPrice: 0, features: ['core_pos'] })); // Free plan lookup
       mockExec.mockResolvedValueOnce({ name: 'Test' });
 
       const result = await service.getSubscriptionStatus('rest_id_123');
 
-      expect(result.status).toBe('suspended');
+      // Not suspended — downgraded to the Free tier (core POS only).
+      expect(result.status).toBe('active');
+      expect(result.plan).toBe('free');
+      expect(result.features).toEqual(['core_pos']);
       expect(mockSave).toHaveBeenCalled();
     });
 
@@ -571,6 +576,20 @@ describe('SubscriptionService', () => {
       expect(result.invoiceNumber).toContain('SUB-');
     });
 
+    it('creates an order with the yearly price for yearly billing', async () => {
+      mockExec.mockResolvedValueOnce(mockPlan({ yearlyPrice: 4999 })); // Plan found
+      mockExec.mockResolvedValueOnce(mockSub()); // Existing subscription
+      mockExec.mockResolvedValueOnce({ sequence: 1001, name: 'subscription' }); // InvoiceCounter
+
+      const { paymentGateway } = await import('../../payment/RazorpayGateway');
+      await service.createOrder('rest_id_123', 'professional', 'yearly');
+
+      // 4999 × 100 paise — the yearly price is used for annual billing.
+      expect(paymentGateway.createOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 499900 })
+      );
+    });
+
     it('throws createOrder when no plan found', async () => {
       mockExec.mockResolvedValueOnce(null); // Plan not found
       mockExec.mockResolvedValueOnce(null); // Default plan not found
@@ -656,6 +675,26 @@ describe('SubscriptionService', () => {
       expect(result.invoiceNumber).toContain('SUB-');
       expect(result.amount).toBeGreaterThan(0);
       expect(result.subscription.status).toBe('suspended');
+    });
+
+    it('manually renews with yearly billing using the yearly price', async () => {
+      const sub = mockSub({
+        status: 'suspended',
+        expiryDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+      });
+      mockExec.mockResolvedValueOnce(sub); // Subscription.findOne
+      mockExec.mockResolvedValueOnce(mockPlan({ yearlyPrice: 4999 })); // SubscriptionPlan.findOne
+      mockExec.mockResolvedValueOnce({ sequence: 1001 }); // InvoiceCounter
+      mockExec.mockResolvedValueOnce(sub); // Subscription.findOneAndUpdate
+
+      const { default: Payment } = await import('../../../models/Payment');
+      const result = await service.manualRenew('rest_id_123', { billingPeriod: 'yearly' });
+
+      expect(result.amount).toBe(4999);
+      expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
+        billingPeriod: 'yearly',
+        amount: 4999,
+      }));
     });
   });
 

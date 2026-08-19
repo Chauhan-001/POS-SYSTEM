@@ -22,7 +22,7 @@ export default function VoidReasonModal({ isOpen, voidReasons, onSelect, onClose
 
   return (
     <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full border border-[#e1e2ed] p-6">
+      <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--color-border-default)] p-6">
         <h3 className="font-bold text-sm mb-4 flex items-center gap-1.5">
           <Ban className="w-4 h-4 text-red-500" />
           Void Reason
@@ -32,7 +32,7 @@ export default function VoidReasonModal({ isOpen, voidReasons, onSelect, onClose
             <button
               key={r.id}
               onClick={() => { onSelect(r.id); onClose(); }}
-              className="w-full text-left px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-semibold border border-[#e1e2ed] cursor-pointer transition-all"
+              className="w-full text-left px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-semibold border border-[var(--color-border-default)] cursor-pointer transition-all"
             >
               {r.label}
             </button>

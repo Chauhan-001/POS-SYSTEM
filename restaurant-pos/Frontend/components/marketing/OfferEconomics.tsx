@@ -17,10 +17,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  TrendingUp, AlertTriangle, Loader2, Sparkles, Check, Wand2, RefreshCw,
+  TrendingUp, AlertTriangle, Loader2, Sparkles, Check, Wand2,
 } from 'lucide-react';
 import { fetchOfferPreview, fetchOfferAssistant, fetchComboAssistant } from '../../src/api/client';
 import { debugWarn } from '../../src/utils/debugLog';
+import RefreshButton from '../common/RefreshButton';
 
 const money = (n: number) => Math.round(n * 100) / 100;
 const fmt = (n: number) => '₹' + money(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -173,9 +174,9 @@ export default function OfferEconomics({ currencySymbol, draft, onApplyAssistant
           </p>
           {loading && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--brand-color)]" />}
           {!loading && hasScope && (
-            <button onClick={() => void fetchEconomics()} className="flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 cursor-pointer">
-              <RefreshCw className="w-3 h-3" /> Refresh
-            </button>
+            <RefreshButton onRefresh={fetchEconomics} className="gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800" iconClassName="w-3 h-3">
+              Refresh
+            </RefreshButton>
           )}
         </div>
 
@@ -275,12 +276,12 @@ export default function OfferEconomics({ currencySymbol, draft, onApplyAssistant
               onChange={(e) => setCboText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void askComboAssistant(); }}
               placeholder="e.g. combo of pizza and tandoori wings"
-              className="flex-1 px-3 py-2.5 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 bg-white"
+              className="flex-1 px-3 py-2.5 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 bg-[var(--color-bg-white)]"
             />
             <button
               onClick={() => void askComboAssistant()}
               disabled={cboBusy || !cboText.trim()}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black hover:bg-purple-700 transition-all cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-purple-600-solid)] text-white text-xs font-black hover:bg-[var(--color-purple-700-solid)] transition-all cursor-pointer disabled:opacity-50"
             >
               {cboBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
               Propose
@@ -300,7 +301,7 @@ export default function OfferEconomics({ currencySymbol, draft, onApplyAssistant
                       key={c.price}
                       onClick={() => applyComboProposal(c.price)}
                       className={`text-left border rounded-xl px-3 py-2 transition-all cursor-pointer ${
-                        isRec ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-white hover:border-purple-300'
+                        isRec ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-[var(--color-bg-white)] hover:border-purple-300'
                       }`}
                     >
                       <p className={`text-sm font-black ${isRec ? 'text-emerald-700' : 'text-gray-800'}`}>{fmt(c.price)}</p>
@@ -353,12 +354,12 @@ export default function OfferEconomics({ currencySymbol, draft, onApplyAssistant
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void askAssistant(); }}
             placeholder="e.g. give 10% off pizza this weekend"
-            className="flex-1 px-3 py-2.5 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 bg-white"
+            className="flex-1 px-3 py-2.5 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 bg-[var(--color-bg-white)]"
           />
           <button
             onClick={() => void askAssistant()}
             disabled={aiBusy || !text.trim()}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 text-white text-xs font-black hover:bg-purple-700 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-purple-600-solid)] text-white text-xs font-black hover:bg-[var(--color-purple-700-solid)] transition-all cursor-pointer disabled:opacity-50"
           >
             {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
             Propose
@@ -368,7 +369,7 @@ export default function OfferEconomics({ currencySymbol, draft, onApplyAssistant
         {aiError && <p className="mt-2.5 text-[11px] font-semibold text-rose-600">{aiError}</p>}
 
         {proposal && (
-          <div className="mt-3 bg-white border border-purple-100 rounded-2xl p-3.5 space-y-2.5">
+          <div className="mt-3 bg-[var(--color-bg-white)] border border-purple-100 rounded-2xl p-3.5 space-y-2.5">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Proposal</p>
             <p className="text-xs font-bold text-gray-800">
               {proposal.intent?.discountType} · {proposal.intent?.value}% off {proposal.intent?.targetName || 'products'}
@@ -396,7 +397,7 @@ export default function OfferEconomics({ currencySymbol, draft, onApplyAssistant
             ))}
             <button
               onClick={applyProposal}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--color-emerald-600-solid)] text-white text-xs font-black hover:bg-[var(--color-emerald-700-solid)] transition-all cursor-pointer"
             >
               <Check className="w-3.5 h-3.5" /> Apply to offer
             </button>

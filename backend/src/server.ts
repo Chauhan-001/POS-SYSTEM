@@ -53,6 +53,7 @@ import cors from 'cors';
 import compression from 'compression';
 import path from 'path';
 import fs from 'fs/promises';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { config } from './config';
 import { connectDB, isConnected } from './db';
@@ -63,8 +64,27 @@ import { errorHandler } from './middleware/errorHandler';
 import { responseCache } from './utils/ResponseCache';
 import { RedisAdapter } from './cache/adapters';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Dual-environment module dir: works under tsx (ESM) and the esbuild CJS
+// bundle (where import.meta.url is undefined). `__filename` is referenced as
+// a free CJS global (never declared — esbuild would rename it and break the
+// check). Without this the production bundle crashes on startup.
+const __dirname = path.dirname(
+  typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url)
+);
+
+/**
+ * Server version reported by /api/health — read from backend/package.json
+ * (resolves identically from src/ in dev and dist/ in the esbuild bundle;
+ * esbuild inlines the JSON). Non-fatal: an unreadable package.json yields
+ * 'unknown' rather than preventing startup.
+ */
+const SERVER_VERSION: string = (() => {
+  try {
+    return JSON.parse(readFileSync(path.join(__dirname, '../package.json'), 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+})();
 
 // Route imports
 import authRouter from './routes/auth';
@@ -93,6 +113,7 @@ import subscriptionRouter from './modules/subscription/subscriptionRoutes';
 import qrOrderingRouter from './modules/qr-ordering/routes/qrOrdering';
 import qrTokensRouter from './modules/qr-ordering/routes/qrTokens';
 import offersRouter from './routes/offers';
+import advisorRouter from './routes/advisor';
 import loyaltyRouter from './routes/loyalty';
 import otpRouter from './routes/otp';
 import referralsRouter from './routes/referrals';
@@ -100,6 +121,8 @@ import campaignsRouter from './routes/campaigns';
 import automationsRouter from './routes/automations';
 import customerReportsRouter from './routes/customerReports';
 import recipesRouter from './modules/recipes/routes/recipes';
+import menuConfigRouter from './modules/menu-config/routes/menuConfig';
+import promotionsRouter from './modules/promotions/routes/promotions';
 import mediaRouter from './routes/media';
 import purchasesRouter from './routes/purchases';
 import inventoryEventsRouter from './routes/inventoryEvents';
@@ -112,11 +135,15 @@ import financeRouter from './routes/finance';
 import reportsRouter from './modules/reports/routes/reports';
 import settingsRouter from './modules/settings/routes/settings';
 import publicStoreRouter from './modules/public-store/routes/publicStore';
+import receiptRouter from './modules/public-store/routes/receipt';
 import legalRouter from './modules/legal/routes/legal';
-import { seedLegalDocuments } from './modules/legal/seed';
+import helpAnalyticsRouter from './modules/help-analytics/routes/helpAnalytics';
+import marketingRouter from './routes/marketing';
+
 import { renderPublicStorePage } from './modules/public-store/publicStorePage';
 import { initSocket } from './socket';
 import { startSubscriptionScheduler } from './modules/subscription/subscriptionScheduler';
+import { subscriptionService } from './modules/subscription/subscriptionService';
 import { getSTTConfig } from './modules/voice-inventory/services/SpeechService';
 import { aiConfig } from './modules/ai/config';
 import { hydrateQuotaFromDb } from './modules/ai/services/aiQuotaTracker';
@@ -237,11 +264,13 @@ app.use('/api', (req, res, next) => {
 
 // Health check — public endpoint
 // Not cached because dbConnected must always be fresh per-request
+// Includes the server version so ops can identify the running build.
 app.get('/api/health', publicLimiter, (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     dbConnected: isConnected(),
+    version: SERVER_VERSION,
   });
 });
 
@@ -264,10 +293,16 @@ app.use('/api', subscriptionRouter);
 // same LAN/NAT IP. publicLimiter is moderate and per-IP.
 app.use('/api/public-store', publicLimiter, publicStoreRouter);
 
+// Public receipt-QR landing (printed on bills) — same public limiter, no auth.
+// Mounted AFTER publicStoreRouter so /:token catch-alls can't shadow it.
+app.use('/api/public-store/receipt', publicLimiter, receiptRouter);
+
 // Legal & Compliance — public document reads + authenticated acceptance/consent
 // + owner stats + admin document lifecycle. Public reads never consume the
 // business budget; admin endpoints self-gate on super_admin surface tokens.
 app.use('/api/legal', legalRouter);
+app.use('/api/help-analytics', helpAnalyticsRouter);
+app.use('/api/marketing', marketingRouter);
 
 // ─── Group B: Apply global rate limiter ─────────────────────────
 app.use('/api', apiLimiter);
@@ -288,6 +323,7 @@ app.use('/api/cash-ledger', cashLedgerRouter);
 app.use('/api/finance', financeRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/menu-config', menuConfigRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/qr-ordering', qrOrderingRouter);
 app.use('/api/qr-tokens', qrTokensRouter);
@@ -302,6 +338,7 @@ app.use('/api/purchases', purchasesRouter);
 app.use('/api/inventory-events', inventoryEventsRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api', offersRouter);
+app.use('/api', advisorRouter);
 app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/otp', otpRouter);
 app.use('/api/referrals', referralsRouter);
@@ -309,6 +346,7 @@ app.use('/api/campaigns', campaignsRouter);
 app.use('/api/automations', automationsRouter);
 app.use('/api/customer-reports', customerReportsRouter);
 app.use('/api', recipesRouter);
+app.use('/api', promotionsRouter);
 app.use('/api', mediaRouter);
 
 // =============================================================================
@@ -364,15 +402,18 @@ async function start() {
   // ─── 1. Connect to MongoDB & run seed ─────────────────────────
   await connectDB();
 
-  // ─── 1.1. Seed draft legal documents (idempotent) ─────────────
-  try {
-    const seeded = await seedLegalDocuments();
-    if (seeded > 0) {
-      console.log(`[Legal] Seeded ${seeded} DRAFT legal documents (require review before publishing)`);
-    }
-  } catch (err) {
-    console.warn('[Legal] document seed failed:', (err as Error)?.message);
-  }
+  // ─── 1.0. Ensure the Free tier plan exists (core POS only). ───
+  // Restaurants whose subscription period expires fall back to this plan
+  // after the 2-day warning window instead of being suspended.
+  await subscriptionService.ensureFreePlan();
+
+  // ─── 1.1. Legal documents are NOT auto-seeded ────────────────
+  // Legal content was historically seeded as drafts at startup. Per product
+  // decision, the database starts clean — the platform ships with NO seeded
+  // documents and the admin creates/publishes them through the legal admin
+  // flow (POST /api/legal/admin/documents) when actually needed. Keeping this
+  // empty means a fresh deployment never shows boilerplate legal text and the
+  // removal of previously seeded documents stays durable across restarts.
 
   // ─── 1.5. Warm the IP blocklist cache ────────────────────────
   await refreshIpBlocklist();
@@ -402,7 +443,20 @@ async function start() {
   startCampaignWorker();
   startMarketingScheduler();
 
-  // ─── 3.5. Log resolved AI/STT configuration for quick misconfiguration detection ─
+  // ─── 3.5. QR ordering seat-session sweeper ───────────────────
+  // A table QR scan claims the table (Occupied) with a 10-minute TTL. If the
+  // guest never orders and stops interacting, this sweeper expires the claim
+  // and frees the table — it is never left Occupied for no reason. Once an
+  // order is placed, occupancy is owned by the order and never expires here.
+  try {
+    const { startSessionSweeper } = await import('./modules/qr-ordering/services/sessionSweeper');
+    startSessionSweeper();
+    console.log('[QR] seat-session sweeper started (10-min claim TTL)');
+  } catch (err) {
+    console.warn('[QR] seat-session sweeper startup failed:', (err as Error)?.message);
+  }
+
+  // ─── 3.6. Log resolved AI/STT configuration for quick misconfiguration detection ─
   // Values here are the ones ACTUALLY used at runtime (auto-detection included),
   // so a wrong model/provider is visible in the boot logs immediately.
   const stt = getSTTConfig();

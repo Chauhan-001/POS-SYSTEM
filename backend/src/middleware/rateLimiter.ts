@@ -20,7 +20,7 @@
  * No hardcoded values — everything is configurable.
  */
 
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 
@@ -201,6 +201,8 @@ export const adminApiLimiter = rateLimit({
 // so one noisy terminal can't exhaust another tenant's quota. Falls back to
 // the client IP for unauthenticated requests (e.g. /status).
 
+// Express-rate-limit v7+ requires the official ipKeyGenerator helper when a
+// custom keyGenerator reads the request IP (handles IPv6 / X-Forwarded-For).
 export const voiceApiLimiter = rateLimit({
   windowMs: config.rateLimiting.voice.windowMs,
   max: config.rateLimiting.voice.maxRequests,
@@ -211,7 +213,7 @@ export const voiceApiLimiter = rateLimit({
     if (typeof restaurantId === 'string' && restaurantId) {
       return `voice:tenant:${restaurantId}`;
     }
-    return `voice:ip:${req.ip || 'unknown'}`;
+    return `voice:ip:${ipKeyGenerator(req.ip || 'unknown')}`;
   },
   message: {
     error: 'Too many voice requests for this restaurant. Please slow down.',

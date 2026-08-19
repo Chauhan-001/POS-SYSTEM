@@ -204,8 +204,8 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
 
   if (monthlyPL.length === 0 && !summaryOnline) {
     return (
-      <div className="flex flex-col h-full bg-[#faf8ff] items-center justify-center">
-        <Banknote className="w-20 h-20 text-gray-200 mb-4" />
+      <div className="flex flex-col h-full bg-[var(--color-bg-page)] items-center justify-center">
+        <Banknote className="w-20 h-20 text-gray-500 mb-4" />
         <h2 className="text-lg font-bold text-gray-300">No Financial Data Yet</h2>
         <p className="text-sm text-gray-300 mt-1">Bills and expenses will appear here as you process orders.</p>
       </div>
@@ -218,7 +218,7 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
   );
 
   return (
-    <div className="h-full overflow-y-auto bg-[#faf8ff]">
+    <div className="h-full overflow-y-auto bg-[var(--color-bg-page)]">
       <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
         {/* ===== HEADER ===== */}
         <div className="flex items-center gap-3">
@@ -232,7 +232,7 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
         </div>
 
         {/* ===== BACKEND SUMMARY STRIP (Phase 1.7) ===== */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] p-4 shadow-xs">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-4 shadow-xs">
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <div className="flex items-center gap-2">
               <span className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Period</span>
@@ -311,9 +311,9 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
         </div>
 
         {/* ===== MONTH NAVIGATION + P&L TABLE ===== */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] shadow-xs overflow-hidden">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] shadow-xs overflow-hidden">
           {/* Month selector */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-[#e1e2ed] bg-gray-50/50">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border-default)] bg-gray-50/50">
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-gray-500" />
               <span className="text-xs font-bold text-gray-700">Monthly P&L</span>
@@ -516,7 +516,7 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
         </div>
 
         {/* ===== PROFIT TREND CHART ===== */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] p-5 shadow-xs">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">
           <div className="flex items-center gap-2 mb-5">
             <Activity className="w-4 h-4 text-indigo-500" />
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Monthly Profit Trend</h3>
@@ -599,8 +599,8 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
         </div>
 
         {/* ===== MONTHLY COMPARISON TABLE ===== */}
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] shadow-xs overflow-x-auto">
-          <div className="px-5 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] shadow-xs overflow-x-auto">
+          <div className="px-5 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
             <Layers className="w-4 h-4 text-gray-500" />
             <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Month-over-Month Comparison</h3>
           </div>
@@ -669,7 +669,7 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
           )}
         </div>
 
-        <div className="text-[9px] text-gray-400 text-center py-2 border-t border-[#e1e2ed]">
+        <div className="text-[9px] text-gray-400 text-center py-2 border-t border-[var(--color-border-default)]">
           {summaryOnline ? 'Finance summary computed by the backend from bills, expenses, cash ledger, and GST data.' : 'Offline: local estimate from bills & expenses. Connect to sync backend-computed finance.'}
         </div>
       </div>

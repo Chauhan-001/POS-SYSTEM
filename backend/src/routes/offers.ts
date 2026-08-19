@@ -17,18 +17,22 @@ import {
   deleteOffer,
   updateOfferStatus,
   getRecommendations,
+  comboHealth,
   listSegments,
   refreshSegments,
   getOfferAnalytics,
+  getOfferAnalyticsTrends,
+  getOfferPerformanceDetail,
+  rebuildOfferAnalytics,
   getFestivals,
   getCampaignHistory,
   validateOffer,
   applyOffer,
   lookupOfferByCode,
 } from '../controllers/offersController';
+import responseCache, { cached } from '../utils/ResponseCache';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
-import { cached } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import {
   createOfferSchema,
@@ -50,6 +54,13 @@ router.post('/offers/recommendations',
   requireAuth,
   requireFeature('loyalty'),
   getRecommendations,
+);
+
+// ─── Combo health (Phase 12, read-only advisory) ─────────────
+router.get('/offers/combo-health',
+  requireAuth,
+  requireFeature('loyalty'),
+  comboHealth,
 );
 
 // ─── Segments (read-only + refresh) ──────────────────────────
@@ -80,17 +91,38 @@ router.get('/offers/campaigns',
   getCampaignHistory,
 );
 
-// ─── Analytics ───────────────────────────────────────────────
+// ─── Analytics (Phase B — real performance; trends + rebuild) ──
 router.get('/offers/analytics',
   requireAuth,
   requireFeature('loyalty'),
   getOfferAnalytics,
 );
 
+// MUST be registered before /offers/analytics/:offerId (Express matches in order).
+router.get('/offers/analytics/trends',
+  requireAuth,
+  requireFeature('loyalty'),
+  getOfferAnalyticsTrends,
+);
+
+// Deterministic rebuild from CouponRedemption + Bill (historical backfill).
+router.post('/offers/analytics/rebuild',
+  requireRole('Owner', 'Manager'),
+  requireFeature('loyalty'),
+  rebuildOfferAnalytics,
+);
+
 router.get('/offers/analytics/:offerId',
   requireAuth,
   requireFeature('loyalty'),
   getOfferAnalytics,
+);
+
+// Per-offer performance detail.
+router.get('/offers/:id/performance',
+  requireAuth,
+  requireFeature('loyalty'),
+  getOfferPerformanceDetail,
 );
 
 // ─── Offer CRUD (write requires Owner/Manager) ───────────────
@@ -112,6 +144,15 @@ router.post('/offers',
   requireRole('Owner', 'Manager'),
   requireFeature('loyalty'),
   validate({ body: createOfferSchema }),
+  // Public offer discovery cache must not serve stale/leaked offers.
+  (req, res, next) => {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        void responseCache.invalidateByTags(['public-offers']);
+      }
+    });
+    next();
+  },
   createOffer,
 );
 
@@ -119,6 +160,14 @@ router.put('/offers/:id',
   requireRole('Owner', 'Manager'),
   requireFeature('loyalty'),
   validate({ body: updateOfferSchema, params: offerParamsSchema }),
+  (req, res, next) => {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        void responseCache.invalidateByTags(['public-offers']);
+      }
+    });
+    next();
+  },
   updateOffer,
 );
 
@@ -126,6 +175,14 @@ router.delete('/offers/:id',
   requireRole('Owner', 'Manager'),
   requireFeature('loyalty'),
   validate({ params: offerParamsSchema }),
+  (req, res, next) => {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        void responseCache.invalidateByTags(['public-offers']);
+      }
+    });
+    next();
+  },
   deleteOffer,
 );
 
@@ -134,6 +191,14 @@ router.patch('/offers/:id/status',
   requireRole('Owner', 'Manager'),
   requireFeature('loyalty'),
   validate({ body: updateOfferStatusSchema, params: offerParamsSchema }),
+  (req, res, next) => {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        void responseCache.invalidateByTags(['public-offers']);
+      }
+    });
+    next();
+  },
   updateOfferStatus,
 );
 

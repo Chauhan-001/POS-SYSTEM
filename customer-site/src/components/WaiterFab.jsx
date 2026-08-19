@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { api, errMsg } from '../api';
+import { errMsg } from '../api';
 import { useSession } from '../context/session';
 
 const REASONS = [

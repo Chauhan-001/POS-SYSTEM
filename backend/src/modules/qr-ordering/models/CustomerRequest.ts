@@ -39,6 +39,11 @@ export interface ICustomerRequest extends Document {
   quantity?: number;
   assignedTo?: mongoose.Types.ObjectId;
   assignedAt?: Date;
+  /** When staff silenced the reminder (status SEEN) — the card stays live
+   *  until the order's bill closes, but the sound no longer repeats. */
+  seenAt?: Date;
+  /** Display name of the employee who silenced the reminder. */
+  seenBy?: string;
   completedAt?: Date;
   /** Display name of the employee who acknowledged the call. */
   completedBy?: string;
@@ -130,6 +135,13 @@ const CustomerRequestSchema = new Schema<ICustomerRequest>(
     },
     assignedAt: {
       type: Date,
+    },
+    seenAt: {
+      type: Date,
+    },
+    seenBy: {
+      type: String,
+      trim: true,
     },
     completedAt: {
       type: Date,

@@ -6,12 +6,57 @@
  * Data flow: local state is source of truth; all mutations sync to API.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CartItem, Product, ProductVariant, LoyaltyReward, SystemSettings, Bill, Employee, Customer, Order } from '../types';
-import { setDBData, getDBData } from '../data';
+import { setDBData, getDBData, localDateKey } from '../data';
 import * as api from '../api/client';
 import { debugWarn } from '../utils/debugLog';
 import { findLinkedTakeaway } from './useOrders';
+import { consumeInvoiceNumber, invoiceNumbersRemaining, storeInvoiceRange } from '../lib/invoiceRange';
+
+/** Numbers reserved per terminal per server call (see billService.reserveInvoiceRange). */
+const INVOICE_RANGE_SIZE = 100;
+
+/**
+ * Split cart items into kitchen-locked (already sent via KOT) and clearable.
+ * Pure helper so the Clear-cart protection is unit-testable without a full
+ * hook render.
+ */
+export function partitionCartByKitchenLock(items: any[]): { locked: any[]; clearable: any[] } {
+  const locked: any[] = [];
+  const clearable: any[] = [];
+  for (const item of items) {
+    (item?.kotPrinted ? locked : clearable).push(item);
+  }
+  return { locked, clearable };
+}
+
+/**
+ * Check if any KOT records for the active order have unserved items.
+ * Returns a summary of unserved items so the UI can display a warning.
+ */
+export function getUnservedKotSummary(order: any): { hasUnserved: boolean; unservedCount: number; unservedItems: string[] } {
+  if (!order?.kotRecords || order.kotRecords.length === 0) {
+    return { hasUnserved: false, unservedCount: 0, unservedItems: [] };
+  }
+  const unservedItems: string[] = [];
+  for (const kot of order.kotRecords) {
+    if (kot.status === 'Served') continue;
+    if (!kot.items || kot.items.length === 0) continue;
+    for (const item of kot.items) {
+      if (item.cancelled) continue;
+      const name = item?.product?.name || 'Unknown Item';
+      if (!unservedItems.includes(name)) {
+        unservedItems.push(name);
+      }
+    }
+  }
+  return {
+    hasUnserved: unservedItems.length > 0,
+    unservedCount: unservedItems.length,
+    unservedItems,
+  };
+}
 
 interface BillingConfig {
   cartItems: any[];
@@ -39,6 +84,7 @@ interface BillingConfig {
   splitDetails: { cashAmount: number; cardAmount: number; upiAmount: number; walletAmount: number };
   setSplitDetails: (d: any) => void;
   settings: SystemSettings;
+  currentBranchId?: string | null;
   currentEmployee: Employee | null;
   products: Product[];
   heldOrders: any[];
@@ -66,6 +112,7 @@ export function useBilling(config: BillingConfig) {
     orderType, setOrderType,
     splitDetails, setSplitDetails,
     settings,
+    currentBranchId,
     currentEmployee,
     products,
     heldOrders, setHeldOrders,
@@ -138,6 +185,58 @@ export function useBilling(config: BillingConfig) {
 
   const handleAddProductToCart = useCallback((product: Product, selectedVariant?: ProductVariant) => {
     if (!product.availability) { showToast(`${product.name} is sold out!`, 'warning'); return; }
+
+    // ── Meal combo: add each component and auto-apply the backing combo ──
+    // offer. The combo product itself is a bundle definition (server-synced to
+    // a type='combo' Offer via linkedComboOfferId); only the components go in
+    // the cart and the offer's discount realizes the bundle price — the same
+    // semantics as applying a combo from the Offers popup, just one tap.
+    const comboIds = ((product as any).comboComponentIds || []).map((id: any) => String(id));
+    if ((product as any).isCombo && comboIds.length > 0) {
+      const comps = products.filter((p: any) => comboIds.includes(String(p.id)));
+      if (comps.length !== comboIds.length) {
+        showToast('Some combo items are no longer in your menu.', 'warning');
+        return;
+      }
+      const next = [...cartItems];
+      for (const comp of comps) {
+        if (!comp.availability) { showToast(`${comp.name} is sold out!`, 'warning'); return; }
+        const rowId = `${comp.id}_none`;
+        const existingIdx = next.findIndex((item: any) => item.id === rowId);
+        if (existingIdx > -1) {
+          next[existingIdx] = { ...next[existingIdx], quantity: next[existingIdx].quantity + 1 };
+        } else {
+          next.push({ id: rowId, product: comp, quantity: 1, price: Number(comp.price) || 0 });
+        }
+      }
+      setCartItems(next);
+
+      // Auto-apply the backing combo offer — server derives authoritative
+      // prices from product ids, so the discount is never client-computed.
+      const offerId = (product as any).linkedComboOfferId;
+      if (offerId) {
+        api.validateOffer({
+          offerId: String(offerId),
+          billItems: next.map((item: any) => ({
+            productId: item.product?.id,
+            name: item.product?.name || item.name || 'Item',
+            quantity: item.quantity || 1,
+            category: item.product?.category,
+          })),
+          branchId: currentBranchId || undefined,
+        }).then((result: any) => {
+          if (result.ok && result.valid && result.offer && (result.discount ?? 0) > 0) {
+            setAppliedOffer({ offer: result.offer, discount: result.discount ?? 0 });
+          }
+        }).catch(() => {
+          // Server stays authoritative; the owner can still apply the combo
+          // from the Offers popup.
+        });
+      }
+      showToast(`${product.name} added to current bill.`, 'success');
+      return;
+    }
+
     const rowId = selectedVariant ? `${product.id}_${selectedVariant.name}` : `${product.id}_none`;
     const existingIdx = cartItems.findIndex((item: any) => item.id === rowId);
     if (existingIdx > -1) {
@@ -151,7 +250,7 @@ export function useBilling(config: BillingConfig) {
       }]);
     }
     showToast(`${product.name} added to current bill.`, 'success');
-  }, [cartItems, setCartItems, showToast]);
+  }, [cartItems, products, setCartItems, setAppliedOffer, showToast, settings]);
 
   const handleAdjustQuantity = useCallback((cartId: string, delta: number) => {
     const target = cartItems.find((item: any) => item.id === cartId);
@@ -178,6 +277,35 @@ export function useBilling(config: BillingConfig) {
     showToast('Product row voided from bill.', 'warning');
   }, [cartItems, setCartItems, showToast]);
 
+  /**
+   * Clear the cart while protecting kitchen-locked items.
+   *
+   * Items already sent to the kitchen (kotPrinted) are being cooked — the
+   * Clear button must NOT remove them. Only items that have not been sent to
+   * the kitchen are cleared; kitchen items stay so the bill stays correct.
+   *
+   * Returns true when the cart became fully empty (so callers can also reset
+   * table/order state), false when kitchen-locked items remain.
+   */
+  const handleClearCart = useCallback((): boolean => {
+    const { locked: lockedItems, clearable: clearableItems } = partitionCartByKitchenLock(cartItems);
+
+    if (clearableItems.length === 0) {
+      if (lockedItems.length > 0) {
+        showToast('Items already sent to kitchen cannot be cleared — locked', 'warning');
+      }
+      return false;
+    }
+
+    setCartItems(lockedItems);
+    if (lockedItems.length === 0) {
+      showToast('Cart cleared.', 'info');
+      return true;
+    }
+    showToast('Cleared items not yet sent to kitchen. Kitchen items stay locked.', 'info');
+    return false;
+  }, [cartItems, setCartItems, showToast]);
+
   // Prevent double-click payment — guard ref + UI state
   // The ref is the authoritative guard (synchronous reads).
   // The state triggers re-renders so the Pay button shows "Processing...".
@@ -185,6 +313,20 @@ export function useBilling(config: BillingConfig) {
   const [isProcessingPaymentUI, setIsProcessingPaymentUI] = useState(false);
 
   const customerUpdateQueue = useRef<Promise<void>>(Promise.resolve());
+
+  // Warm up this terminal's reserved invoice range on mount (online), so a
+  // later network drop never forces the legacy local counter — the source of
+  // cross-terminal invoice collisions. Refills when the range is exhausted.
+  useEffect(() => {
+    if (invoiceNumbersRemaining() > 0) return;
+    api.fetchInvoiceRange(INVOICE_RANGE_SIZE)
+      .then((range) => {
+        if (range && Number.isInteger(range.start) && Number.isInteger(range.end)) {
+          storeInvoiceRange(range.start, range.end);
+        }
+      })
+      .catch(() => { /* offline — the next online checkout refills */ });
+  }, []);
 
   const enqueueCustomerUpdate = useCallback(async (phone: string, updatedCust: Customer) => {
     // Chain updates so they run sequentially, not in parallel
@@ -195,19 +337,30 @@ export function useBilling(config: BillingConfig) {
   }, []);
 
   /**
-   * Get next invoice number — prefer backend atomic counter, fall back to localStorage.
-   * The backend uses MongoDB's findOneAndUpdate with $inc for thread-safe increments,
-   * preventing duplicate invoice numbers across multiple POS terminals.
-   * If the backend is offline, falls back to localStorage-based counter.
+   * Get next invoice number — prefer this terminal's reserved range, then a
+   * fresh server-side reservation, and only as a last resort the legacy local
+   * counter.
+   *
+   * The server atomically reserves contiguous ranges from the shared
+   * InvoiceCounter (GET /api/bills/invoice-range), so every terminal owns a
+   * disjoint block of numbers. Offline bills drawn from the reserved range can
+   * never collide with another terminal's invoices — the old fallback seeded
+   * every terminal at 1001, so two offline terminals issued identical numbers.
    */
   const getNextInvoiceNumber = useCallback(async (): Promise<number> => {
-    const serverNum = await api.fetchNextInvoiceNumber();
-    if (serverNum !== null && typeof serverNum === 'number') {
-      // Also sync localStorage so offline mode stays roughly in sync
-      setDBData('pos_next_invoice_number', serverNum + 1);
-      return serverNum;
+    // 1. Consume from the locally reserved range (offline-safe, no network).
+    const reserved = consumeInvoiceNumber();
+    if (reserved !== null) return reserved;
+
+    // 2. Range missing/exhausted — reserve a fresh one from the server.
+    const range = await api.fetchInvoiceRange(INVOICE_RANGE_SIZE);
+    if (range && Number.isInteger(range.start) && Number.isInteger(range.end)) {
+      storeInvoiceRange(range.start, range.end);
+      const first = consumeInvoiceNumber();
+      if (first !== null) return first;
     }
-    // Backend offline — fall back to localStorage counter
+
+    // 3. Offline with no reserved range — last-resort legacy local counter.
     const localNum = getDBData<number>('pos_next_invoice_number', 1001);
     setDBData('pos_next_invoice_number', localNum + 1);
     return localNum;
@@ -218,13 +371,27 @@ export function useBilling(config: BillingConfig) {
    * Sets the guard before checkout starts, and only resets it AFTER all
    * async API calls (createBill, updateOrder, enqueueCustomerUpdate) resolve.
    * Returns the Bill on success, or undefined if cancelled/empty.
+   *
+   * @param forceClose - When true, skips the KDS unserved-items check.
    */
-  const handleCheckoutPayment = useCallback(async (): Promise<Bill | undefined> => {
+  const handleCheckoutPayment = useCallback(async (forceClose = false): Promise<Bill | undefined> => {
     if (isProcessingPayment.current) {
       showToast('Payment already in progress. Please wait.', 'warning');
       return;
     }
     if (cartItems.length === 0) { showToast('Please add products to checkout.', 'warning'); return; }
+
+    // ── KDS serve-check: block bill close when kitchen items are not yet served ──
+    if (!forceClose) {
+      const kotSummary = getUnservedKotSummary(activeOrder);
+      if (kotSummary.hasUnserved) {
+        showToast(
+          `${kotSummary.unservedCount} item${kotSummary.unservedCount > 1 ? 's' : ''} still in kitchen: ${kotSummary.unservedItems.join(', ')}. Wait for them to be served, or use \"Close Anyway\" from the More menu.`,
+          'warning'
+        );
+        return;
+      }
+    }
 
     isProcessingPayment.current = true;
     setIsProcessingPaymentUI(true);
@@ -265,7 +432,7 @@ export function useBilling(config: BillingConfig) {
       id: `b_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       invoiceNumber: `${settings.invoicePrefix || "INV"}-${new Date().getFullYear()}-${invoiceNumber}`,
       ticketNumber: `TK-${invoiceNumber}`,
-      date: _now.toISOString().split('T')[0],
+      date: localDateKey(_now),
       grandTotal,
       itemsCount: cartItems.length,
       items: cartItems,
@@ -289,7 +456,7 @@ export function useBilling(config: BillingConfig) {
           const milestones = settings.visitMilestones || [];
           const matched = milestones.find((m: any) => Number(m.visits) === nextVisits);
           if (matched) milestoneRewardAwarded = matched.rewardItemName;
-          return { ...c, visits: nextVisits, points: Number((nextPoints + bonus).toFixed(2)), lastVisit: _now.toISOString().split('T')[0], purchaseHistory: [invoiceHistItem, ...(c.purchaseHistory || [])] };
+          return { ...c, visits: nextVisits, points: Number((nextPoints + bonus).toFixed(2)), lastVisit: localDateKey(_now), purchaseHistory: [invoiceHistItem, ...(c.purchaseHistory || [])] };
         }
         return c;
       });
@@ -304,7 +471,7 @@ export function useBilling(config: BillingConfig) {
           ...existingCustomer,
           visits: existingCustomer.visits + 1,
           points: Number((existingCustomer.points + pointsAccumulated - pointsDeducted).toFixed(2)),
-          lastVisit: _now.toISOString().split('T')[0],
+          lastVisit: localDateKey(_now),
           purchaseHistory: [invoiceHistItem, ...(existingCustomer.purchaseHistory || [])],
         };
         setCustomers(customers.map((c: Customer) => c.phone === customerPhone.trim() ? updatedExisting : c));
@@ -312,7 +479,7 @@ export function useBilling(config: BillingConfig) {
       } else {
         const guestObj: Customer = {
           phone: customerPhone.trim(), name: 'Guest Diner', isNew: true, visits: 1, points: pointsAccumulated,
-          lastVisit: _now.toISOString().split('T')[0], purchaseHistory: [invoiceHistItem],
+          lastVisit: localDateKey(_now), purchaseHistory: [invoiceHistItem],
         } as Customer;
         setCustomers([guestObj, ...customers]);
         asyncOps.push(
@@ -346,7 +513,7 @@ export function useBilling(config: BillingConfig) {
       clientRef: localBillId,
       invoiceNumber: `${settings.invoicePrefix || "INV"}-${new Date().getFullYear()}-${invoiceNumber}`,
       ticketNumber: `#${invoiceNumber}`,
-      date: _now.toISOString().split("T")[0],
+      date: localDateKey(_now),
       time: _now.toLocaleTimeString('en-GB', { hour: "2-digit", minute: "2-digit", hourCycle: 'h23' }),
       cashierName: currentEmployee?.name || "System",
       cashierRole: currentEmployee?.role || "Staff",
@@ -375,6 +542,13 @@ export function useBilling(config: BillingConfig) {
 
     // Update order status to Paid and sync to API
     if (activeOrder) {
+      // Mark any unserved KOTs as Served so they disappear from the KDS
+      const updatedKotRecords = (activeOrder.kotRecords || []).map((kot: any) => {
+        if (kot.status !== 'Served' && kot.status !== 'Cancelled') {
+          return { ...kot, status: 'Served' };
+        }
+        return kot;
+      });
       const updatedOrder = {
         ...activeOrder,
         status: "Paid",
@@ -382,6 +556,7 @@ export function useBilling(config: BillingConfig) {
         paidAt: new Date().toISOString(),
         items: [...finalizedItems, ...cancelledItems],
         subtotal, discount, gst, grandTotal,
+        kotRecords: updatedKotRecords,
       };
       setOrders(orders.map((o: any) => o.id === activeOrder.id ? updatedOrder : o));
       // Only push the Paid transition when the order has a real Mongo id (created
@@ -436,8 +611,26 @@ export function useBilling(config: BillingConfig) {
 
     const updatedBills = [newBill, ...bills];
     setBills(updatedBills);
+    // The server mints the receipt-QR capability (receiptToken/receiptUrl) at
+    // creation. Merge it back into the LOCAL bill so the receipt printed right
+    // after payment carries the QR (ThermalReceipt only shows the QR when
+    // bill.receiptUrl exists). Offline replays re-mint on the server; the
+    // merged copy then appears once the queued bill syncs back.
+    let serverBillMerge: any = null;
     asyncOps.push(
-      api.createBill(newBill).then(() => {}).catch(err => debugWarn('useBilling', 'createBill failed:', err))
+      api.createBill(newBill).then((created: any) => {
+        if (!created) return;
+        serverBillMerge = {
+          id: created?._id || created?.id,
+          receiptToken: created?.receiptToken,
+          receiptTokenExpiresAt: created?.receiptTokenExpiresAt,
+          receiptUrl: created?.receiptUrl,
+        };
+        const merged = { ...newBill, ...serverBillMerge };
+        // Update the in-memory + cached copy so reprints/PDFs use the same QR.
+        setBills([merged, ...bills.filter((b: any) => b.id !== newBill.id)]);
+        setDBData('pos_bills', [merged, ...bills.filter((b: any) => b.id !== newBill.id)]);
+      }).catch(err => debugWarn('useBilling', 'createBill failed:', err))
     );
     setDBData("pos_bills", updatedBills);
 
@@ -458,6 +651,7 @@ export function useBilling(config: BillingConfig) {
             price: item.price || 0,
             quantity: item.quantity || 1,
             category: item.product?.category,
+            variantName: typeof item.selectedVariant === 'string' ? item.selectedVariant : item.selectedVariant?.name,
           })),
           billId: localBillId,
         }).then((r) => {
@@ -494,7 +688,10 @@ export function useBilling(config: BillingConfig) {
       await Promise.allSettled(asyncOps);
     }
 
-    return newBill;
+    // Return the QR-merged bill so the receipt modal printed immediately after
+    // payment shows the scannable QR (the server response arrives within the
+    // awaited asyncOps above).
+    return serverBillMerge ? { ...newBill, ...serverBillMerge } : newBill;
   }, [cartItems, setCartItems, activeOrder, setActiveOrder, orders, setOrders, customers, setCustomers, bills, setBills,
       customerPhone, setCustomerPhone, searchedCustomer, setSearchedCustomer, appliedReward, setAppliedReward,
       appliedOffer, setAppliedOffer,
@@ -523,9 +720,11 @@ export function useBilling(config: BillingConfig) {
     handleAddProductToCart,
     handleAdjustQuantity,
     handleDeleteCartItem,
+    handleClearCart,
     handleCheckoutPayment,
     isProductMatchingReward,
     resetProcessingFlag,
     getIsProcessingPayment,
+    getUnservedKotSummary,
   };
 }

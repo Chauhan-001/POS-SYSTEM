@@ -392,9 +392,10 @@ const BUILTIN_ALIASES: BuiltinAlias[] = [
  */
 export async function resolveProductViaEngine(
   spokenName: string,
-  restaurantId?: string
+  restaurantId?: string,
+  extraOptions?: { inventoryOnly?: boolean }
 ): Promise<ProductResolutionResult> {
-  const options: any = {};
+  const options: any = { ...extraOptions };
 
   // Load restaurant calibration if restaurantId is available
   if (restaurantId && mongoose.Types.ObjectId.isValid(restaurantId)) {
@@ -424,7 +425,8 @@ export async function resolveProductViaEngine(
  */
 export async function resolveAlias(
   restaurantId: string,
-  spokenName: string | null | undefined
+  spokenName: string | null | undefined,
+  options?: { inventoryOnly?: boolean }
 ): Promise<AliasMatch> {
   const name = (spokenName || '').trim();
   if (!name) return { canonicalName: '', unit: 'pcs', confidence: 0 };
@@ -433,6 +435,7 @@ export async function resolveAlias(
     const result = await resolveProduct(name, restaurantId, {
       skipSemantic: true,
       skipNewProductDetection: true,
+      ...options,
     });
 
     if (result.product && result.confidence >= 0.6) {
@@ -536,4 +539,17 @@ function resolveFromBuiltin(normalized: string): AliasMatch | null {
   }
 
   return null;
+}
+
+/**
+ * Resolve a spoken term to its canonical built-in item name (dictionary only,
+ * no DB, no engine). Returns null when the term is not in the built-in food
+ * dictionary. Used by the recipe matcher so "doodh" resolves to "Fresh Milk"
+ * even when the inventory item has no learned alias for it.
+ */
+export function builtinCanonicalName(spokenName: string | null | undefined): string | null {
+  const normalized = String(spokenName || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const match = resolveFromBuiltin(normalized);
+  return match ? match.canonicalName : null;
 }

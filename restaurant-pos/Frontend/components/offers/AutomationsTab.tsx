@@ -94,8 +94,8 @@ export default function AutomationsTab() {
           return (
             <div
               key={a.id}
-              className={`bg-white rounded-2xl border-2 p-5 flex flex-col gap-3 transition-all ${
-                a.enabled ? 'border-green-200 shadow-md' : 'border-[#e1e2ed]'
+              className={`bg-[var(--color-bg-white)] rounded-2xl border-2 p-5 flex flex-col gap-3 transition-all ${
+                a.enabled ? 'border-green-200 shadow-md' : 'border-[var(--color-border-default)]'
               }`}
             >
               <div className="flex items-start justify-between">
@@ -106,11 +106,11 @@ export default function AutomationsTab() {
                 <button
                   onClick={() => toggle(a)}
                   disabled={busyId === a.id}
-                  className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer disabled:opacity-60 ${a.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                  className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer disabled:opacity-60 ${a.enabled ? 'bg-[var(--color-green-500-solid)]' : 'bg-gray-300'}`}
                   title={a.enabled ? 'Turn off' : 'Turn on'}
                 >
                   <span
-                    className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${a.enabled ? 'left-[22px]' : 'left-0.5'}`}
+                    className={`absolute top-0.5 w-5 h-5 bg-[var(--color-bg-white)] rounded-full shadow transition-all ${a.enabled ? 'left-[22px]' : 'left-0.5'}`}
                   />
                 </button>
               </div>
@@ -141,7 +141,7 @@ export default function AutomationsTab() {
                   value={a.channel}
                   onChange={(e) => patch(a.id, { channel: e.target.value })}
                   disabled={busyId === a.id}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-[11px] font-bold text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-60"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-[11px] font-bold text-gray-700 bg-[var(--color-bg-white)] focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-60"
                 >
                   <option value="whatsapp">WhatsApp</option>
                   <option value="sms">SMS</option>
@@ -166,7 +166,7 @@ export default function AutomationsTab() {
       </div>
 
       {automations.length === 0 && (
-        <div className="bg-white rounded-2xl border border-[#e1e2ed] p-10 text-center text-xs text-gray-400">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 text-center text-xs text-gray-400">
           No automation recipes yet.
         </div>
       )}

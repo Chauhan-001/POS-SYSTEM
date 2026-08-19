@@ -95,12 +95,52 @@ describe('SyncEngine offline queue', () => {
     expect(engine.getQueue()[0].error).toBe('API returned error');
   });
 
-  it('drops an operation after max retries are exhausted', () => {
+  it('STALLS an operation after max retries instead of silently dropping it (Phase 5)', () => {
+    const engine = makeEngine();
+    engine.enqueue(op()); // /api/bills — a financial write must never vanish
+    const id = engine.getQueue()[0].id;
+    for (let i = 0; i < 5; i++) engine.markRetry(id, 'err');
+    const remaining = engine.getQueue();
+    expect(remaining).toHaveLength(1); // kept, never dropped
+    expect(remaining[0].stalled).toBe(true);
+    expect(remaining[0].retries).toBe(5);
+    expect(remaining[0].error).toBe('err');
+  });
+
+  it('replayQueue skips stalled operations until manually retried', async () => {
     const engine = makeEngine();
     engine.enqueue(op());
     const id = engine.getQueue()[0].id;
     for (let i = 0; i < 5; i++) engine.markRetry(id, 'err');
-    expect(engine.getQueue()).toHaveLength(0); // 5 retries → dropped
+    const fetcher = vi.fn(async () => true);
+    const result = await engine.replayQueue(fetcher);
+    expect(fetcher).not.toHaveBeenCalled(); // no auto-retry on stalled ops
+    expect(result).toEqual({ success: 0, failed: 0 });
+    expect(engine.getQueue()[0].stalled).toBe(true);
+  });
+
+  it('retryNow resets a stalled operation so replay can succeed', async () => {
+    const engine = makeEngine();
+    engine.enqueue(op());
+    const id = engine.getQueue()[0].id;
+    for (let i = 0; i < 5; i++) engine.markRetry(id, 'err');
+    engine.retryNow(id);
+    expect(engine.getQueue()[0].stalled).toBe(false);
+    expect(engine.getQueue()[0].retries).toBe(0);
+    expect(engine.getQueue()[0].error).toBeUndefined();
+    const fetcher = vi.fn(async () => true);
+    const result = await engine.replayQueue(fetcher);
+    expect(result.success).toBe(1);
+    expect(engine.getQueue()).toHaveLength(0);
+  });
+
+  it('clearOperation removes an op only on explicit operator action', async () => {
+    const engine = makeEngine();
+    engine.enqueue(op());
+    const id = engine.getQueue()[0].id;
+    for (let i = 0; i < 5; i++) engine.markRetry(id, 'err');
+    engine.clearOperation(id);
+    expect(engine.getQueue()).toHaveLength(0);
   });
 
   it('replayQueue dequeues successful operations and reports counts', async () => {

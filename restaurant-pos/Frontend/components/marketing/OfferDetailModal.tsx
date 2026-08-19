@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Eye, Pause, Play, Copy, Megaphone, Trash2, Award, TrendingUp, ShoppingBag, DollarSign, Target, Loader2 } from 'lucide-react';
+import { X, Eye, Pause, Play, Copy, Trash2, Award, TrendingUp, ShoppingBag, DollarSign, Target, Loader2 } from 'lucide-react';
 import * as api from '../../src/api/client';
 import { offerValueLabel, OFFER_TYPE_LABELS, fmtNumber } from './shared';
 import OfferEconomics from './OfferEconomics';
@@ -19,11 +19,10 @@ interface OfferDetailModalProps {
   onEdit: () => void;
   onStatusChange: (status: string) => void;
   onDuplicate: () => void;
-  onPromote: () => void;
   onDelete: () => void;
 }
 
-export default function OfferDetailModal({ offer, currencySymbol, onClose, onEdit, onStatusChange, onDuplicate, onPromote, onDelete }: OfferDetailModalProps) {
+export default function OfferDetailModal({ offer, currencySymbol, onClose, onEdit, onStatusChange, onDuplicate, onDelete }: OfferDetailModalProps) {
   const [analytics, setAnalytics] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -55,9 +54,9 @@ export default function OfferDetailModal({ offer, currencySymbol, onClose, onEdi
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--color-bg-white)] rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-4 sticky top-0 bg-white">
+        <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-4 sticky top-0 bg-[var(--color-bg-white)]">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-black text-gray-900">{offer.title}</h3>
@@ -118,14 +117,13 @@ export default function OfferDetailModal({ offer, currencySymbol, onClose, onEdi
           <section className="border-t border-gray-100 pt-5">
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">Actions</p>
             <div className="flex flex-wrap gap-2">
-              <button onClick={onEdit} className="flex items-center gap-1.5 bg-[var(--brand-color)] text-white px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer hover:bg-[#003ea8] transition-all"><Eye className="w-3.5 h-3.5" /> Edit</button>
+              <button onClick={onEdit} className="flex items-center gap-1.5 bg-[var(--brand-color)] text-white px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer hover:bg-[var(--color-primary-hover)] transition-all"><Eye className="w-3.5 h-3.5" /> Edit</button>
               {(isLive || offer.status === 'paused') && (
-                <button onClick={() => onStatusChange(isLive ? 'paused' : 'active')} className="flex items-center gap-1.5 bg-amber-500 text-white px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer hover:bg-amber-600 transition-all">
+                <button onClick={() => onStatusChange(isLive ? 'paused' : 'active')} className="flex items-center gap-1.5 bg-[var(--color-amber-500-solid)] text-white px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer hover:bg-[var(--color-amber-600-solid)] transition-all">
                   {isLive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {isLive ? 'Pause' : 'Resume'}
                 </button>
               )}
-              <button onClick={onDuplicate} className="flex items-center gap-1.5 bg-white border border-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer hover:border-[var(--brand-color)] transition-all"><Copy className="w-3.5 h-3.5" /> Duplicate</button>
-              <button onClick={onPromote} className="flex items-center gap-1.5 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer hover:bg-purple-700 transition-all"><Megaphone className="w-3.5 h-3.5" /> Promote</button>
+              <button onClick={onDuplicate} className="flex items-center gap-1.5 bg-[var(--color-bg-white)] border border-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer hover:border-[var(--brand-color)] transition-all"><Copy className="w-3.5 h-3.5" /> Duplicate</button>
               <button onClick={onDelete} className="flex items-center gap-1.5 bg-red-50 text-red-600 border border-red-200 px-4 py-2.5 rounded-xl text-xs font-black cursor-pointer hover:bg-red-100 transition-all ml-auto">
                 <Trash2 className="w-3.5 h-3.5" /> End offer
               </button>
@@ -149,7 +147,7 @@ function InfoCell({ label, value, live, mono, wide }: { label: string; value: st
 
 function MetricCard({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone: string }) {
   return (
-    <div className="bg-white border border-[#e1e2ed] rounded-xl p-3.5">
+    <div className="bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-xl p-3.5">
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${tone}`}>{icon}</div>
       <p className="text-lg font-black text-gray-900 mt-2">{value}</p>
       <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">{label}</p>

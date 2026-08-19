@@ -78,12 +78,16 @@ const TableSchema = new Schema<ITable>(
 );
 
 TableSchema.index({ branchId: 1, section: 1 });
-// Uniqueness on (branchId, number) applies ONLY to active (non-deleted)
-// tables. Soft-deleted rows keep order/history references intact but must
-// not block re-adding a table with the same number (partial index — the
-// live MongoDB index must match; see scripts/migrate-table-active-unique.ts).
+// Uniqueness on (restaurantId, branchId, number) applies ONLY to active
+// (non-deleted) tables. Scoping by restaurantId means two tenants can each
+// run branchless table numbers 1-N without colliding — the old global
+// (branchId, number) index let one restaurant's branchless tables 1-4 block
+// every other restaurant from using those numbers. Soft-deleted rows keep
+// order/history references intact but must not block re-adding a table with
+// the same number (partial index — the live MongoDB index must match; see
+// scripts/migrate-table-restaurant-unique.mjs).
 TableSchema.index(
-  { branchId: 1, number: 1 },
+  { restaurantId: 1, branchId: 1, number: 1 },
   { unique: true, partialFilterExpression: { isDeleted: false } }
 );
 TableSchema.index({ branchId: 1, floorId: 1 });

@@ -23,6 +23,7 @@ import mongoose from 'mongoose';
 import crypto from 'crypto';
 import QrToken from '../models/QrToken';
 import Restaurant from '../../../models/Restaurant';
+import { ensurePublicToken } from '../../../utils/publicToken';
 import { config } from '../../../config';
 
 /** Mint a new opaque sticker capability (unique across the deployment). */
@@ -35,13 +36,20 @@ export function genQrToken(): string {
  * resolves a sticker to. Returns null (not throws) when the owner hasn't
  * enabled an online storefront yet; callers treat that as "no sticker for
  * now" and QR Studio still offers a manual Create once the store is on.
+ *
+ * Self-heals restaurants that predate the public-token feature (or were
+ * registered through a path that skipped it): the token is minted on first
+ * sticker request, so table/car/pickup stickers always work. Tokens are NOT
+ * secrets — they only expose the public (read-only) storefront — so minting
+ * one is safe and never rotates an existing token (ensurePublicToken is
+ * atomic and returns the existing token when present).
  */
 export async function resolvePublicToken(restaurantId: mongoose.Types.ObjectId | string): Promise<string | null> {
   const rid = new mongoose.Types.ObjectId(String(restaurantId));
   const restaurant = await Restaurant.findById(rid).select('publicToken brandName name').lean().exec();
   const pub = (restaurant as any)?.publicToken;
-  if (!pub || !/^pbl_[A-Za-z0-9]{10,64}$/.test(pub)) return null;
-  return pub;
+  if (pub && /^pbl_[A-Za-z0-9]{10,64}$/.test(pub)) return pub;
+  return (await ensurePublicToken(String(rid))) || null;
 }
 
 /** Build the customer-site sticker URL (base URL from config, baked at gen). */

@@ -220,7 +220,7 @@ describe('Cost Analytics', () => {
   it('should return cost by model', async () => {
     const byModel = await aiAnalyticsService.getCostByModel();
     expect(byModel).toHaveLength(2);
-    const gpt4o = byModel.find((d: any) => d.model === 'gpt-4o');
+    const gpt4o = byModel.find((d: any) => d.model === 'gpt-4o')!;
     expect(gpt4o).toBeDefined();
     expect(gpt4o.cost).toBeCloseTo(0.008, 4);
   });
@@ -228,7 +228,7 @@ describe('Cost Analytics', () => {
   it('should return cost by feature', async () => {
     const byFeature = await aiAnalyticsService.getCostByFeature();
     expect(byFeature).toHaveLength(3);
-    const report = byFeature.find((d: any) => d.feature === 'report-ai');
+    const report = byFeature.find((d: any) => d.feature === 'report-ai')!;
     expect(report).toBeDefined();
     expect(report.cost).toBeCloseTo(0.008, 4);
   });
@@ -273,7 +273,7 @@ describe('Latency Analytics', () => {
   it('should return latency by model', async () => {
     const byModel = await aiAnalyticsService.getLatencyByModel();
     expect(byModel).toHaveLength(2);
-    const gpt4o = byModel.find((d: any) => d.model === 'gpt-4o');
+    const gpt4o = byModel.find((d: any) => d.model === 'gpt-4o')!;
     expect(gpt4o).toBeDefined();
     expect(gpt4o.averageLatency).toBeGreaterThanOrEqual(1000);
   });
@@ -281,7 +281,7 @@ describe('Latency Analytics', () => {
   it('should return latency by feature', async () => {
     const byFeature = await aiAnalyticsService.getLatencyByFeature();
     expect(byFeature).toHaveLength(2);
-    const inv = byFeature.find((d: any) => d.feature === 'inventory-ai');
+    const inv = byFeature.find((d: any) => d.feature === 'inventory-ai')!;
     expect(inv).toBeDefined();
     expect(inv.averageLatency).toBe(150); // (100+200)/2
   });
@@ -335,7 +335,7 @@ describe('Model Analytics', () => {
     const models = await aiAnalyticsService.getModelAnalytics();
     expect(models).toHaveLength(3);
     
-    const gpt4oMini = models.find((m: any) => m.model === 'gpt-4o-mini');
+    const gpt4oMini = models.find((m: any) => m.model === 'gpt-4o-mini')!;
     expect(gpt4oMini).toBeDefined();
     expect(gpt4oMini.requests).toBe(2);
     expect(gpt4oMini.totalTokens).toBe(350);
@@ -343,7 +343,7 @@ describe('Model Analytics', () => {
     expect(gpt4oMini.successRate).toBe(100);
     expect(gpt4oMini.errorRate).toBe(0);
 
-    const gpt4o = models.find((m: any) => m.model === 'gpt-4o');
+    const gpt4o = models.find((m: any) => m.model === 'gpt-4o')!;
     expect(gpt4o).toBeDefined();
     expect(gpt4o.requests).toBe(2);
     expect(gpt4o.fallbackUsage).toBe(1);

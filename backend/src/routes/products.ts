@@ -13,6 +13,8 @@ import {
   updateProduct,
   deleteProduct,
   adjustProductStock,
+  resolveProductQuery,
+  productPriceIntelligence,
 } from '../controllers/productsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
@@ -23,6 +25,15 @@ const router = Router();
 
 // All staff can view products (menu)
 router.get('/', requireAuth, validate({ query: productQuerySchema }), listProducts);
+
+// Phase 10 — read-only price intelligence advisory (never mutates prices).
+// Registered BEFORE '/:id' so 'price-intelligence' is never captured as an id.
+router.get('/price-intelligence', requireAuth, productPriceIntelligence);
+
+// Phase 11 — product resolution for POS typed search / SKU / barcode.
+// POST verb, so no conflict with the GET '/:id' route.
+router.post('/resolve', requireAuth, resolveProductQuery);
+
 router.get('/:id', requireAuth, validate({ params: productParamsSchema }), getProduct);
 
 // Only Owner and Manager can modify the menu

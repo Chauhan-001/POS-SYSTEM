@@ -268,6 +268,19 @@ function PlanBanner({ plan, onUpgrade }: {
   }
   const sc = statusColors[plan.status] || statusColors.active
 
+  // The active billing cadence and the price it actually charges.
+  const period = plan.billingPeriod === 'yearly' ? 'yearly' : 'monthly'
+  const altPeriod = period === 'yearly' ? 'monthly' : 'yearly'
+  const activePrice = plan.billingPrice > 0
+    ? plan.billingPrice
+    : (period === 'yearly' ? plan.yearlyPrice : plan.price)
+  const altPrice = altPeriod === 'yearly' ? plan.yearlyPrice : plan.price
+  // Days left in the 2-day expiry warning window (status 'grace') before the
+  // subscription auto-downgrades to the Free tier.
+  const graceDaysRemaining = plan.graceEnd
+    ? Math.max(0, Math.ceil((new Date(plan.graceEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0
+
   return (
     <Card className="relative overflow-hidden">
       {/* Subtle gradient background */}
@@ -284,15 +297,30 @@ function PlanBanner({ plan, onUpgrade }: {
             </span>
           </div>
           <p className="text-sm text-surface-500 dark:text-surface-400">
-            {plan.price > 0
-              ? `${formatCurrency(plan.price)}/month`
-              : 'Free plan'}
-            {plan.expiryDate && (
+            {activePrice > 0 ? (
+              <>
+                <span className="font-semibold text-surface-700 dark:text-surface-300 capitalize">{period}</span>
+                <span className="mx-1">·</span>
+                {formatCurrency(activePrice)}/{period === 'yearly' ? 'yr' : 'mo'}
+                {altPrice > 0 && (
+                  <span className="text-xs text-surface-400"> · or {formatCurrency(altPrice)}/{altPeriod === 'yearly' ? 'yr' : 'mo'}</span>
+                )}
+              </>
+            ) : (
+              'Free plan'
+            )}
+            {plan.expiryDate && plan.status !== 'grace' && (
               <span className="ml-2 inline-flex items-center gap-1 text-xs text-surface-400">
                 · Expires {new Date(plan.expiryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               </span>
             )}
           </p>
+          {plan.status === 'grace' && plan.graceEnd && (
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-warning bg-warning/10 rounded-lg px-2.5 py-1">
+              <AlertTriangle size={13} />
+              Subscription expired — moving to the Free plan (core POS only) in {graceDaysRemaining} day{graceDaysRemaining !== 1 ? 's' : ''}
+            </p>
+          )}
         </div>
         <Button
           size="sm"
@@ -326,6 +354,14 @@ export default function UsageDashboard({ data, isLoading, onUpgrade }: UsageDash
   const { limits, features, plan } = data
   const totalEnabled = features.enabled.length
   const totalAvailable = features.available.length
+  const period = plan.billingPeriod === 'yearly' ? 'yearly' : 'monthly'
+  const activePrice = plan.billingPrice > 0
+    ? plan.billingPrice
+    : (period === 'yearly' ? plan.yearlyPrice : plan.price)
+  // Days left in the 2-day expiry warning window before the free-tier downgrade.
+  const graceDaysRemaining = plan.graceEnd
+    ? Math.max(0, Math.ceil((new Date(plan.graceEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0
 
   return (
     <div className="space-y-6">
@@ -341,26 +377,26 @@ export default function UsageDashboard({ data, isLoading, onUpgrade }: UsageDash
           {...limits.branches}
         />
         <UsageGauge
-          label="Devices"
+          label="Devices per Branch"
           icon={Monitor}
           iconColor="#06b6d4"
-          {...limits.devices}
+          {...limits.devicesPerBranch}
         />
         <UsageGauge
-          label="Employees"
+          label="Users"
           icon={Users}
           iconColor="#22c55e"
-          {...limits.employees}
+          {...limits.users}
         />
       </div>
 
       {/* ─── Quick Stats Row ─────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Plan Price', value: plan.price > 0 ? formatCurrency(plan.price) + '/mo' : 'Free', icon: Zap, color: '#6366f1' },
+          { label: 'Plan Price', value: activePrice > 0 ? `${formatCurrency(activePrice)}/${period === 'yearly' ? 'yr' : 'mo'}` : 'Free', icon: Zap, color: '#6366f1' },
           { label: 'Features Enabled', value: `${totalEnabled} / ${totalEnabled + totalAvailable}`, icon: Sparkles, color: '#f59e0b' },
-          { label: 'Plan Status', value: plan.status.charAt(0).toUpperCase() + plan.status.slice(1), icon: Info, color: plan.status === 'active' ? '#22c55e' : plan.status === 'trial' ? '#3b82f6' : '#ef4444' },
-          { label: 'Subscription', value: plan.expiryDate ? new Date(plan.expiryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'N/A', icon: Crown, color: '#8b5cf6' },
+          { label: 'Plan Status', value: plan.status.charAt(0).toUpperCase() + plan.status.slice(1), icon: Info, color: plan.status === 'active' ? '#22c55e' : plan.status === 'trial' ? '#3b82f6' : plan.status === 'grace' ? '#f59e0b' : '#ef4444' },
+          { label: plan.status === 'grace' ? 'Free Downgrade' : 'Subscription', value: plan.status === 'grace' && plan.graceEnd ? `in ${graceDaysRemaining} day${graceDaysRemaining !== 1 ? 's' : ''}` : plan.expiryDate ? new Date(plan.expiryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'N/A', icon: Crown, color: plan.status === 'grace' ? '#f59e0b' : '#8b5cf6' },
         ].map((stat) => (
           <div
             key={stat.label}

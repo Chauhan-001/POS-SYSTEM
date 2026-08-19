@@ -153,6 +153,38 @@ export async function getSubscriptionReport(
           _id: '$plan',
           count: { $sum: 1 },
           activeInPlan: { $sum: { $cond: [{ $eq: ['$status', 'active'] }, 1, 0] } },
+          // Active split by billing cadence so MRR can price each bucket
+          // correctly (yearly subscriptions are billed at yearlyPrice/12 per
+          // month, not the monthly price). Legacy rows without billingPeriod
+          // default to monthly.
+          activeMonthly: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$status', 'active'] },
+                    { $ne: [{ $ifNull: ['$billingPeriod', 'monthly'] }, 'yearly'] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          activeYearly: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$status', 'active'] },
+                    { $eq: [{ $ifNull: ['$billingPeriod', 'monthly'] }, 'yearly'] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
         },
       },
       { $sort: { count: -1 } },
@@ -175,12 +207,23 @@ export async function getSubscriptionReport(
 
   const planDistribution = lifecycle.map((l: any) => {
     const planDoc = planById.get(l._id);
+    const monthlyPrice = planDoc?.price ?? 0;
+    // Monthly-equivalent of a yearly subscriber — the annual price amortized
+    // over 12 months. Plans without a yearly price bill yearly subs at the
+    // monthly rate.
+    const yearlyMonthlyEquiv = planDoc?.yearlyPrice && planDoc.yearlyPrice > 0
+      ? planDoc.yearlyPrice / 12
+      : monthlyPrice;
+    // Older aggregation rows / fresh installs may lack the cadence breakdown —
+    // fall back to billing the whole active bucket at the monthly rate.
+    const activeMonthly = typeof l.activeMonthly === 'number' ? l.activeMonthly : l.activeInPlan;
+    const activeYearly = typeof l.activeYearly === 'number' ? l.activeYearly : 0;
     return {
       plan: l._id,
       planName: planDoc?.name ?? l._id,
       count: l.count,
-      price: planDoc?.price ?? 0,
-      mrr: round2((planDoc?.price ?? 0) * l.activeInPlan),
+      price: monthlyPrice,
+      mrr: round2(monthlyPrice * activeMonthly + yearlyMonthlyEquiv * activeYearly),
     };
   });
 
@@ -236,13 +279,29 @@ export async function getSubscriptionReport(
   };
 }
 
-/** MRR fallback from recent successful payments (avg monthly collection). */
+/** MRR fallback from recent successful payments (avg monthly collection).
+ * Yearly payments are amortized (amount / 12) so a ₹4999 annual payment
+ * contributes its monthly-equivalent, not its full face value. */
 async function subscriptionMrrFromPayments(window: DateWindow): Promise<number> {
   try {
     const { default: Payment } = await import('../../../models/Payment');
     const rows = await Payment.aggregate([
       { $match: { status: 'success', createdAt: { $gte: window.from, $lte: window.to } } },
-      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $ifNull: ['$billingPeriod', 'monthly'] }, 'yearly'] },
+                { $divide: ['$amount', 12] },
+                '$amount',
+              ],
+            },
+          },
+          count: { $sum: 1 },
+        },
+      },
     ]);
     const total = rows[0]?.total ?? 0;
     const count = Math.max(1, rows[0]?.count ?? 1);

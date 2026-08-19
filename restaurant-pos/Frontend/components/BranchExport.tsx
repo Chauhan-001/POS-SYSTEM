@@ -456,15 +456,15 @@ export default function BranchExport({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 border border-[#e1e2ed] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-2xl w-full mx-4 border border-[var(--color-border-default)] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-5 border-b border-[#e1e2ed] flex items-center justify-between">
+        <div className="p-5 border-b border-[var(--color-border-default)] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-purple-50">
               <Download className="w-4 h-4 text-purple-600" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-[#191b23]">Branch Data Export</h3>
+              <h3 className="font-bold text-sm text-[var(--color-text-primary)]">Branch Data Export</h3>
               <p className="text-[10px] text-gray-400">Consolidated reports across all branches</p>
             </div>
           </div>
@@ -496,7 +496,7 @@ export default function BranchExport({
                 className={`text-left p-4 rounded-xl border transition-all group ${
                   exporting === expType.id
                     ? 'border-purple-400 bg-purple-50 animate-pulse'
-                    : 'border-[#e1e2ed] hover:border-purple-300 hover:shadow-sm hover:bg-purple-50/50'
+                    : 'border-[var(--color-border-default)] hover:border-purple-300 hover:shadow-sm hover:bg-purple-50/50'
                 } ${exporting !== null && exporting !== expType.id ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
               >
                 <div className="flex items-start gap-3">
@@ -566,11 +566,11 @@ export default function BranchExport({
           )}
         </div>
 
-        <div className="p-5 pt-0 border-t border-[#e1e2ed] flex justify-end">
+        <div className="p-5 pt-0 border-t border-[var(--color-border-default)] flex justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 border border-[#c3c6d7] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer"
+            className="px-4 py-2 border border-[var(--color-border-input)] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer"
           >
             Close
           </button>

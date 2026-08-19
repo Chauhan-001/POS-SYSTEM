@@ -109,6 +109,29 @@ export const cartItemSchema = z.object({
   originalPrice: z.number().min(0).optional(),
   kotPrinted: z.boolean().optional(),
   customPrice: z.number().min(0).optional(),
+  // Phase 3 — configured-product selections + immutable pricing snapshot.
+  // Present only for items added through the configuration UI. The backend
+  // revalidates selections and (for online-origin bills) reprices them.
+  configuration: z.object({
+    selections: z.array(z.object({
+      groupId: z.string().min(1),
+      optionIds: z.array(z.string().min(1)),
+      quantities: z.record(z.string(), z.number().min(1)).optional(),
+    })).max(200),
+  }).optional(),
+  pricingSnapshot: z.object({
+    basePrice: z.number().min(0),
+    variantDelta: z.number().min(0).optional(),
+    modifierDelta: z.number().min(0).optional(),
+    addonDelta: z.number().min(0).optional(),
+    grossItemPrice: z.number().min(0),
+    lineTotal: z.number().min(0).optional(),
+    configVersion: z.number().min(0).optional(),
+    pricingVersion: z.number().min(0).optional(),
+    /** 'online' = server-authoritative reprice; 'offline' = historical snapshot honored. */
+    origin: z.enum(['online', 'offline']).optional(),
+  }).optional(),
+  configSummary: z.string().max(500).optional(),
 });
 
 /** Party types */

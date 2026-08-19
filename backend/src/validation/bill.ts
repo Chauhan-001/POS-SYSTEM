@@ -59,18 +59,3 @@ export const voidBillSchema = z.object({
   managerPin: z.string().min(4).max(10).optional(),
 }).optional();
 
-/**
- * Refund a bill — full refund when `items` is omitted, partial refund when a
- * subset of line items is provided. A Manager/Owner PIN is required so refunds
- * always have an accountable operator.
- */
-export const refundBillSchema = z.object({
-  items: z.array(z.object({
-    menuItemId: z.string().min(1).optional(),
-    itemName: z.string().min(1).optional(),
-    quantity: z.number().int().min(1).optional(),
-  })).max(500).optional(),
-  reason: nonEmptyString.max(500),
-  refundedBy: nonEmptyString.max(100),
-  managerPin: z.string().min(4).max(10),
-}).strict();

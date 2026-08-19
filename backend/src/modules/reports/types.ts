@@ -18,6 +18,8 @@ export interface ReportScope {
   branchId?: string;
   startDate?: string;
   endDate?: string;
+  /** Business-day opening time (HH:mm) — "today" report window starts here. */
+  openingTime?: string;
 }
 
 export interface AuthenticatedReportRequest extends Request {

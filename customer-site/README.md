@@ -41,4 +41,4 @@ Copy `.env.example` → `.env` (or set at build time):
 | `src/pages/*` | Home, CarForm, Menu, Cart, Track |
 | `src/components/*` | Header, MenuCard, ItemSheet, Stepper, WaiterFab, OtpModal, bits |
 
-Full API/socket contract: `../API_CONTRACT.md`. How this fits the whole platform: `../INTEGRATION.md`.
+Full API reference: [`docs/API_REFERENCE.md`](../docs/API_REFERENCE.md) (§6 Public Store). How this fits the whole platform: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md).

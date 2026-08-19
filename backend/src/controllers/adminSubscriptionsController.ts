@@ -9,7 +9,9 @@ import Invoice from '../models/Invoice';
 import InvoiceCounter from '../models/InvoiceCounter';
 import AuditLog from '../models/AuditLog';
 import crypto from 'crypto';
-import { subscriptionService } from '../modules/subscription/subscriptionService';
+import { subscriptionService, isBillingPeriod, billingDurationDays, planPriceForPeriod } from '../modules/subscription/subscriptionService';
+import { effectiveFeatures } from '../utils/subscriptionFeatures';
+import { FEATURE_KEYS } from '../constants/planFeatures';
 import { AppError } from '../utils/AppError';
 import {
   hookSubscriptionRenewed,
@@ -77,19 +79,23 @@ export async function getSubscriptions(req: Request, res: Response): Promise<voi
         restaurantId: s.restaurantId,
         isDeleted: { $ne: true },
       }).exec();
-      const effectiveLimits = s.limits || plan?.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 };
+      const effectiveLimits = s.limits || plan?.limits || { maxBranches: 1, maxDevicesPerBranch: 3 };
       const lastPayment = lastPaymentMap.get(s._id.toString());
+      const effective = effectiveFeatures(s.features, s.grantedFeatures);
       return {
         id: s._id.toString(),
         restaurantId: s.restaurantId.toString(),
         restaurantName: restaurant?.name || 'Unknown',
         plan: s.plan,
+        billingPeriod: s.billingPeriod || 'monthly',
         status: statusMap[s.status] || 'active',
         startDate: s.startDate.toISOString(),
         expiryDate: s.endDate?.toISOString() || s.trialEnd?.toISOString() || null,
         maxDevices: s.maxDevices,
-        aiEnabled: s.features.includes('ai'),
-        price: plan?.price || 0,
+        aiEnabled: effective.includes('ai'),
+        features: effective,
+        grantedFeatures: s.grantedFeatures || [],
+        price: planPriceForPeriod(plan, s.billingPeriod) || 0,
         autoRenew: s.status === 'active',
         limits: effectiveLimits,
         branchUsage: {
@@ -126,9 +132,9 @@ export async function getSubscription(req: Request, res: Response): Promise<void
     };
     res.json({
       id: sub._id.toString(), restaurantId: sub.restaurantId.toString(), restaurantName: restaurant?.name || 'Unknown',
-      plan: sub.plan, status: statusMap[sub.status] || 'active',
+      plan: sub.plan, billingPeriod: sub.billingPeriod || 'monthly', status: statusMap[sub.status] || 'active',
       startDate: sub.startDate.toISOString(), expiryDate: sub.endDate?.toISOString() || sub.trialEnd?.toISOString() || null,
-      maxDevices: sub.maxDevices, aiEnabled: sub.features.includes('ai'), price: plan?.price || 0, autoRenew: sub.status === 'active',
+      maxDevices: sub.maxDevices, aiEnabled: sub.features.includes('ai'), price: planPriceForPeriod(plan, sub.billingPeriod) || 0, autoRenew: sub.status === 'active',
     });
   } catch (error) {
     console.error('[AdminSubscriptions] Get error:', error);
@@ -142,9 +148,10 @@ export async function renewSubscription(req: Request, res: Response): Promise<vo
     const sub = await Subscription.findById(req.params.id).exec();
     if (!sub) { res.status(404).json({ message: 'Subscription not found' }); return; }
 
-    // Resolve plan to get default price
+    // Resolve plan + billing period to get the period's default price.
     const plan = await SubscriptionPlan.findOne({ planId: sub.plan }).exec();
-    const defaultPrice = plan?.price || 499;
+    const period = isBillingPeriod(req.body.billingPeriod) ? req.body.billingPeriod : (sub.billingPeriod || 'monthly');
+    const defaultPrice = planPriceForPeriod(plan, period) || 499;
 
     // Payment details from request body (admin can override amount for partial/cash)
     const { amount = defaultPrice, notes = '', paymentMethod = 'cash' } = req.body;
@@ -174,6 +181,7 @@ export async function renewSubscription(req: Request, res: Response): Promise<vo
       currency: 'INR',
       gateway: 'cash',
       paymentMethod: paymentMethod,
+      billingPeriod: period,
       status: 'success',
       invoiceNumber,
     });
@@ -189,15 +197,16 @@ export async function renewSubscription(req: Request, res: Response): Promise<vo
       generatedAt: new Date(),
     });
 
-    // Extend subscription (30 days from now, or from current expiry if still active)
+    // Extend subscription by the cadence that was paid for (monthly = 30d, yearly = 365d).
     const now = new Date();
     const baseDate = (sub.expiryDate && sub.expiryDate > now) ? sub.expiryDate : now;
-    const newExpiry = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const newExpiry = new Date(baseDate.getTime() + billingDurationDays(period) * 24 * 60 * 60 * 1000);
     const newGraceEnd = new Date(newExpiry.getTime() + 10 * 24 * 60 * 60 * 1000);
 
     await Subscription.findByIdAndUpdate(req.params.id, {
       $set: {
         status: 'active',
+        billingPeriod: period,
         subscriptionStart: sub.subscriptionStart || now,
         expiryDate: newExpiry,
         renewalDate: newExpiry,
@@ -215,6 +224,7 @@ export async function renewSubscription(req: Request, res: Response): Promise<vo
       details: {
         restaurantId: sub.restaurantId.toString(),
         plan: sub.plan,
+        billingPeriod: period,
         amount: parsedAmount,
         paymentMethod,
         invoiceNumber,
@@ -239,6 +249,7 @@ export async function renewSubscription(req: Request, res: Response): Promise<vo
       invoiceNumber,
       amount: parsedAmount,
       paymentMethod,
+      billingPeriod: period,
       expiryDate: newExpiry.toISOString(),
     });
   } catch (error) {
@@ -264,7 +275,7 @@ async function resolveSubId(req: Request): Promise<mongoose.Types.ObjectId> {
  * downgrade guards (entitlementService.validatePlanDowngrade) are enforced.
  */
 async function changeSubscriptionPlan(req: Request, res: Response, mode: 'upgrade' | 'downgrade') {
-  const { plan } = req.body;
+  const { plan, billingPeriod } = req.body;
   if (!plan?.trim()) {
     res.status(400).json({ message: 'Target plan is required' });
     return;
@@ -272,7 +283,7 @@ async function changeSubscriptionPlan(req: Request, res: Response, mode: 'upgrad
   try {
     const restaurantId = await resolveSubId(req);
     const before = await Subscription.findById(req.params.id).select('plan').exec();
-    const updated = await subscriptionService.changePlan(restaurantId.toString(), plan.trim());
+    const updated = await subscriptionService.changePlan(restaurantId.toString(), plan.trim(), billingPeriod);
     hookSubscriptionPlanChanged({
       restaurantId,
       subscriptionId: req.params.id,
@@ -429,20 +440,26 @@ export async function getSubscriptionByRestaurant(req: Request, res: Response): 
       restaurantId: sub.restaurantId,
       isDeleted: { $ne: true },
     }).exec();
-    const effectiveLimits = sub.limits || plan?.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 };
+    const effectiveLimits = sub.limits || plan?.limits || { maxBranches: 1, maxDevicesPerBranch: 3 };
+    const effective = effectiveFeatures(sub.features, sub.grantedFeatures);
     res.json({
       id: sub._id.toString(),
       restaurantId: sub.restaurantId.toString(),
       restaurantName: restaurant?.name || 'Unknown',
       plan: sub.plan,
+      billingPeriod: sub.billingPeriod || 'monthly',
       status: sub.status,
       startDate: sub.startDate.toISOString(),
       expiryDate: sub.endDate?.toISOString() || sub.trialEnd?.toISOString() || null,
       trialEnd: sub.trialEnd?.toISOString() || null,
       graceEnd: sub.graceEnd?.toISOString() || null,
       maxDevices: sub.maxDevices,
-      price: plan?.price || 0,
+      price: planPriceForPeriod(plan, sub.billingPeriod) || 0,
       autoRenew: sub.status === 'active',
+      // Effective feature set = plan snapshot + admin-granted add-ons.
+      features: effective,
+      grantedFeatures: sub.grantedFeatures || [],
+      planFeatures: plan?.features || [],
       limits: effectiveLimits,
       branchUsage: {
         total: branchCount,
@@ -451,6 +468,84 @@ export async function getSubscriptionByRestaurant(req: Request, res: Response): 
     });
   } catch (error) {
     console.error('[AdminSubscriptions] Get by restaurant error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
+/**
+ * PUT /api/admin/restaurants/:id/subscription/features
+ * Grant or revoke add-on features on the restaurant's CURRENT plan.
+ *
+ * Body: { grant?: string[], revoke?: string[] }
+ *   - grant  — add these feature keys to the subscription's grantedFeatures
+ *   - revoke — remove these feature keys from grantedFeatures
+ *
+ * The change is immediate and reflected everywhere entitlements are checked
+ * (requireFeature middleware, entitlementService, POS subscription status,
+ * admin dashboard). Grants live OUTSIDE the plan snapshot, so they survive
+ * plan upgrades/downgrades and the free-tier fallback. Revoking a feature the
+ * plan itself includes has no effect (plan features always stay active).
+ */
+export async function updateGrantedFeatures(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = req.params.id;
+    const { grant = [], revoke = [] } = req.body || {};
+    const grantList: string[] = Array.isArray(grant) ? grant : [];
+    const revokeList: string[] = Array.isArray(revoke) ? revoke : [];
+
+    // Unknown feature keys are rejected up-front (defense-in-depth beyond the
+    // Zod schema) so a typo can never silently write a bogus feature.
+    const unknown = [...grantList, ...revokeList].filter((f) => !FEATURE_KEYS.has(f));
+    if (unknown.length > 0) {
+      res.status(400).json({ message: `Unknown feature key(s): ${unknown.join(', ')}` });
+      return;
+    }
+
+    const sub = await Subscription.findOne({ restaurantId }).exec();
+    if (!sub) {
+      res.status(404).json({ message: 'Subscription not found' });
+      return;
+    }
+
+    const granted = new Set(sub.grantedFeatures || []);
+    grantList.forEach((f) => granted.add(f));
+    revokeList.forEach((f) => granted.delete(f));
+    sub.grantedFeatures = Array.from(granted);
+    await sub.save();
+
+    const effective = effectiveFeatures(sub.features, sub.grantedFeatures);
+    const adminUser = (req as any).user;
+    const adminName = adminUser?.name || adminUser?.userId || 'Admin';
+    await AuditLog.create({
+      action: 'subscription.features.updated',
+      entityType: 'Subscription',
+      entityId: sub._id.toString(),
+      performedBy: adminName,
+      performedById: adminUser?.id || adminUser?._id?.toString(),
+      details: {
+        restaurantId: sub.restaurantId.toString(),
+        plan: sub.plan,
+        granted: grantList,
+        revoked: revokeList,
+        grantedFeatures: sub.grantedFeatures,
+        effectiveFeatures: effective,
+      },
+    });
+
+    console.log(`[AdminSubscriptions] Feature grant updated for ${sub.restaurantId}: +${grantList.join(',') || 'none'} -${revokeList.join(',') || 'none'}`);
+
+    res.json({
+      message: 'Feature access updated',
+      subscription: {
+        id: sub._id.toString(),
+        restaurantId: sub.restaurantId.toString(),
+        plan: sub.plan,
+        grantedFeatures: sub.grantedFeatures,
+        features: effective,
+      },
+    });
+  } catch (error) {
+    console.error('[AdminSubscriptions] Feature grant error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 }

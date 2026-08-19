@@ -45,12 +45,12 @@ export async function getStatus(req: Request, res: Response): Promise<void> {
 export async function createOrder(req: Request, res: Response): Promise<void> {
   try {
     const restaurantId = tenantRestaurantId(req);
-    const { planId } = req.body;
+    const { planId, billingPeriod } = req.body;
     if (!restaurantId) {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;
     }
-    const order = await subscriptionService.createOrder(restaurantId.toString(), planId || 'professional');
+    const order = await subscriptionService.createOrder(restaurantId.toString(), planId || 'professional', billingPeriod);
     res.json(order);
   } catch (error) {
     console.error('[SubscriptionController] Create order error:', error);
@@ -125,8 +125,8 @@ export async function manualRenew(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: 'Restaurant ID required' });
       return;
     }
-    const { amount, notes, paymentMethod } = req.body;
-    const result = await subscriptionService.manualRenew(restaurantId.toString(), { amount, notes, paymentMethod });
+    const { amount, notes, paymentMethod, billingPeriod } = req.body;
+    const result = await subscriptionService.manualRenew(restaurantId.toString(), { amount, notes, paymentMethod, billingPeriod });
     res.json(result);
   } catch (error) {
     console.error('[SubscriptionController] Manual renew error:', error);
@@ -156,12 +156,12 @@ export async function calculateProration(req: Request, res: Response): Promise<v
 export async function changePlan(req: Request, res: Response): Promise<void> {
   try {
     const restaurantId = tenantRestaurantId(req);
-    const { planId } = req.body;
+    const { planId, billingPeriod } = req.body;
     if (!restaurantId || !planId) {
       res.status(400).json({ error: 'Restaurant ID and plan ID required' });
       return;
     }
-    const sub = await subscriptionService.changePlan(restaurantId.toString(), planId);
+    const sub = await subscriptionService.changePlan(restaurantId.toString(), planId, billingPeriod);
     res.json(sub);
   } catch (error: any) {
     console.error('[SubscriptionController] Change plan error:', error);

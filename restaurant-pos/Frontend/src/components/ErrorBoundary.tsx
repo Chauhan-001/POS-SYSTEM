@@ -46,8 +46,8 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
       }
 
       return (
-        <div className="flex items-center justify-center h-full min-h-[200px] bg-[#faf8ff] p-8">
-          <div className="bg-white rounded-2xl border border-red-200 shadow-lg p-8 max-w-md w-full text-center">
+        <div className="flex items-center justify-center h-full min-h-[200px] bg-[var(--color-bg-page)] p-8">
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-red-200 shadow-lg p-8 max-w-md w-full text-center">
             <div className="w-16 h-16 mx-auto mb-4 bg-red-50 rounded-full flex items-center justify-center">
               <AlertCircle className="w-8 h-8 text-red-500" />
             </div>
@@ -63,7 +63,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
             </details>
             <button
               onClick={this.handleReset}
-              className="inline-flex items-center gap-2 bg-[var(--brand-color)] hover:bg-[#003ea8] text-white px-5 py-2.5 rounded-xl font-bold text-xs transition-all shadow-md cursor-pointer"
+              className="inline-flex items-center gap-2 bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white px-5 py-2.5 rounded-xl font-bold text-xs transition-all shadow-md cursor-pointer"
             >
               <RefreshCw className="w-4 h-4" />
               Try Again

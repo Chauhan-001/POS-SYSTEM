@@ -51,14 +51,22 @@ export const aiConfig = {
     process.env.AI_API_KEY_FALLBACK || '',
   ].filter(Boolean))),
 
-  /** Model identifier */
+  /** Model identifier — default: GPT-OSS 20B via Groq */
   model: process.env.AI_MODEL || (() => {
     switch (process.env.AI_PROVIDER) {
       case 'anthropic': return 'claude-3-haiku-20240307';
       case 'ollama': return 'llama3.2';
-      default: return 'gpt-4o-mini';
+      default: return 'openai/gpt-oss-20b';
     }
   })(),
+
+  /**
+   * High-reasoning model for complex tasks (restaurant strategy, multi-factor
+   * analysis, etc.). Set via AI_REASONING_MODEL env var. Only used when
+   * callers explicitly opt into complex reasoning via `options.model`.
+   * Falls back to the primary model when unset.
+   */
+  reasoningModel: process.env.AI_REASONING_MODEL || 'openai/gpt-oss-120b',
 
   /** Custom base URL (for Ollama or proxy) */
   baseUrl: process.env.AI_BASE_URL || '',

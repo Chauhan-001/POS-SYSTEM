@@ -9,7 +9,7 @@
 import React from 'react';
 import {
   Clock, AlertCircle, CheckCircle, Timer, Receipt, Users, Wifi, ChevronRight, LayoutGrid,
-  Ban, XCircle, CalendarClock, Sparkles,
+  Ban, XCircle, CalendarClock, Sparkles, Hourglass, StopCircle,
 } from 'lucide-react';
 import type { TableInfo, Order } from '../src/types';
 import { useCurrentTime } from '../src/hooks/useCurrentTime';
@@ -24,6 +24,10 @@ interface TableCardProps {
   onOpenReceiptPreview: (order: Order) => void;
   onOpenBilling: (order: Order) => void;
   onCreateOrder: (type: Order['type'], tableId?: string) => void;
+  /** Open an AVAILABLE table's billing workspace without creating an order. */
+  onOpenTableBilling: (tableId: string) => void;
+  /** End a customer's ACTIVE table-QR seat session (the QR stays valid). */
+  onExpireSession?: (tableId: string) => void;
   getElapsedTime: (createdAt: string, now?: Date) => string;
 }
 
@@ -50,22 +54,28 @@ const STATUS_ICONS: Record<string, React.ElementType> = {
 function TableCard({
   table, order, bill, currencySymbol, sectionColors,
   TABLE_STATUS_COLORS,
-  onOpenReceiptPreview, onOpenBilling, onCreateOrder, getElapsedTime,
+  onOpenReceiptPreview, onOpenBilling, onCreateOrder, onOpenTableBilling, onExpireSession, getElapsedTime,
 }: TableCardProps) {
   const statusStyle = getStatusColor(table.status, TABLE_STATUS_COLORS);
   const sc = table.section ? (sectionColors[table.section] || 'bg-gray-100 text-gray-700 border-gray-200') : '';
   const StatusIcon = STATUS_ICONS[table.status] || Clock;
   const isAvailable = table.status === 'Available';
   const hasOrder = table.status !== 'Available' && !!order;
+  // A table held by a customer's QR scan (no order yet) — the cashier can
+  // end the session; the QR itself stays valid forever.
+  const isScanHeld = table.status !== 'Available' && !hasOrder && !!table.activeSession;
   // Live clock — re-renders this card every second so the occupancy timer ticks.
   const now = useCurrentTime();
+  const sessionMinsLeft = table.activeSession?.expiresAt
+    ? Math.max(0, Math.ceil((new Date(table.activeSession.expiresAt).getTime() - now.getTime()) / 60000))
+    : 0;
 
   return (
     <div
-      className={`relative rounded-[20px] border bg-white p-3.5 sm:p-4 shadow-sm transition-all duration-150 group flex flex-col
+      className={`relative rounded-[20px] border bg-[var(--color-bg-white)] p-3.5 sm:p-4 shadow-sm transition-all duration-150 group flex flex-col
         ${isAvailable
-          ? 'border-[#eaecef] hover:border-emerald-300 hover:shadow-md hover:-translate-y-0.5'
-          : 'border-[#eaecef] hover:border-[#0047AB]/25 hover:shadow-md hover:-translate-y-0.5'
+          ? 'border-[var(--color-border-default)] hover:border-emerald-300 hover:shadow-md hover:-translate-y-0.5'
+          : 'border-[var(--color-border-default)] hover:border-[#0047AB]/25 hover:shadow-md hover:-translate-y-0.5'
         }
         ${table.priority === 'urgent' ? 'ring-2 ring-red-400 ring-offset-1' : ''}
         ${table.priority === 'high' ? 'ring-2 ring-amber-400 ring-offset-1' : ''}
@@ -74,7 +84,7 @@ function TableCard({
     >
       {/* Priority indicator */}
       {table.priority === 'urgent' && (
-        <span className="absolute -top-2.5 right-4 bg-red-500 text-white text-[9px] font-bold px-2.5 py-1 rounded-full z-10 animate-pulse shadow-md flex items-center gap-1">
+        <span className="absolute -top-2.5 right-4 bg-[var(--color-red-500-solid)] text-white text-[9px] font-bold px-2.5 py-1 rounded-full z-10 animate-pulse shadow-md flex items-center gap-1">
           <AlertCircle className="w-3 h-3" />
           URGENT
         </span>
@@ -83,7 +93,9 @@ function TableCard({
       {/* Click handler on card body */}
       <div onClick={() => {
         if (table.status === 'Available') {
-          onCreateOrder('Dine In', table.id);
+          // Open billing WITHOUT creating an order — accidental taps must never
+          // occupy a table. The order is born on the first KOT.
+          onOpenTableBilling(table.id);
         } else if (order) {
           onOpenBilling(order);
         }
@@ -111,7 +123,7 @@ function TableCard({
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 onClick={(e) => { e.stopPropagation(); onOpenReceiptPreview(order); }}
-                className="w-8 h-10 sm:w-10 sm:h-11 rounded-lg bg-white border border-[#eef0f4] border-t-2 border-t-[#FF8C1A] hover:shadow-md hover:-translate-y-0.5 active:scale-95 transition-all duration-150 flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+                className="w-8 h-10 sm:w-10 sm:h-11 rounded-lg bg-[var(--color-bg-white)] border border-[var(--color-border-default)] border-t-2 border-t-[#FF8C1A] hover:shadow-md hover:-translate-y-0.5 active:scale-95 transition-all duration-150 flex flex-col items-center justify-center gap-0.5 cursor-pointer"
                 title="View live bill"
                 aria-label={`View live bill for table ${table.number}`}
               >
@@ -120,9 +132,32 @@ function TableCard({
               </button>
             </div>
           )}
+          {/* Top-right action card — table held by a customer's QR scan (same style as occupied) */}
+          {isScanHeld && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={(e) => { e.stopPropagation(); onOpenTableBilling(table.id); }}
+                className="w-8 h-10 sm:w-10 sm:h-11 rounded-lg bg-[var(--color-bg-white)] border border-[var(--color-border-default)] border-t-2 border-t-[#FF8C1A] hover:shadow-md hover:-translate-y-0.5 active:scale-95 transition-all duration-150 flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+                title="View live bill"
+                aria-label={`View live bill for table ${table.number}`}
+              >
+                <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#FF8C1A]" />
+                <span className="text-[8px] sm:text-[9px] font-bold text-[#1B263B] leading-none">Bill</span>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onExpireSession?.(table.id); }}
+                className="w-8 h-10 sm:w-10 sm:h-11 rounded-lg bg-[var(--color-bg-white)] border border-[var(--color-border-default)] border-t-2 border-t-red-500 hover:shadow-md hover:-translate-y-0.5 active:scale-95 transition-all duration-150 flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+                title="End this customer's QR session (the QR stays valid)"
+                aria-label={`End QR session for table ${table.number}`}
+              >
+                <StopCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-500" />
+                <span className="text-[8px] sm:text-[9px] font-bold text-[#1B263B] leading-none">End</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* ─── LIVE META ROW: running bill · kitchen status (timer lives in the status pill) ─── */}
+        {/* ─── LIVE META ROW: cost + kitchen status ─── */}
         {table.status !== 'Available' && (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
             {bill > 0 && (
@@ -149,11 +184,11 @@ function TableCard({
         <div className="flex-1" />
 
         {/* ─── DIVIDER ─── */}
-        <div className="h-px bg-[#EEF0F3] mt-2.5 mb-2.5" />
+        <div className="h-px bg-[var(--color-surface-muted)] mt-2.5 mb-2.5" />
 
         {/* ─── MIDDLE SECTION: window/grid icon + seating info ─── */}
         <div className="flex items-center gap-2">
-          <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shrink-0 ${sc || 'bg-[#EEF0FB] text-[#4F46E5]'}`}>
+          <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shrink-0 ${sc || 'bg-[var(--color-surface-muted)] text-[#4F46E5]'}`}>
             <LayoutGrid className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </div>
           <div className="min-w-0">
@@ -173,7 +208,17 @@ function TableCard({
         {hasOrder ? (
           <button
             onClick={(e) => { e.stopPropagation(); onOpenBilling(order); }}
-            className="mt-2.5 w-full h-9 sm:h-10 rounded-lg bg-[#F0F4FC] border border-[#002FA7]/25 text-[#002FA7] hover:bg-[#E7EEFB] hover:border-[#002FA7]/40 active:scale-[0.98] transition-all duration-150 shadow-sm flex items-center cursor-pointer"
+            className="mt-2.5 w-full h-9 sm:h-10 rounded-lg bg-[var(--color-surface-muted)] border border-[#002FA7]/25 text-[#002FA7] hover:bg-[var(--color-surface-muted)] hover:border-[#002FA7]/40 active:scale-[0.98] transition-all duration-150 shadow-sm flex items-center cursor-pointer"
+            aria-label={`Open order/billing for table ${table.number}`}
+          >
+            <span className="w-8 flex items-center justify-center shrink-0"><Wifi className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></span>
+            <span className="flex-1 text-center text-xs sm:text-[13px] font-bold tracking-tight">Order</span>
+            <span className="w-8 flex items-center justify-center shrink-0"><ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></span>
+          </button>
+        ) : isScanHeld ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenTableBilling(table.id); }}
+            className="mt-2.5 w-full h-9 sm:h-10 rounded-lg bg-[var(--color-surface-muted)] border border-[#002FA7]/25 text-[#002FA7] hover:bg-[var(--color-surface-muted)] hover:border-[#002FA7]/40 active:scale-[0.98] transition-all duration-150 shadow-sm flex items-center cursor-pointer"
             aria-label={`Open order/billing for table ${table.number}`}
           >
             <span className="w-8 flex items-center justify-center shrink-0"><Wifi className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></span>
@@ -182,12 +227,12 @@ function TableCard({
           </button>
         ) : isAvailable ? (
           <button
-            onClick={(e) => { e.stopPropagation(); onCreateOrder('Dine In', table.id); }}
-            className="mt-2.5 w-full h-9 sm:h-10 rounded-lg bg-[#F0FAF4] border border-emerald-500/25 text-emerald-700 hover:bg-[#E4F5EC] hover:border-emerald-500/40 active:scale-[0.98] transition-all duration-150 shadow-sm flex items-center cursor-pointer"
-            aria-label={`Seat guest at table ${table.number}`}
+            onClick={(e) => { e.stopPropagation(); onOpenTableBilling(table.id); }}
+            className="mt-2.5 w-full h-9 sm:h-10 rounded-lg bg-[var(--color-surface-muted)] border border-emerald-500/25 text-emerald-700 hover:bg-[var(--color-surface-muted)] hover:border-emerald-500/40 active:scale-[0.98] transition-all duration-150 shadow-sm flex items-center cursor-pointer"
+            aria-label={`Open order/billing for table ${table.number}`}
           >
             <span className="w-8 flex items-center justify-center shrink-0"><Users className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></span>
-            <span className="flex-1 text-center text-xs sm:text-[13px] font-bold tracking-tight">Seat Guest</span>
+            <span className="flex-1 text-center text-xs sm:text-[13px] font-bold tracking-tight">Order</span>
             <span className="w-8 flex items-center justify-center shrink-0"><ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></span>
           </button>
         ) : null}

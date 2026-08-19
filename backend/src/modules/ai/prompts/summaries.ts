@@ -21,19 +21,39 @@ export function buildDailySummaryPrompt(sales: SanitizedSalesData, extras: {
   wasteToday: number;
   customerCount: number;
 }): string {
+  const itemsPerOrder = sales.orderCount > 0 ? (sales.itemCount / sales.orderCount).toFixed(1) : '0';
+  const discountPct = sales.totalRevenue > 0 ? ((sales.totalDiscount / sales.totalRevenue) * 100).toFixed(1) : '0';
+  const top3 = sales.topItems.slice(0, 3);
+  const top3Share = sales.totalRevenue > 0 && top3.length
+    ? ((top3.reduce((s, i) => s + (i.revenue || 0), 0) / sales.totalRevenue) * 100).toFixed(0)
+    : null;
+  const paymentLines = sales.paymentMethods
+    .map((p) => {
+      const share = sales.totalRevenue > 0 ? ` (${((p.amount / sales.totalRevenue) * 100).toFixed(0)}% of revenue)` : '';
+      return `${p.method}: ₹${p.amount}${share}`;
+    })
+    .join(', ');
+  const categoryLines = [...sales.categoryBreakdown]
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 4)
+    .map((c) => `${c.category} (${c.qty}x, ₹${c.revenue})`)
+    .join(', ');
+
   return `You are an AI assistant for a restaurant POS system. Generate a brief, actionable daily business summary.
 
 Today's sales data:
 - Total revenue: ₹${sales.totalRevenue}
 - Orders today: ${sales.orderCount}
-- Items sold: ${sales.itemCount}
+- Items sold: ${sales.itemCount} (${itemsPerOrder} items per order)
 - Average order value: ₹${sales.averageOrderValue}
-- Total discounts given: ₹${sales.totalDiscount}
+- Total discounts given: ₹${sales.totalDiscount} (${discountPct}% of revenue)
 - GST collected: ₹${sales.totalGst}
 
-Top selling items: ${sales.topItems.slice(0, 3).map(i => `${i.name} (${i.qty}x)`).join(', ')}
+Top selling items: ${top3.map(i => `${i.name} (${i.qty}x, ₹${i.revenue})`).join(', ')}${top3Share ? ` — together ${top3Share}% of today's revenue` : ''}
 
-Payment methods: ${sales.paymentMethods.map(p => `${p.method}: ₹${p.amount}`).join(', ')}
+Payment methods: ${paymentLines || 'None'}
+
+Top categories: ${categoryLines || 'None'}
 
 Additional context:
 - Low stock items: ${extras.lowStockCount}
@@ -52,7 +72,20 @@ Respond with a JSON object containing:
   ]
 }
 
-Keep everything concise and actionable. Maximum 2 lines per item.`;
+KEY INSIGHT RULE — the dashboard already shows today's revenue, order count and average order value as KPI cards, so the "keyInsight" MUST NOT merely restate those totals (e.g. "strong sales with 32 orders and ₹73,906.66 revenue"). Instead it must surface ONE specific derived finding from the data above, for example:
+- A concentration risk: top 3 items drive a large share of revenue, or one payment method dominates
+- An order-value signal: average order value vs items per order, or discount share of revenue
+- A category or item trend worth acting on
+- An operational risk: open orders, low stock items, or waste
+
+Keep everything concise and actionable. Maximum 2 lines per item.
+
+RULES:
+- NEVER invent percentage changes, growth figures, or comparisons to yesterday/previous periods — no previous-period data was provided.
+- NEVER state a single exact projected rupee amount. For "revenuePrediction", express a RANGE based on today's actual total (e.g. "₹70k–₹80k by close" when today's revenue is ₹73,906.66) — never a precise invented number.
+- Only mention items, categories, and payment methods that appear in the data above.
+- Base every statement strictly on the figures listed above.
+- The "topPriority" and the "itemSuggestions" must be DIFFERENT, non-overlapping actions — do not re-list the same items in both.`;
 }
 
 /**

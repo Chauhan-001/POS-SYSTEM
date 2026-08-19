@@ -24,12 +24,12 @@ function buildExpiryItems(items: { name: string; batchNumber?: string; currentSt
 }
 
 const timeGroups = [
-  { label: 'Expired', range: (d: number) => d < 0, color: 'bg-red-50 border-red-200', dot: 'bg-red-500', textColor: 'text-red-700' },
-  { label: 'Today', range: (d: number) => d === 0, color: 'bg-red-50 border-red-200', dot: 'bg-red-500', textColor: 'text-red-700' },
-  { label: 'Tomorrow', range: (d: number) => d === 1, color: 'bg-amber-50 border-amber-200', dot: 'bg-amber-500', textColor: 'text-amber-700' },
-  { label: '3 Days', range: (d: number) => d >= 2 && d <= 3, color: 'bg-amber-50 border-amber-200', dot: 'bg-amber-500', textColor: 'text-amber-700' },
-  { label: '7 Days', range: (d: number) => d >= 4 && d <= 7, color: 'bg-blue-50 border-blue-200', dot: 'bg-blue-500', textColor: 'text-blue-700' },
-  { label: 'Safe', range: (d: number) => d > 7, color: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-500', textColor: 'text-emerald-700' },
+  { label: 'Expired', range: (d: number) => d < 0, color: 'bg-red-50 border-red-200', dot: 'bg-[var(--color-red-500-solid)]', textColor: 'text-red-700' },
+  { label: 'Today', range: (d: number) => d === 0, color: 'bg-red-50 border-red-200', dot: 'bg-[var(--color-red-500-solid)]', textColor: 'text-red-700' },
+  { label: 'Tomorrow', range: (d: number) => d === 1, color: 'bg-amber-50 border-amber-200', dot: 'bg-[var(--color-amber-500-solid)]', textColor: 'text-amber-700' },
+  { label: '3 Days', range: (d: number) => d >= 2 && d <= 3, color: 'bg-amber-50 border-amber-200', dot: 'bg-[var(--color-amber-500-solid)]', textColor: 'text-amber-700' },
+  { label: '7 Days', range: (d: number) => d >= 4 && d <= 7, color: 'bg-blue-50 border-blue-200', dot: 'bg-[var(--color-blue-500-solid)]', textColor: 'text-blue-700' },
+  { label: 'Safe', range: (d: number) => d > 7, color: 'bg-emerald-50 border-emerald-200', dot: 'bg-[var(--color-emerald-500-solid)]', textColor: 'text-emerald-700' },
 ];
 
 const actionLabels: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
@@ -71,12 +71,12 @@ export default function ExpiryManagement() {
 
       {/* Items list */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.1 }}
-        className="bg-white rounded-2xl border border-[#e1e2ed] overflow-hidden shadow-sm"
+        className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden shadow-sm"
       >
-        <div className="p-4 border-b border-[#e1e2ed]">
+        <div className="p-4 border-b border-[var(--color-border-default)]">
           <p className="text-sm font-bold">All Items</p>
         </div>
-        <div className="divide-y divide-[#e1e2ed]">
+        <div className="divide-y divide-[var(--color-border-default)]">
           {expiryItems.length === 0 && (
             <div className="p-10 text-center">
               <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3">

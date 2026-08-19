@@ -24,21 +24,44 @@ import Branch from '../../../models/Branch';
 import BranchSettings from '../../../models/BranchSettings';
 import Table from '../../../models/Table';
 import KOTRecord from '../../../models/KOTRecord';
+import Offer from '../../../models/Offer';
+import Promotion from '../../promotions/models/Promotion';
 import QrToken from '../../qr-ordering/models/QrToken';
 import CustomerRequest from '../../qr-ordering/models/CustomerRequest';
+import QROrderingSession from '../../qr-ordering/models/QROrderingSession';
+// Import the service directly (NOT the settings barrel index.ts — it
+// re-exports model types like IPrinter as values, which blows up the ESM
+// boot under tsx with "does not provide an export named 'IPrinter'").
+import { settingsService } from '../../settings/services/settingsService';
 import { resolveRestaurantByToken } from './publicStoreService';
 import { availabilityService } from '../../../services/availabilityService';
 import { resolveMenuProductScope } from '../../../services/productService';
+import { offerValidationService } from '../../../services';
+import { friendlyOfferReason } from '../../../services/offerValidationService';
 import { orderRepo, orderItemRepo, timelineEventRepo } from '../../../repositories';
 import { AppError } from '../../../utils/AppError';
+import ConfigurationTemplate from '../../menu-config/models/ConfigurationTemplate';
+import { resolveGroup, ResolvedProductConfiguration, ResolvedConfigGroup } from '../../menu-config/services/configurationResolver';
+import { validateProductConfigurationSelection } from '../../menu-config/services/configurationValidator';
+import { calculateLineItemPrice, summarizeSelection } from '../../menu-config/services/pricingEngine';
 
 export interface PublicCartItem {
   productId: string;
   quantity: number;
+  /** Phase 4 — configured selections (variants/modifiers/add-ons). The server
+   *  re-validates and re-prices these authoritatively; never trusted as-is. */
+  configuration?: { selections: Array<{ groupId: string; optionIds: string[]; quantities?: Record<string, number> }> };
 }
 
 /** Order statuses that mean the table is no longer occupied. */
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held', 'Completed', 'Voided'];
+
+/**
+ * How long a scanned-but-not-yet-ordered table stays reserved for its guest.
+ * Heartbeats (cart activity / page open) keep extending it; an abandoned scan
+ * expires after this window and the table frees up for the next guest.
+ */
+const TABLE_CLAIM_TTL_MS = 10 * 60 * 1000;
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -73,6 +96,107 @@ export class PublicStoreOrderService {
     return base;
   }
 
+  /** Customer-safe group projection: names, selection rules and option prices.
+   *  groupId is included because the server re-validates selections against it
+   *  (the customer only ever sends ids the server handed out). */
+  private customerGroups(groups: ResolvedConfigGroup[]): Array<{
+    id: string;
+    name: string;
+    type: string;
+    required: boolean;
+    selectionMode: string;
+    minSelections: number;
+    maxSelections: number | null;
+    freeSelectionCount: number;
+    options: Array<{ id: string; name: string; priceDelta: number; price?: number; active: boolean; minQuantity?: number; maxQuantity?: number }>;
+  }> {
+    return groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      type: g.type,
+      required: g.required,
+      selectionMode: g.selectionMode,
+      minSelections: g.minSelections,
+      maxSelections: g.maxSelections,
+      freeSelectionCount: g.freeSelectionCount,
+      options: g.options.map((o) => ({
+        id: o.id,
+        name: o.name,
+        priceDelta: o.priceDelta ?? 0,
+        price: o.price,
+        active: o.active !== false,
+        minQuantity: o.minQuantity,
+        maxQuantity: o.maxQuantity,
+      })),
+    }));
+  }
+
+  /**
+   * Phase 4 — batch-resolve the reusable menu configuration for a set of menu
+   * products (ONE template query + the PURE resolver core — same engine the
+   * POS uses). Returns id → ResolvedProductConfiguration for configured
+   * products only. Never touches another tenant's templates.
+   */
+  private async resolveMenuConfigs(rid: mongoose.Types.ObjectId, products: any[]): Promise<Map<string, ResolvedProductConfiguration>> {
+    const out = new Map<string, ResolvedProductConfiguration>();
+    const refsByProduct = new Map<string, Array<{ ref: any; type: string }>>();
+    const wanted = new Set<string>();
+    for (const p of products) {
+      const cfg = (p as any).menuConfig ?? { variantConfigurations: [], modifierConfigurations: [], addOnConfigurations: [] };
+      const refs = [
+        ...(cfg.variantConfigurations ?? []).map((r: any) => ({ ref: r, type: 'VARIANT_GROUP' as const })),
+        ...(cfg.modifierConfigurations ?? []).map((r: any) => ({ ref: r, type: 'MODIFIER_GROUP' as const })),
+        ...(cfg.addOnConfigurations ?? []).map((r: any) => ({ ref: r, type: 'ADD_ON_GROUP' as const })),
+      ].filter(({ ref }) => ref && ref.templateId);
+      if (refs.length === 0) continue;
+      refsByProduct.set(String(p._id), refs);
+      for (const { ref } of refs) wanted.add(String(ref.templateId));
+    }
+    if (refsByProduct.size === 0) return out;
+
+    const templates = await ConfigurationTemplate.find({
+      _id: { $in: Array.from(wanted).filter((id) => mongoose.Types.ObjectId.isValid(id)).map((id) => new mongoose.Types.ObjectId(id)) },
+      restaurantId: rid,
+      status: 'active',
+    }).lean().exec();
+    const templatesById = new Map<string, any>();
+    for (const t of templates) templatesById.set(String(t._id), t);
+
+    for (const [pid, refs] of refsByProduct.entries()) {
+      const product = products.find((p: any) => String(p._id) === pid);
+      if (!product) continue;
+      const variantGroups: ResolvedConfigGroup[] = [];
+      const modifierGroups: ResolvedConfigGroup[] = [];
+      const addOnGroups: ResolvedConfigGroup[] = [];
+      for (const { ref, type } of refs) {
+        const template = templatesById.get(String(ref.templateId));
+        if (!template || template.status === 'archived') continue;
+        const group = resolveGroup(template, ref as any);
+        if (type === 'VARIANT_GROUP') variantGroups.push(group);
+        else if (type === 'MODIFIER_GROUP') modifierGroups.push(group);
+        else addOnGroups.push(group);
+      }
+      // No ref resolved (missing / archived / another tenant's template): the
+      // product behaves like a simple item — never surface an empty config.
+      if (variantGroups.length + modifierGroups.length + addOnGroups.length === 0) continue;
+      const configVersion = [...variantGroups, ...modifierGroups, ...addOnGroups].reduce((max, g) => Math.max(max, g.version), 0);
+      out.set(pid, {
+        product: {
+          id: pid,
+          name: (product as any).name,
+          baseProductPrice: Number((product as any).price) || 0,
+          category: (product as any).category,
+          availability: (product as any).availability !== false,
+        },
+        configVersion,
+        variantGroups,
+        modifierGroups,
+        addOnGroups,
+      });
+    }
+    return out;
+  }
+
   /**
    * GET /api/public-store/:token/menu — the customer menu with effective
    * online availability. Unavailable items are still listed (available:false)
@@ -97,12 +221,18 @@ export class PublicStoreOrderService {
     const productIds = products.map((p: any) => String(p._id));
     const availability = await availabilityService.getMap(rid.toString(), branchOid ? branchOid.toString() : null, productIds);
 
+    // Phase 4 — same menu configuration source as the POS: resolve reusable
+    // variant/modifier/add-on groups for every configured menu item in one
+    // batch, so the customer site renders exactly what the cashier sees.
+    const resolvedConfigs = await this.resolveMenuConfigs(rid, products);
+
     const byCategory = new Map<string, any[]>();
     for (const p of products) {
       const state = availability.get(String(p._id)) || { status: 'AVAILABLE' as const, unavailableUntil: null, visibleOnSite: true };
       // Owner site-visibility control: visibleOnSite=false removes the item
       // from the customer website entirely (not even SOLD OUT).
       if (state.visibleOnSite === false) continue;
+      const resolved = resolvedConfigs.get(String(p._id));
       const item = {
         id: String(p._id),
         name: (p as any).name,
@@ -112,6 +242,17 @@ export class PublicStoreOrderService {
         image: (p as any).image || null,
         available: state.status === 'AVAILABLE',
         unavailableUntil: state.unavailableUntil || null,
+        hasConfiguration: !!resolved,
+        // Customer-safe projection — option prices + selection rules only,
+        // never internal ids/versions beyond what selection requires.
+        configuration: resolved
+          ? {
+              configVersion: resolved.configVersion,
+              variantGroups: this.customerGroups(resolved.variantGroups),
+              modifierGroups: this.customerGroups(resolved.modifierGroups),
+              addOnGroups: this.customerGroups(resolved.addOnGroups),
+            }
+          : null,
       };
       if (options.availableOnly && !item.available) continue;
       const arr = byCategory.get(item.category) || [];
@@ -132,6 +273,246 @@ export class PublicStoreOrderService {
   }
 
   /**
+   * GET /api/public-store/:token/offers — customer-facing offer discovery.
+   *
+   * Returns ONLY offers that are genuinely usable right now (status active,
+   * within start/end dates, matching today's schedule window, not exhausted
+   * and allowed at the requesting branch). The payload is a safe customer
+   * projection — never costs, margins, inventory or internal fields. Combo
+   * offers resolve their items + savings so the site can render "Add Combo".
+   */
+  async getOffers(publicToken: string, options: { branchId?: string } = {}) {
+    const restaurant = await resolveRestaurantByToken(publicToken);
+    const rid = restaurant._id;
+    const branchOid = await this.resolveBranch(rid, options.branchId);
+    const branchId = branchOid ? branchOid.toString() : undefined;
+
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const hour = now.getHours();
+    const day = now.getDay();
+
+    const offers = await Offer.find({
+      restaurantId: rid,
+      status: 'active',
+      isDeleted: { $ne: true },
+    })
+      .sort({ sortOrder: 1, createdAt: -1 })
+      .lean()
+      .exec();
+
+    // Resolve product names/prices/images for applicable + combo items in one
+    // batch (tenant-scoped — never another restaurant's products).
+    const wantedIds = new Set<string>();
+    for (const o of offers as any[]) {
+      for (const id of [...(o.applicableProductIds || []), ...(o.comboProductIds || [])] as string[]) {
+        if (id && mongoose.Types.ObjectId.isValid(id)) wantedIds.add(String(id));
+      }
+    }
+    const productById = new Map<string, any>();
+    if (wantedIds.size > 0) {
+      const wanted: string[] = Array.from(wantedIds);
+      const products = await Product.find({
+        _id: { $in: wanted.map((id: string) => new mongoose.Types.ObjectId(id)) },
+        $or: [{ restaurantId: rid }, { restaurantId: null }],
+        isDeleted: { $ne: true },
+      }).lean().exec();
+      for (const p of products) productById.set(String(p._id), p);
+    }
+
+    const live: any[] = [];
+    for (const o of offers as any[]) {
+      // ── Eligibility filters (mirror offerValidationService rules) ──
+      if (o.startDate && o.startDate > today) continue;      // not started
+      if (o.endDate && o.endDate < today) continue;           // expired
+      if (Array.isArray(o.daysOfWeek) && o.daysOfWeek.length > 0 && !o.daysOfWeek.includes(day)) continue;
+      if (typeof o.startHour === 'number' && typeof o.endHour === 'number') {
+        if (hour < o.startHour || hour >= o.endHour) continue;
+      }
+      if (typeof o.maxUses === 'number' && o.maxUses > 0 && (o.currentUses || 0) >= o.maxUses) continue;
+      // Branch scope: empty = all branches; otherwise must include the branch.
+      if (Array.isArray(o.branchIds) && o.branchIds.length > 0) {
+        if (!branchId || !o.branchIds.includes(branchId)) continue;
+      }
+
+      const comboProductIds: string[] = (o.comboProductIds || []).map(String);
+      const applicableProductIds: string[] = (o.applicableProductIds || []).map(String);
+      const comboItems = comboProductIds
+        .map((id: string) => productById.get(id))
+        .filter(Boolean)
+        .map((p: any) => ({
+          id: String(p._id),
+          name: p.name,
+          price: this.priceFor(p, branchOid),
+          image: p.image || null,
+        }));
+      const applicableProducts = applicableProductIds
+        .map((id: string) => productById.get(id))
+        .filter(Boolean)
+        .map((p: any) => ({
+          id: String(p._id),
+          name: p.name,
+          price: this.priceFor(p, branchOid),
+          image: p.image || null,
+        }));
+
+      const comboIndividualValue = comboItems.reduce((s: number, it: any) => s + (Number(it.price) || 0), 0);
+      const comboPrice = Number(o.comboPrice) || (o.type === 'combo' ? Number(o.value) || 0 : 0);
+
+      live.push({
+        id: String(o._id),
+        type: o.type,
+        title: o.title,
+        description: o.description || '',
+        shortDescription: o.shortDescription || '',
+        couponCode: o.couponCode || null,
+        value: o.value,
+        discountDisplay: this.discountDisplay(o),
+        minimumOrderValue: o.minOrderValue || 0,
+        maximumDiscount: o.maxDiscount || null,
+        applicableProducts,
+        applicableCategories: o.applicableCategories || [],
+        comboItems,
+        comboPrice,
+        customerSavings: o.type === 'combo' && comboPrice > 0 ? Math.max(0, round2(comboIndividualValue - comboPrice)) : null,
+        validFrom: o.startDate || null,
+        validUntil: o.endDate || null,
+        daysOfWeek: o.daysOfWeek || [],
+        startTime: typeof o.startHour === 'number' ? `${String(o.startHour).padStart(2, '0')}:00` : null,
+        endTime: typeof o.endHour === 'number' ? `${String(o.endHour).padStart(2, '0')}:00` : null,
+        imageUrl: o.imageUrl || null,
+        terms: this.terms(o, comboPrice),
+      });
+    }
+
+    return { store: { name: restaurant.brandName || restaurant.name }, offers: live };
+  }
+
+  /**
+   * GET /api/public-store/:token/promotions — published Promotion Studio
+   * creatives the customer can see. Only SAFE presentation fields are exposed
+   * (title, subtitle, description, CTA, image, colors, language, template),
+   * and only when the linked offer is genuinely live right now — an expired,
+   * cancelled or not-yet-started offer never surfaces its creative.
+   *
+   * The customer still applies/validates the offer through the existing
+   * public offer check/order endpoints — the creative is presentation only.
+   */
+  async getPromotions(publicToken: string, options: { branchId?: string } = {}) {
+    const restaurant = await resolveRestaurantByToken(publicToken);
+    const rid = restaurant._id;
+    const branchOid = await this.resolveBranch(rid, options.branchId);
+    const branchId = branchOid ? branchOid.toString() : undefined;
+
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const hour = now.getHours();
+    const day = now.getDay();
+
+    const promos = await Promotion.find({
+      restaurantId: rid,
+      status: 'published',
+      isDeleted: { $ne: true },
+      publishedAt: { $ne: null },
+    }).sort({ publishedAt: -1 }).lean().exec();
+
+    const offerIds = [...new Set(promos.map((p) => String(p.offerId)))];
+    const offers = offerIds.length
+      ? await Offer.find({
+        _id: { $in: offerIds.map((id) => new mongoose.Types.ObjectId(id)) },
+        restaurantId: rid,
+        isDeleted: { $ne: true },
+      }).lean().exec()
+      : [];
+    const offerById = new Map(offers.map((o) => [String(o._id), o]));
+
+    const live: any[] = [];
+    for (const p of promos) {
+      const o = offerById.get(String(p.offerId));
+      if (!o) continue;
+      // Same eligibility filters as getOffers — never show a stale creative.
+      if (o.status !== 'active') continue;
+      if (o.startDate && o.startDate > today) continue;
+      if (o.endDate && o.endDate < today) continue;
+      if (Array.isArray(o.daysOfWeek) && o.daysOfWeek.length > 0 && !o.daysOfWeek.includes(day)) continue;
+      if (typeof o.startHour === 'number' && typeof o.endHour === 'number') {
+        if (hour < o.startHour || hour >= o.endHour) continue;
+      }
+      if (typeof o.maxUses === 'number' && o.maxUses > 0 && (o.currentUses || 0) >= o.maxUses) continue;
+      if (Array.isArray(o.branchIds) && o.branchIds.length > 0) {
+        if (!branchId || !o.branchIds.includes(branchId)) continue;
+      }
+      if (Array.isArray(p.channels) && p.channels.length > 0 && !p.channels.includes('website') && !p.channels.includes('qr')) continue;
+
+      live.push({
+        id: String(p._id),
+        name: p.name,
+        templateId: p.templateId,
+        creative: {
+          title: p.creative.title || o.title,
+          subtitle: p.creative.subtitle || '',
+          description: p.creative.description || o.shortDescription || '',
+          cta: p.creative.cta || 'Order Now',
+          language: p.creative.language || 'en',
+          colors: p.creative.colors || { background: '#0b2a5b', text: '#ffffff', accent: '#f59e0b' },
+          imageKey: p.creative.image?.key || null,
+          imageSource: p.creative.image?.source || null,
+          // Per-screen image overrides (template/screen id → media ref).
+          // Consumers fall back to imageKey when a screen has no override.
+          screenImages: p.creative.screenImages || {},
+          logoKey: p.creative.logoKey || null,
+          productImageKeys: p.creative.productImageKeys || [],
+          layout: p.creative.layout || p.templateId,
+        },
+        // Link back to the SAME offer the existing checkout applies.
+        offer: {
+          id: String(o._id),
+          title: o.title,
+          type: o.type,
+          discountDisplay: this.discountDisplay(o),
+          minOrderValue: o.minOrderValue || 0,
+          couponCode: o.couponCode || null,
+        },
+        publishedAt: p.publishedAt,
+      });
+    }
+
+    return { store: { name: restaurant.brandName || restaurant.name }, promotions: live };
+  }
+
+  /** Customer-friendly discount label (display only — server math is authoritative). */
+  private discountDisplay(offer: any): string {
+    const v = Number(offer.value) || 0;
+    switch (offer.type) {
+      case 'percentage': return `${v}% OFF`;
+      case 'flat': case 'cashback': case 'coupon': return `₹${v} OFF`;
+      case 'bogo': return 'Buy 1 Get 1';
+      case 'free_item': return offer.freeItemName ? `Free ${offer.freeItemName}` : 'Free item';
+      case 'combo': return `Combo · ₹${Number(offer.comboPrice) || v}`;
+      case 'reward_points': return `${v} reward points`;
+      case 'festival': return `${v}% OFF`;
+      default: return `${v}% OFF`;
+    }
+  }
+
+  /** Human-readable plain-language terms built from offer rules (no rule jargon). */
+  private terms(offer: any, comboPrice: number): string[] {
+    const out: string[] = [];
+    if (offer.type === 'combo' && comboPrice > 0) out.push(`Combo price ₹${Math.round(comboPrice)}`);
+    if (offer.minOrderValue) out.push(`Valid on orders above ₹${Math.round(offer.minOrderValue)}`);
+    if (offer.maxDiscount && offer.type === 'percentage') out.push(`Maximum discount ₹${Math.round(offer.maxDiscount)}`);
+    if (offer.endDate) out.push(`Valid until ${offer.endDate}`);
+    if (offer.daysOfWeek && offer.daysOfWeek.length > 0) {
+      const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      out.push(`Available on ${offer.daysOfWeek.map((d: number) => names[d]).join(', ')}`);
+    }
+    if (typeof offer.startHour === 'number' && typeof offer.endHour === 'number') {
+      out.push(`Available ${offer.startHour}:00–${offer.endHour}:00`);
+    }
+    return out;
+  }
+
+  /**
    * Validate a cart WITHOUT creating anything. Used by the customer site
    * before submission so a stale cart surfaces immediately.
    */
@@ -149,6 +530,237 @@ export class PublicStoreOrderService {
       gst: validated.gst,
       grandTotal: validated.grandTotal,
     };
+  }
+
+  /**
+   * POST /api/public-store/:token/offers/check — validate an offer against the
+   * server-computed cart totals WITHOUT placing an order. The server derives
+   * the subtotal from the cart (never trusts the client), validates eligibility
+   * and returns the authoritative discount + adjusted totals. Used by the
+   * customer cart for the one-tap apply experience.
+   */
+  async checkOffer(
+    publicToken: string,
+    body: {
+      branchId?: string;
+      items: PublicCartItem[];
+      offerId?: string;
+      couponCode?: string;
+      customerPhone?: string;
+    } = { items: [] },
+  ) {
+    const restaurant = await resolveRestaurantByToken(publicToken);
+    const rid = restaurant._id;
+    const branchOid = await this.resolveBranch(rid, body.branchId);
+    const validated = await this.validateCart(rid, branchOid, body.items || []);
+    if (validated.unavailableItems.length > 0) {
+      const err: any = new AppError(409, 'Some items in your order are no longer available');
+      err.code = 'SOME_ITEMS_UNAVAILABLE';
+      err.unavailableItems = validated.unavailableItems;
+      throw err;
+    }
+
+    if (!body.offerId && !body.couponCode) {
+      return {
+        ok: false,
+        reason: 'Select an offer to continue.',
+        subtotal: validated.subtotal,
+        gst: validated.gst,
+        grandTotal: validated.grandTotal,
+      };
+    }
+
+    const result = await offerValidationService.validate(String(rid), {
+      offerId: body.offerId,
+      couponCode: body.couponCode,
+      customerPhone: body.customerPhone,
+      billSubtotal: validated.subtotal,
+      billItems: validated.items,
+      branchId: branchOid ? branchOid.toString() : undefined,
+    });
+    if (!result.valid || !result.offer) {
+      return {
+        ok: false,
+        valid: false,
+        reason: friendlyOfferReason(result.reason),
+        subtotal: validated.subtotal,
+        gst: validated.gst,
+        grandTotal: validated.grandTotal,
+      };
+    }
+
+    const discount = round2(Math.max(0, Number(result.discount) || 0));
+    const afterDiscount = round2(Math.max(0, validated.subtotal - discount));
+    const grandTotal = round2(afterDiscount + validated.gst);
+    return {
+      ok: true,
+      valid: true,
+      offer: result.offer,
+      discount,
+      subtotal: validated.subtotal,
+      afterDiscount,
+      gst: validated.gst,
+      grandTotal,
+      savings: discount,
+    };
+  }
+
+  /** Mark ACTIVE seat-claims on a table whose reservation has lapsed. */
+  private async sweepExpiredClaims(tableOid: mongoose.Types.ObjectId): Promise<void> {
+    await QROrderingSession.updateMany(
+      { tableId: tableOid, status: 'ACTIVE', expiresAt: { $lt: new Date() } },
+      { $set: { status: 'EXPIRED' } }
+    ).exec();
+  }
+
+  /** Release every ACTIVE seat-claim on a table (order placed / bill closed). */
+  async releaseTableClaims(tableOid: mongoose.Types.ObjectId | string): Promise<void> {
+    const oid = typeof tableOid === 'string' && mongoose.Types.ObjectId.isValid(tableOid)
+      ? new mongoose.Types.ObjectId(tableOid)
+      : tableOid;
+    if (!oid) return;
+    await QROrderingSession.updateMany(
+      { tableId: oid, status: 'ACTIVE' },
+      { $set: { status: 'COMPLETED' } }
+    ).exec();
+  }
+
+  /**
+   * A table with a LIVE order is occupied — no new QR seating or order may
+   * take it. This is the one shared check for BOTH the scan claim and the
+   * order submission, so the same table can never end up with two live
+   * orders (a POS first-KOT order + a customer QR order).
+   */
+  private async assertTableNotOccupied(tableOid: mongoose.Types.ObjectId): Promise<void> {
+    const occupying = await orderRepo.findOne({
+      tableId: String(tableOid),
+      status: { $nin: TERMINAL_ORDER_STATUSES },
+    } as any);
+    if (occupying) {
+      const err: any = new AppError(
+        409,
+        'This table already has an open order. Please ask your server to add more items.',
+      );
+      err.code = 'TABLE_ALREADY_OCCUPIED';
+      throw err;
+    }
+  }
+
+  /**
+   * Atomically claim a table for one QR seating session.
+   *
+   * Rules (the correct behavior for concurrent scans and abandoned visits):
+   *  - A table with a LIVE order is never handed out (POS or QR order).
+   *  - The FIRST seating to claim wins — the unique ACTIVE-per-table index
+   *    makes the claim atomic, so two guests scanning the same table cannot
+   *    both hold it (no double orders later).
+   *  - A re-claim from the SAME session (heartbeat, cart activity) just
+   *    extends the reservation.
+   *  - An abandoned scan (no order, no heartbeat) expires after the TTL and
+   *    the table frees up for the next guest — it is never held forever.
+   */
+  async claimTable(
+    rid: mongoose.Types.ObjectId,
+    tableOid: mongoose.Types.ObjectId,
+    sessionId: string,
+    opts: { tableNumber?: number } = {},
+  ): Promise<{ sessionId: string; tableId: string; tableNumber?: number; expiresAt: string; ttlMinutes: number }> {
+    // Release abandoned claims first so a later guest can take the table
+    // instead of being blocked forever by a scan that never ordered.
+    await this.sweepExpiredClaims(tableOid);
+
+    // A seating the RESTAURANT ended (POS "expire session") stays dead for
+    // the current claim window — the guest must re-scan instead of silently
+    // re-claiming the table the moment their next heartbeat fires. Only
+    // CANCELLED blocks; a naturally EXPIRED claim may be re-claimed on
+    // renewed activity (the guest is still there and active again).
+    const endedByRestaurant = await QROrderingSession.findOne({
+      tableId: tableOid,
+      sessionId,
+      status: 'CANCELLED',
+      cancelledAt: { $gte: new Date(Date.now() - TABLE_CLAIM_TTL_MS) },
+    }).lean().exec();
+    if (endedByRestaurant) {
+      const e: any = new AppError(
+        409,
+        'This seating session was ended by the restaurant. Please ask your server or re-scan the QR code.',
+      );
+      e.code = 'SESSION_ENDED_BY_RESTAURANT';
+      throw e;
+    }
+
+    // A table with a live order is already occupied — never hand it to a new
+    // seating, whether the order came from the POS cashier or a QR scan.
+    await this.assertTableNotOccupied(tableOid);
+
+    const expiresAt = new Date(Date.now() + TABLE_CLAIM_TTL_MS);
+    try {
+      // Upsert on { tableId, ACTIVE, sessionId }: the same session re-claims
+      // its own document (extend); a different session's insert hits the
+      // unique index and loses the table to the earlier guest.
+      const claim = await QROrderingSession.findOneAndUpdate(
+        { tableId: tableOid, status: 'ACTIVE', sessionId, restaurantId: rid },
+        { $set: { orderType: 'TABLE', status: 'ACTIVE', expiresAt } },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      ).lean().exec();
+      // The scan now holds the table — flip it to Occupied so every POS
+      // terminal sees the seating immediately (reconcileTable derives it
+      // from this ACTIVE claim). Best-effort: a hiccup here must never fail
+      // the claim itself.
+      const { tableStateService } = await import('../../../services');
+      await tableStateService
+        .reconcileTable(String(tableOid), {
+          restaurantId: String(rid),
+          branchId: undefined,
+          operator: 'Customer',
+        })
+        .catch(() => undefined);
+      return {
+        sessionId,
+        tableId: String(tableOid),
+        tableNumber: opts.tableNumber,
+        expiresAt: ((claim as any)?.expiresAt || expiresAt).toISOString(),
+        ttlMinutes: Math.round(TABLE_CLAIM_TTL_MS / 60000),
+      };
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        const e: any = new AppError(
+          409,
+          'This table was just taken by another guest. Please ask your server to seat you.',
+        );
+        e.code = 'TABLE_ALREADY_CLAIMED';
+        throw e;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Customer-facing table claim (scan). Resolves the table tenant-safely and
+   * atomically claims it for this seat session.
+   */
+  async claimForCustomer(
+    publicToken: string,
+    sessionId: string,
+    tableId?: string,
+    tableNumber?: number,
+  ): Promise<{ sessionId: string; tableId: string; tableNumber?: number; expiresAt: string; ttlMinutes: number }> {
+    if (!sessionId || typeof sessionId !== 'string' || sessionId.length < 6) {
+      throw new AppError(400, 'sessionId is required');
+    }
+    const restaurant = await resolveRestaurantByToken(publicToken);
+    if (!tableId || !mongoose.Types.ObjectId.isValid(tableId)) {
+      throw new AppError(400, 'tableId is required');
+    }
+    const oid = new mongoose.Types.ObjectId(tableId);
+    // Tenant isolation: a customer may only claim a table of THIS restaurant.
+    const table = await Table.findOne({
+      _id: oid,
+      restaurantId: restaurant._id,
+      isDeleted: { $ne: true },
+    }).lean().exec();
+    if (!table) throw new AppError(404, 'Table not found');
+    return this.claimTable(restaurant._id, oid, sessionId, { tableNumber });
   }
 
   /**
@@ -178,6 +790,11 @@ export class PublicStoreOrderService {
       tip?: number;
       /** Optional idempotency key — replays return the original order. */
       clientRef?: string;
+      /** Stable per-scan seat session (claimed at scan time). */
+      seatSessionId?: string;
+      /** Phase B — offer the customer applied (validated server-side). */
+      offerId?: string;
+      couponCode?: string;
     }
   ) {
     const restaurant = await resolveRestaurantByToken(publicToken);
@@ -209,6 +826,28 @@ export class PublicStoreOrderService {
       throw err;
     }
 
+    // ── Phase B — offer application (server-authoritative) ───────────
+    // The customer's offerId/couponCode is validated against the SERVER-computed
+    // cart subtotal + items. The discount is added to the order totals; the
+    // redemption is recorded after the order exists so usage caps stay exact.
+    let appliedDiscount = 0;
+    let appliedOfferResult: any = null;
+    if (body.offerId || body.couponCode) {
+      const vr = await offerValidationService.validate(String(rid), {
+        offerId: body.offerId,
+        couponCode: body.couponCode,
+        customerPhone: body.customer?.phone,
+        billSubtotal: validated.subtotal,
+        billItems: validated.items,
+        branchId: branchOid ? branchOid.toString() : undefined,
+      });
+      if (!vr.valid || !vr.offer) {
+        throw new AppError(400, friendlyOfferReason(vr.reason));
+      }
+      appliedDiscount = round2(Math.max(0, Number(vr.discount) || 0));
+      appliedOfferResult = vr;
+    }
+
     // Idempotent replay: same restaurant + clientRef → return existing order.
     if (body.clientRef) {
       try {
@@ -223,29 +862,32 @@ export class PublicStoreOrderService {
       } catch { /* unique index guards the race below */ }
     }
 
-    // ONE order per seating: a table with a live (open) order is locked.
-    // The same QR must not mint a second order while the first is still
-    // running — guests add food through their waiter instead. Replays of the
-    // SAME clientRef are handled above (idempotent) and never reach here.
+    // ONE order per seating: a table with a live (open) order is locked on
+    // EVERY TABLE-mode submission — not only when a seat session is present,
+    // because a direct order without seatSessionId/clientRef previously
+    // skipped the occupancy check entirely and could land on a table the
+    // cashier's first-KOT order already occupied (a double order). Replays of
+    // the SAME clientRef are handled above (idempotent) and never reach here.
     if (mode === 'TABLE' && tableOid) {
-      const occupying = await orderRepo.findOne({
-        tableId: String(tableOid),
-        status: { $nin: TERMINAL_ORDER_STATUSES },
-      } as any);
-      if (occupying) {
-        const err: any = new AppError(
-          409,
-          'This table already has an open order. Please ask your server to add more items.',
-        );
-        err.code = 'TABLE_ALREADY_OCCUPIED';
-        throw err;
-      }
+      await this.assertTableNotOccupied(tableOid);
+    }
+    // The seat is claimed ATOMICALLY — the unique ACTIVE claim index lets
+    // exactly one guest hold the table, so two people scanning the same table
+    // concurrently can never both place an order here (the loser gets a clean
+    // 409 instead of a double order).
+    const seatSessionId = body.seatSessionId || body.clientRef;
+    if (mode === 'TABLE' && tableOid && seatSessionId) {
+      await this.claimTable(rid, tableOid, seatSessionId, {
+        tableNumber: body.tableNumber,
+      });
     }
 
     const { orderService } = await import('../../../services');
     const orderNumber = await orderService.getNextOrderNumber(1001, branchOid ? branchOid.toString() : undefined);
 
-    const grandTotal = round2(validated.grandTotal + tip);
+    // Grand total = subtotal + gst − offer discount + tip (all server-derived).
+    const grandTotal = round2(validated.subtotal + validated.gst - appliedDiscount + tip);
+    const originalGrandTotal = round2(validated.subtotal + validated.gst + tip);
     const orderData: any = {
       orderNumber,
       type: 'Website',
@@ -264,10 +906,12 @@ export class PublicStoreOrderService {
       carPlate: body.carPlate || undefined,
       tip,
       subtotal: validated.subtotal,
-      discount: 0,
+      discount: appliedDiscount,
+      appliedOfferId: appliedOfferResult?.offer?.id || undefined,
+      appliedOfferCode: body.couponCode || appliedOfferResult?.offer?.couponCode || undefined,
       gst: validated.gst,
       grandTotal,
-      originalGrandTotal: grandTotal,
+      originalGrandTotal,
       adjustedGrandTotal: grandTotal,
       amountRefunded: 0,
       amountDueAdditional: 0,
@@ -287,7 +931,47 @@ export class PublicStoreOrderService {
           return { order: existing.toObject(), items: validated.items, idempotent: true };
         }
       }
+      // A failed submission must not hold the table — release the seat claim
+      // so the next guest can take it immediately.
+      if (mode === 'TABLE' && tableOid) {
+        await this.releaseTableClaims(tableOid).catch(() => undefined);
+      }
       throw err;
+    }
+
+    // The order now owns the table — release the seat claim so the table can
+    // be re-claimed the moment the bill is paid/closed (a stale ACTIVE claim
+    // would otherwise block the next seating for the full claim TTL).
+    if (mode === 'TABLE' && tableOid) {
+      await this.releaseTableClaims(tableOid).catch(() => undefined);
+    }
+
+    // ── Record the offer redemption on the authoritative order ledger ──
+    // Claims the usage slot atomically (TOCTOU-safe) + updates OfferAnalytics.
+    // A redemption failure here fails the order creation (the customer simply
+    // retries) so usage caps can never be silently exceeded.
+    if (appliedOfferResult && appliedDiscount > 0) {
+      try {
+        await offerValidationService.recordApplication(String(rid), {
+          offerId: appliedOfferResult.offer.id,
+          code: appliedOfferResult.offer.couponCode,
+          customerPhone: body.customer?.phone,
+          billId: String(order._id),
+          branchId: branchOid ? branchOid.toString() : undefined,
+          discountAmount: appliedDiscount,
+          salesAmount: validated.subtotal,
+          redeemedBy: 'Customer',
+        });
+      } catch (err: any) {
+        console.warn('[publicStore] offer redemption record failed:', err?.message);
+        // The offer was validated a moment ago; on a true race (usage cap hit
+        // between validate and claim) keep the order but drop the discount so
+        // the customer is never charged less than the server allows.
+        if (err instanceof AppError && /limit/i.test(err.message)) {
+          await orderRepo.update(String(order._id), { discount: 0, grandTotal: originalGrandTotal, adjustedGrandTotal: originalGrandTotal, appliedOfferId: undefined, appliedOfferCode: undefined } as any).catch(() => undefined);
+          appliedDiscount = 0;
+        }
+      }
     }
 
     // Every item is KOT'd immediately (auto-sent to the kitchen display) so
@@ -295,6 +979,10 @@ export class PublicStoreOrderService {
     // required. kotPrinted=true tells the POS these lines are already in the
     // kitchen, so a later manual "send KOT" computes an empty delta instead of
     // duplicating the ticket.
+    // (discount may have been dropped by the redemption race-handling above)
+    const finalGrandTotal = appliedDiscount > 0 ? grandTotal : originalGrandTotal;
+    // Phase 4 — order lines preserve the configured selections + price evidence
+    // exactly as validated (a menu change tomorrow never rewrites today's order).
     const itemDocs = validated.items.map((it: any) => ({
       orderId: order._id.toString(),
       productId: it.productId,
@@ -303,6 +991,9 @@ export class PublicStoreOrderService {
       price: it.price,
       isFree: false,
       kotPrinted: true,
+      configurationSnapshot: it.configurationSnapshot || undefined,
+      configSummary: it.configSummary || undefined,
+      pricingSnapshot: it.pricingSnapshot || undefined,
     }));
     if (itemDocs.length > 0) {
       await orderItemRepo.bulkCreate(itemDocs as any);
@@ -324,7 +1015,8 @@ export class PublicStoreOrderService {
       orderNumber,
       clientRef: body.clientRef || null,
       status: 'New',
-      grandTotal,
+      grandTotal: finalGrandTotal,
+      discount: appliedDiscount,
       mode: body.mode || null,
       tableId: body.tableId || null,
       tableNumber: body.tableNumber || null,
@@ -400,24 +1092,33 @@ export class PublicStoreOrderService {
   ) {
     if (!order?._id || items.length === 0) return;
     try {
-      const hasKot = await KOTRecord.exists({ orderId: order._id } as any);
-      if (hasKot) return;
-      await KOTRecord.create({
-        orderId: order._id,
-        kotNumber: 1,
-        type: 'Original',
-        status: 'Accepted',
-        items: items.map((it: any) => ({
-          productId: it.productId,
-          lineId: it.productId,
-          itemName: it.productName,
-          quantity: it.quantity,
-          price: it.price,
-        })),
-        printedBy: 'Customer',
-        printedAt: new Date(),
-        note: 'Auto-sent from online order',
-      });
+      // Setting (default ON): whether an online order fires its KOT
+      // automatically, or waits for the cashier to review the order in the
+      // billing workspace and press KOT. Read fresh per order so a toggle
+      // takes effect immediately — no cached copy to go stale.
+      const autoKot = (await settingsService.getEffective(String(rid))).settings?.onlineOrderAutoKot !== false;
+      if (autoKot) {
+        const hasKot = await KOTRecord.exists({ orderId: order._id } as any);
+        if (!hasKot) {
+          await KOTRecord.create({
+            orderId: order._id,
+            kotNumber: 1,
+            type: 'Original',
+            status: 'Accepted',
+            items: items.map((it: any) => ({
+              productId: it.productId,
+              lineId: it.productId,
+              itemName: it.productName,
+              quantity: it.quantity,
+              price: it.price,
+              configSummary: it.configSummary || undefined,
+            })),
+            printedBy: 'Customer',
+            printedAt: new Date(),
+            note: 'Auto-sent from online order',
+          });
+        }
+      }
       if (mode === 'TABLE' && order.tableId) {
         const { tableStateService } = await import('../../../services');
         await tableStateService
@@ -579,14 +1280,19 @@ export class PublicStoreOrderService {
     branchOid: mongoose.Types.ObjectId | null,
     items: PublicCartItem[]
   ) {
-    const unique = new Map<string, number>();
-    for (const it of items || []) {
+    // Per-line validation: two lines of the SAME product with DIFFERENT
+    // configurations are distinct items — never merge them into one qty.
+    const list = items || [];
+    for (const it of list) {
       if (!mongoose.Types.ObjectId.isValid(it.productId)) throw new AppError(400, `Invalid product id: ${it.productId}`);
       const qty = Math.max(1, Number(it.quantity) || 1);
-      unique.set(it.productId, (unique.get(it.productId) || 0) + qty);
+      if (qty > 999) throw new AppError(400, `Quantity too large for ${it.productId}`);
+      if (it.configuration != null && !Array.isArray(it.configuration.selections)) {
+        throw new AppError(400, `Invalid configuration for ${it.productId}`);
+      }
     }
 
-    const productIds = Array.from(unique.keys());
+    const productIds = Array.from(new Set(list.map((i) => i.productId)));
     const products = await Product.find({
       _id: { $in: productIds.map((p) => new mongoose.Types.ObjectId(p)) },
       $or: [{ restaurantId: rid }, { restaurantId: null }],
@@ -596,12 +1302,17 @@ export class PublicStoreOrderService {
     const byId = new Map(products.map((p: any) => [String(p._id), p]));
     const availability = await availabilityService.getMap(rid.toString(), branchOid ? branchOid.toString() : null, productIds);
 
+    // Phase 4 — resolve reusable configurations once for every configured line.
+    const resolvedConfigs = await this.resolveMenuConfigs(rid, products);
+
     const validatedItems: any[] = [];
     const unavailableItems: any[] = [];
     let subtotal = 0;
     let gst = 0;
 
-    for (const [pid, qty] of unique.entries()) {
+    for (const it of list) {
+      const pid = it.productId;
+      const qty = Math.max(1, Number(it.quantity) || 1);
       const product = byId.get(pid);
       if (!product) {
         unavailableItems.push({ productId: pid, name: 'Item', reason: 'Not found' });
@@ -617,7 +1328,34 @@ export class PublicStoreOrderService {
         unavailableItems.push({ productId: pid, name: (product as any).name, reason: state.reason || 'Sold out' });
         continue;
       }
-      const price = this.priceFor(product, branchOid);
+
+      // Configured line: re-validate against the Phase 1 validator and re-price
+      // with the Phase 3 deterministic pricing engine — the browser's numbers
+      // are never trusted. Invalid/stale selections surface as unavailable.
+      let price = this.priceFor(product, branchOid);
+      let configurationSnapshot: any;
+      let configSummary: string | undefined;
+      let pricingSnapshot: any;
+      const selection = it.configuration;
+      if (selection && selection.selections && selection.selections.length > 0) {
+        const resolved = resolvedConfigs.get(pid);
+        if (!resolved) {
+          unavailableItems.push({ productId: pid, name: (product as any).name, reason: 'Configuration no longer available' });
+          continue;
+        }
+        const validation = validateProductConfigurationSelection(resolved, selection);
+        if (!validation.valid) {
+          const first = validation.errors[0];
+          unavailableItems.push({ productId: pid, name: (product as any).name, reason: first?.message || 'Invalid selection' });
+          continue;
+        }
+        const priced = calculateLineItemPrice(resolved, selection, qty);
+        price = round2(priced.grossItemPrice);
+        configurationSnapshot = { selections: selection.selections };
+        configSummary = summarizeSelection(resolved, selection) || undefined;
+        pricingSnapshot = { ...priced, origin: 'online' };
+      }
+
       const lineTotal = round2(price * qty);
       subtotal = round2(subtotal + lineTotal);
       gst = round2(gst + (lineTotal * ((product as any).gstPercent ?? 5)) / 100);
@@ -627,6 +1365,9 @@ export class PublicStoreOrderService {
         quantity: qty,
         price,
         lineTotal,
+        configurationSnapshot,
+        configSummary,
+        pricingSnapshot,
       });
     }
 

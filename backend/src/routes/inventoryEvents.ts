@@ -8,7 +8,7 @@
  */
 
 import { Router } from 'express';
-import { createInventoryEvent, listInventoryEvents } from '../controllers/inventoryEventsController';
+import { createInventoryEvent, listInventoryEvents, deleteInventoryEvent } from '../controllers/inventoryEventsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';
@@ -19,5 +19,6 @@ const router = Router();
 // All staff can view; only Owner/Manager can record activity events.
 router.get('/', requireAuth, requireFeature('inventory'), validate({ query: inventoryEventQuerySchema }), listInventoryEvents);
 router.post('/', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ body: createInventoryEventSchema }), createInventoryEvent);
+router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('inventory'), deleteInventoryEvent);
 
 export default router;

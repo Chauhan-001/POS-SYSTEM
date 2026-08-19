@@ -22,6 +22,7 @@ import { SettingsPatchInput, SettingsRollbackInput, EffectiveSettingsResult } fr
 import { deepMerge } from '../utils/deepMerge';
 import AuditLog from '../../../models/AuditLog';
 import { ensurePublicToken } from '../../../utils/publicToken';
+import { config } from '../../../config';
 
 /**
  * The branchId column is an ObjectId, but older clients / demo data can send
@@ -36,6 +37,28 @@ function toOptionalObjectId(value: unknown): mongoose.Types.ObjectId | null {
 }
 
 const HISTORY_LIMIT = 50;
+
+/**
+ * Centralized tax rules: product classification → GST rate (% or null when
+ * the restaurant has NOT configured a treatment for that classification).
+ * These are editable business rules (Settings → Billing & Invoice); the POS
+ * registration flow recommends the configured rate and never invents one.
+ * Null classification = ambiguous → registration requires explicit selection.
+ *
+ * The defaults below are the common Indian restaurant slabs and are injected
+ * on read ONLY when the restaurant has not configured its own rules yet — they
+ * are not a universal law and can be overridden per restaurant.
+ */
+export const DEFAULT_TAX_RULES: Record<string, number | null> = {
+  prepared_food: 5,
+  beverage: 5,
+  packaged: 12,
+  other: null,
+};
+
+export const TAX_CLASSIFICATIONS = ['prepared_food', 'beverage', 'packaged', 'other'] as const;
+
+export type TaxClassification = (typeof TAX_CLASSIFICATIONS)[number];
 
 export interface SettingsActor {
   performedBy: string;
@@ -121,6 +144,14 @@ export class SettingsService {
     if (branchDoc?.settings) merged = deepMerge(merged, branchDoc.settings as Record<string, any>);
     if (deviceDoc?.settings) merged = deepMerge(merged, deviceDoc.settings as Record<string, any>);
 
+    // Centralized tax rules — inject the sensible defaults when the
+    // restaurant hasn't configured its own yet (read-only injection, so the
+    // settings version chain is never bumped by a GET). Once the owner saves
+    // their rules from Settings they persist and override these.
+    if (!merged.taxRules || typeof merged.taxRules !== 'object' || Array.isArray(merged.taxRules)) {
+      merged.taxRules = { ...DEFAULT_TAX_RULES };
+    }
+
     // Meta: report the highest-priority scope that actually exists (or restaurant
     // fallback) for display, PLUS the per-scope versions so the client can send
     // the correct baseVersion for whichever scope it edits.
@@ -138,6 +169,9 @@ export class SettingsService {
     return {
       settings: merged,
       publicToken,
+      // Public base URL of the customer QR site (same value QR Studio bakes
+      // into stickers). Lets the POS build preview URLs without hardcoding.
+      qrBaseUrl: config.qrBaseUrl,
       meta: {
         version: meta?.settingsVersion || 1,
         scope: deviceDoc ? 'device' : branchDoc ? 'branch' : 'restaurant',

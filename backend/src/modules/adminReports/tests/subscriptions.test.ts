@@ -62,10 +62,12 @@ describe('recordSubscriptionHistory', () => {
 });
 
 describe('getSubscriptionReport churn logic', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     countDocumentsFn.mockReset();
     aggregateFn.mockReset();
     findFn.mockReset();
+    const { SubscriptionPlan } = await import('../../../models');
+    (SubscriptionPlan.find as any).mockImplementation(() => ({ lean: () => Promise.resolve([]) }));
   });
 
   it('derives churn from history events (correct enum, no cancelled/expired query)', async () => {
@@ -111,6 +113,47 @@ describe('getSubscriptionReport churn logic', () => {
     // churn rate = churned / active
     expect(report.summary.churnRate).toBeCloseTo((4 / 70) * 100, 1);
     expect(report.planDistribution.length).toBe(2);
+  });
+
+  it('annualizes yearly subscriptions in MRR using yearly price / 12', async () => {
+    countDocumentsFn.mockResolvedValue(100); // total (base for extra calls)
+    countDocumentsFn.mockResolvedValueOnce(100); // total
+    countDocumentsFn.mockResolvedValueOnce(70); // active
+    countDocumentsFn.mockResolvedValueOnce(20); // trial
+    countDocumentsFn.mockResolvedValueOnce(5); // grace
+    countDocumentsFn.mockResolvedValueOnce(5); // suspended
+
+    const { SubscriptionPlan } = await import('../../../models');
+    (SubscriptionPlan.find as any).mockReturnValue({
+      lean: () => Promise.resolve([
+        { planId: 'professional', name: 'Professional', price: 1000, yearlyPrice: 10000 },
+        { planId: 'premium', name: 'Premium', price: 2000, yearlyPrice: 0 },
+      ]),
+    });
+
+    aggregateFn.mockImplementation((pipeline: any[]) => {
+      const match = pipeline[0]?.$match ?? {};
+      if (match.action === undefined && pipeline[0]?.$group?._id === '$plan') {
+        return Promise.resolve([
+          { _id: 'professional', count: 12, activeInPlan: 12, activeMonthly: 9, activeYearly: 3 },
+          { _id: 'premium', count: 6, activeInPlan: 6, activeMonthly: 6, activeYearly: 0 },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    findFn.mockReturnValue({ sort: () => ({ limit: () => ({ lean: () => Promise.resolve([]) }) }) });
+
+    const report = await getSubscriptionReport({ period: '30d' });
+
+    // professional: 9 × 1000 (monthly) + 3 × (10000 / 12) = 9000 + 2500 = 11500
+    // premium:      6 × 2000 = 12000 (no yearly price → monthly rate)
+    const prof = report.planDistribution.find((p) => p.plan === 'professional');
+    const prem = report.planDistribution.find((p) => p.plan === 'premium');
+    expect(prof?.mrr).toBeCloseTo(11500, 2);
+    expect(prem?.mrr).toBeCloseTo(12000, 2);
+    expect(report.summary.mrr).toBeCloseTo(23500, 2);
+    expect(report.summary.arr).toBeCloseTo(23500 * 12, 2);
   });
 
   it('never queries cancelled/expired as Subscription statuses', async () => {

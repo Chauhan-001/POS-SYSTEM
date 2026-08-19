@@ -41,6 +41,9 @@ export const createOrderSchema = z.object({
   tableNumber: z.number().int().min(1).optional(),
   platform: optString,
   branchId: objectId.optional(),
+  // Tenant identity — server re-stamps from the authenticated context anyway;
+  // accepting it lets offline-synced orders carry their tenant explicitly.
+  restaurantId: objectId.optional(),
   customerPhone: z.string().regex(/^\d{10}$/).optional().nullable(),
   customerName: optString,
   waiterId: optString,

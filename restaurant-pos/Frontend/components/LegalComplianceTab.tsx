@@ -18,8 +18,10 @@
  * only ever reads published versions and records the user's own acceptances.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FileText, CheckCircle, Shield, Download, UserX, ChevronDown, ChevronUp, RefreshCw, Info } from 'lucide-react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useAsyncData } from '../src/hooks/useAsyncData';
+import { FileText, CheckCircle, Shield, Download, UserX, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import RefreshButton from './common/RefreshButton';
 import {
   fetchPublishedLegalDocuments,
   fetchMyRequiredLegal,
@@ -30,6 +32,7 @@ import {
   requestDataExport,
   requestAccountClose,
   fetchLegalAcceptanceStats,
+  trackHelpView,
   type LegalDocumentInfo,
   type LegalAcceptanceInfo,
   type LegalConsentInfo,
@@ -66,25 +69,28 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
     setTimeout(() => setToast(null), 4000);
   };
 
-  const loadAll = useCallback(async () => {
-    const [docs, req, acc, cons] = await Promise.all([
-      fetchPublishedLegalDocuments().catch(() => []),
-      fetchMyRequiredLegal().catch(() => []),
-      fetchMyAcceptances().catch(() => []),
-      fetchMyConsents().catch(() => []),
-    ]);
-    setDocuments(docs);
-    setRequired(req);
-    setAcceptances(acc);
-    setConsents(cons);
-    if (isOwner) {
-      setStats(await fetchLegalAcceptanceStats().catch(() => null));
-    }
-  }, [isOwner]);
-
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+  const { refresh: refreshLegal, loading: legalLoading } = useAsyncData(
+    useCallback(async () => {
+      const [docs, req, acc, cons] = await Promise.all([
+        fetchPublishedLegalDocuments().catch(() => []),
+        fetchMyRequiredLegal().catch(() => []),
+        fetchMyAcceptances().catch(() => []),
+        fetchMyConsents().catch(() => []),
+      ]);
+      const stats = isOwner ? await fetchLegalAcceptanceStats().catch(() => null) : null;
+      return { docs, req, acc, cons, stats };
+    }, [isOwner]),
+    {
+      // Multi-collection load: write into the existing per-collection state.
+      onData: (d) => {
+        setDocuments(d.docs);
+        setRequired(d.req);
+        setAcceptances(d.acc);
+        setConsents(d.cons);
+        setStats(d.stats);
+      },
+    },
+  );
 
   const consentMap = useMemo(() => {
     const map: Record<string, boolean> = {};
@@ -98,7 +104,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
     setBusy(false);
     if (result.ok) {
       showToast('Accepted. Thank you — your acceptance has been recorded.');
-      await loadAll();
+      await refreshLegal();
     } else {
       showToast(result.error || 'Could not record acceptance.');
     }
@@ -110,7 +116,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
     setBusy(false);
     if (result.ok) {
       showToast(granted ? 'Consent granted.' : 'Consent withdrawn.');
-      await loadAll();
+      await refreshLegal();
     } else {
       showToast(result.error || 'Could not update consent.');
     }
@@ -150,7 +156,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
       )}
 
       {/* Intro */}
-      <div className="rounded-2xl border border-[#e3e6ef] bg-white p-4">
+      <div className="rounded-2xl border border-[var(--color-surface-muted)] bg-[var(--color-bg-white)] p-4">
         <div className="flex items-start gap-3">
           <Shield className="w-5 h-5 text-[var(--brand-color)] shrink-0 mt-0.5" />
           <div>
@@ -175,7 +181,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
           </p>
           <div className="mt-3 space-y-2">
             {required.map((r) => (
-              <div key={r.documentType} className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white px-4 py-3">
+              <div key={r.documentType} className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-[var(--color-bg-white)] px-4 py-3">
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-gray-800 truncate">{r.title || DOC_TYPE_LABELS[r.documentType] || r.documentType}</p>
                   <p className="text-[10px] text-gray-500">
@@ -198,15 +204,15 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
       )}
 
       {/* Published documents */}
-      <div className="rounded-2xl border border-[#e3e6ef] bg-white overflow-hidden">
-        <div className="px-4 py-2.5 bg-gray-50 border-b border-[#e3e6ef] flex items-center gap-2">
+      <div className="rounded-2xl border border-[var(--color-surface-muted)] bg-[var(--color-bg-white)] overflow-hidden">
+        <div className="px-4 py-2.5 bg-gray-50 border-b border-[var(--color-surface-muted)] flex items-center gap-2">
           <FileText className="w-4 h-4" />
           <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">Published documents</span>
-          <button type="button" onClick={() => void loadAll()} className="ml-auto text-[10px] font-semibold text-gray-400 hover:text-[var(--brand-color)] flex items-center gap-1">
-            <RefreshCw className="w-3 h-3" /> Refresh
-          </button>
+          <RefreshButton asyncData={{ refresh: refreshLegal, loading: legalLoading }} className="ml-auto text-[10px] font-semibold text-gray-400 hover:text-[var(--brand-color)] gap-1" iconClassName="w-3 h-3">
+            Refresh
+          </RefreshButton>
         </div>
-        <div className="divide-y divide-[#eef0f6]">
+        <div className="divide-y divide-[var(--color-surface-muted)]">
           {documents.length === 0 && (
             <div className="px-4 py-6 text-center text-xs text-gray-400">
               No published documents yet. Platform administrators publish documents from the admin dashboard.
@@ -219,7 +225,15 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
               <div key={`${key}-${doc.version}`}>
                 <button
                   type="button"
-                  onClick={() => setOpenDoc((p) => ({ ...p, [key]: !p[key] }))}
+                  onClick={() => {
+                    const willOpen = !openDoc[key];
+                    setOpenDoc((p) => ({ ...p, [key]: willOpen }));
+                    // Record the view ONLY when the document is being OPENED,
+                    // so re-expanding the same doc counts once per open.
+                    if (willOpen) {
+                      trackHelpView('legal', `${doc.documentType}:${doc.version}`, doc.title);
+                    }
+                  }}
                   className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50"
                 >
                   <div className="min-w-0">
@@ -230,7 +244,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
                 </button>
                 {isOpen && (
                   <div className="px-4 pb-4">
-                    <div className="rounded-xl border border-[#eef0f6] bg-gray-50 p-4 max-h-80 overflow-y-auto">
+                    <div className="rounded-xl border border-[var(--color-surface-muted)] bg-gray-50 p-4 max-h-80 overflow-y-auto">
                       <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-gray-600">{doc.content}</pre>
                     </div>
                   </div>
@@ -242,12 +256,12 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
       </div>
 
       {/* Consent — separate from acceptance */}
-      <div className="rounded-2xl border border-[#e3e6ef] bg-white overflow-hidden">
-        <div className="px-4 py-2.5 bg-gray-50 border-b border-[#e3e6ef] flex items-center gap-2">
+      <div className="rounded-2xl border border-[var(--color-surface-muted)] bg-[var(--color-bg-white)] overflow-hidden">
+        <div className="px-4 py-2.5 bg-gray-50 border-b border-[var(--color-surface-muted)] flex items-center gap-2">
           <Shield className="w-4 h-4" />
           <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">Privacy consent (optional)</span>
         </div>
-        <div className="divide-y divide-[#eef0f6]">
+        <div className="divide-y divide-[var(--color-surface-muted)]">
           {Object.entries(CONSENT_LABELS).map(([type, meta]) => (
             <div key={type} className="flex items-center justify-between gap-3 px-4 py-3">
               <div>
@@ -261,7 +275,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
                 className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${consentMap[type] ? 'bg-[var(--brand-color)]' : 'bg-gray-300'}`}
                 aria-pressed={!!consentMap[type]}
               >
-                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${consentMap[type] ? 'left-[22px]' : 'left-0.5'}`} />
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-[var(--color-bg-white)] shadow transition-all ${consentMap[type] ? 'left-[22px]' : 'left-0.5'}`} />
               </button>
             </div>
           ))}
@@ -269,15 +283,15 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
       </div>
 
       {/* My acceptances */}
-      <div className="rounded-2xl border border-[#e3e6ef] bg-white overflow-hidden">
-        <div className="px-4 py-2.5 bg-gray-50 border-b border-[#e3e6ef] flex items-center gap-2">
+      <div className="rounded-2xl border border-[var(--color-surface-muted)] bg-[var(--color-bg-white)] overflow-hidden">
+        <div className="px-4 py-2.5 bg-gray-50 border-b border-[var(--color-surface-muted)] flex items-center gap-2">
           <CheckCircle className="w-4 h-4" />
           <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">My acceptances</span>
         </div>
         {acceptances.length === 0 ? (
           <div className="px-4 py-5 text-center text-xs text-gray-400">No acceptance records yet.</div>
         ) : (
-          <div className="divide-y divide-[#eef0f6] max-h-56 overflow-y-auto">
+          <div className="divide-y divide-[var(--color-surface-muted)] max-h-56 overflow-y-auto">
             {acceptances.map((a) => (
               <div key={a._id} className="px-4 py-2.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -292,8 +306,8 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
       </div>
 
       {/* Data rights */}
-      <div className="rounded-2xl border border-[#e3e6ef] bg-white overflow-hidden">
-        <div className="px-4 py-2.5 bg-gray-50 border-b border-[#e3e6ef] flex items-center gap-2">
+      <div className="rounded-2xl border border-[var(--color-surface-muted)] bg-[var(--color-bg-white)] overflow-hidden">
+        <div className="px-4 py-2.5 bg-gray-50 border-b border-[var(--color-surface-muted)] flex items-center gap-2">
           <Info className="w-4 h-4" />
           <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">Data rights</span>
         </div>
@@ -331,8 +345,8 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
 
       {/* Owner stats */}
       {isOwner && stats && (
-        <div className="rounded-2xl border border-[#e3e6ef] bg-white overflow-hidden">
-          <div className="px-4 py-2.5 bg-gray-50 border-b border-[#e3e6ef] flex items-center gap-2">
+        <div className="rounded-2xl border border-[var(--color-surface-muted)] bg-[var(--color-bg-white)] overflow-hidden">
+          <div className="px-4 py-2.5 bg-gray-50 border-b border-[var(--color-surface-muted)] flex items-center gap-2">
             <FileText className="w-4 h-4" />
             <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">Acceptance statistics (this restaurant)</span>
           </div>
@@ -342,7 +356,7 @@ export default function LegalComplianceTab({ isOwner }: { isOwner?: boolean }) {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {stats.acceptances.map((row: any) => (
-                  <div key={`${row.documentType}-${row.version}`} className="rounded-xl border border-[#eef0f6] bg-gray-50 px-3 py-2 flex items-center justify-between">
+                  <div key={`${row.documentType}-${row.version}`} className="rounded-xl border border-[var(--color-surface-muted)] bg-gray-50 px-3 py-2 flex items-center justify-between">
                     <span className="text-[11px] font-semibold text-gray-700 truncate">{DOC_TYPE_LABELS[row.documentType] || row.documentType} · v{row.version}</span>
                     <span className="text-[11px] font-bold text-[var(--brand-color)]">{row.acceptances}</span>
                   </div>

@@ -13,12 +13,22 @@ import OfferAnalyticsModel from '../models/OfferAnalytics';
 import CustomerSegmentModel from '../models/CustomerSegment';
 import CampaignHistoryModel from '../models/CampaignHistory';
 import CustomerModel from '../models/Customer';
-import ProductModel from '../models/Product';
-import { generateRecommendations, type RecommendationContext } from '../services/offerEngine';
+import { generateRecommendations } from '../services/offerEngine';
 import { updateAllSegments, getSegments, getSegmentById } from '../services/segmentEngine';
 import { getUpcomingFestivals, isFestivalSeason } from '../services/festivalService';
 import { offerValidationService } from '../services';
-import { resolveMenuProductScope } from '../services/productService';
+import { buildRecommendationContext, resolveBranchScope } from '../services/recommendationContext';
+import { getComboHealth } from '../services/comboHealthService';
+import {
+  aggregateAndBackfill,
+  getAnalyticsSummary,
+  getAnalyticsTrend,
+  getOfferPerformance,
+  getComboAnalytics,
+  rankCombos,
+  assertValidWindow,
+} from '../services/offerAnalyticsService';
+import { round2 } from '../modules/recipes/services/unitConversion';
 import { AppError } from '../utils/AppError';
 import { audit } from '../utils/audit';
 import { OFFER_TRANSITIONS, canTransition } from '../constants/marketingStates';
@@ -181,55 +191,46 @@ export async function updateOfferStatus(req: Request, res: Response): Promise<vo
 
 // ─── RECOMMENDATIONS ──────────────────────────────────────────
 
+/**
+ * GET/POST /api/offers/recommendations — deterministic offer suggestions.
+ *
+ * Phase 1: the canonical RecommendationContext is built server-side by the
+ * shared builder (same context the AI path consumes). The client may only
+ * contribute WEATHER (advisory) and fallback inventory/sales when the server
+ * has nothing to read — never financial truth. Everything is tenant-scoped.
+ */
 export async function getRecommendations(req: Request, res: Response): Promise<void> {
   try {
     const restaurantId = getRestaurantId(req);
     if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
 
-    // Gather context data
-    const oid = new mongoose.Types.ObjectId(restaurantId);
+    // Recommended-card ceiling: default 10, min 5, max 30. The engine is
+    // designed to produce 10+ distinct suggestions when context is available.
+    const requested = Number(req.body?.limit ?? req.query?.limit ?? 10);
+    const maxSuggestions = Number.isFinite(requested) ? Math.min(30, Math.max(5, Math.round(requested))) : 10;
 
-    // TENANT ISOLATION (Phase 1): every query is scoped to the authenticated
-    // restaurant. Products are this restaurant's own menu only (shared/global
-    // catalog only as a fresh-account fallback), so recommendations never
-    // suggest items the restaurant doesn't sell. Customers are strictly
-    // scoped — cross-tenant customer data must never reach a recommendation.
-    const productScope = await resolveMenuProductScope(String(restaurantId));
-    const [products, customerCount, activeCustomers] = await Promise.all([
-      ProductModel.find({ $or: productScope, isDeleted: { $ne: true } }).lean(),
-      CustomerModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true } }),
-      CustomerModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true }, visits: { $gte: 1 } }),
-    ]);
+    // Phase 9 — optional branch scope. A branchId that does not belong to this
+    // restaurant is rejected (never silently aggregated, never cross-tenant).
+    let branchScope: { branchId?: string; branchName?: string } | null = {};
+    if (req.body?.branchId || req.query?.branchId) {
+      branchScope = await resolveBranchScope(String(restaurantId), String(req.body?.branchId || req.query?.branchId));
+      if (!branchScope) { res.status(400).json({ error: 'Branch not found for this restaurant' }); return; }
+    }
 
-    // Get today's new customers
-    const today = new Date().toISOString().split('T')[0];
-    const newCustomersToday = await CustomerModel.countDocuments({
-      restaurantId: oid,
-      isDeleted: { $ne: true },
-      createdAt: { $gte: new Date(today) },
+    const ctx = await buildRecommendationContext(String(restaurantId), {
+      analyticsFrom: req.body.analyticsFrom || undefined,
+      analyticsTo: req.body.analyticsTo || undefined,
+      branchId: branchScope.branchId,
     });
 
-    const ctx: RecommendationContext = {
-      restaurantId,
-      products: products.map(p => ({
-        id: p._id.toString(),
-        name: p.name,
-        category: p.category,
-        price: p.price,
-        gstPercent: p.gstPercent,
-      })),
-      customerCount,
-      activeCustomers,
-      newCustomersToday,
-      repeatCustomersToday: activeCustomers - newCustomersToday,
-      // Weather from request body (or fetch from weather service)
-      weather: req.body.weather || undefined,
-      inventory: req.body.inventory || undefined,
-      sales: req.body.sales || undefined,
-    };
+    // Client-supplied values are ONLY fallbacks when the server has nothing
+    // to read — the canonical builder always prefers its own queries.
+    if (!ctx.inventory && Array.isArray(req.body.inventory)) ctx.inventory = req.body.inventory;
+    if (!ctx.sales && req.body.sales) ctx.sales = req.body.sales;
+    if (req.body.weather) ctx.weather = req.body.weather;
 
-    const suggestions = await generateRecommendations(ctx);
-    res.json({ suggestions });
+    const suggestions = await generateRecommendations(ctx, maxSuggestions);
+    res.json({ suggestions, limit: maxSuggestions });
   } catch (error: any) {
     console.error('[Offers] recommendations error:', error.message);
     res.status(500).json({ error: 'Failed to generate recommendations' });
@@ -237,6 +238,32 @@ export async function getRecommendations(req: Request, res: Response): Promise<v
 }
 
 // ─── SEGMENTS ─────────────────────────────────────────────────
+
+// ─── COMBO HEALTH (Phase 12) ────────────────────────────────
+
+/**
+ * GET /api/offers/combo-health — deterministic combo health & rework advisory.
+ * Read-only: the owner acts through the existing offer editor. Optional
+ * branchId scopes the analytics window (Phase 9). Cross-tenant branch ids are
+ * rejected.
+ */
+export async function comboHealth(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = getRestaurantId(req);
+    if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
+    let branchId: string | undefined;
+    if (req.query?.branchId) {
+      const scope = await resolveBranchScope(String(restaurantId), String(req.query.branchId));
+      if (!scope) { res.status(400).json({ error: 'Branch not found for this restaurant' }); return; }
+      branchId = scope.branchId;
+    }
+    const rows = await getComboHealth(String(restaurantId), { branchId });
+    res.json({ combos: rows });
+  } catch (error: any) {
+    console.error('[Offers] combo-health error:', error.message);
+    res.status(500).json({ error: 'Failed to generate combo health' });
+  }
+}
 
 export async function listSegments(req: Request, res: Response): Promise<void> {
   try {
@@ -280,44 +307,176 @@ export async function refreshSegments(req: Request, res: Response): Promise<void
   }
 }
 
-// ─── ANALYTICS ────────────────────────────────────────────────
+// ─── ANALYTICS (Phase B — real performance from OfferAnalytics) ──
 
+/**
+ * Build a tenant-scoped analytics window from the request. Every filter is
+ * validated; restaurantId ALWAYS comes from the JWT (req.user), never from
+ * query/body.
+ */
+function analyticsWindow(req: Request, offerId?: string) {
+  const restaurantId = getRestaurantId(req);
+  const { from, to, branchId } = req.query;
+  const window: any = { restaurantId };
+  if (offerId) window.offerId = offerId;
+  if (branchId) window.branchId = String(branchId);
+  if (from) window.from = String(from);
+  if (to) window.to = String(to);
+  return window;
+}
+
+/**
+ * GET /api/offers/analytics (or /:offerId) — snapshot rows + rolled-up
+ * per-offer performance + summary + daily trend. Date range / branch filters
+ * supported. Only real OfferAnalytics rows are ever returned; when there is
+ * no data the arrays are empty and the summary says so (never fabricated).
+ */
 export async function getOfferAnalytics(req: Request, res: Response): Promise<void> {
   try {
     const restaurantId = getRestaurantId(req);
+    if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
     const { offerId } = req.params;
     const oid = new mongoose.Types.ObjectId(restaurantId);
 
-    const analytics = await OfferAnalyticsModel.find({
-      ...(offerId ? { offerId: new mongoose.Types.ObjectId(offerId) } : {}),
-      restaurantId: oid,
-    }).sort({ snapshotDate: -1 }).limit(30).lean();
+    const window = analyticsWindow(req, offerId);
+    assertValidWindow(window);
 
-    // Get summary stats
-    const totalOffers = await OfferModel.countDocuments({
-      restaurantId: oid,
-      isDeleted: { $ne: true },
-    });
-    const activeOffers = await OfferModel.countDocuments({
-      restaurantId: oid,
-      status: 'active',
-      isDeleted: { $ne: true },
-    });
-    const totalRedeemed = analytics.reduce((sum, a) => sum + a.redeemed, 0);
-    const totalRevenue = analytics.reduce((sum, a) => sum + a.revenueGenerated, 0);
+    const [performance, trend, combos, snapshotFilter] = await Promise.all([
+      getOfferPerformance(window),
+      getAnalyticsTrend(window),
+      getComboAnalytics(window),
+      (async () => {
+        const filter: any = { restaurantId: oid };
+        if (offerId) filter.offerId = new mongoose.Types.ObjectId(offerId);
+        if (window.branchId) filter.branchId = new mongoose.Types.ObjectId(window.branchId);
+        if (window.from || window.to) {
+          filter.snapshotDate = {};
+          if (window.from) filter.snapshotDate.$gte = window.from;
+          if (window.to) filter.snapshotDate.$lte = window.to;
+        }
+        return OfferAnalyticsModel.find(filter).sort({ snapshotDate: -1 }).limit(90).lean();
+      })(),
+    ]);
+
+    const summary = await getAnalyticsSummary(window);
+    const [totalOffers, activeOffers] = await Promise.all([
+      OfferModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true } }),
+      OfferModel.countDocuments({ restaurantId: oid, status: 'active', isDeleted: { $ne: true } }),
+    ]);
+
+    // P2 — combo totals + rankings (deterministic; empty array when the tenant
+    // has no combo redemptions — never fabricated).
+    const comboSummary = combos.reduce(
+      (acc, c) => {
+        acc.orders += c.orders;
+        acc.units += c.units;
+        acc.revenue = round2(acc.revenue + c.comboRevenue);
+        acc.discount = round2(acc.discount + c.structuralSavings + c.additionalDiscount);
+        acc.variableCost = round2(acc.variableCost + c.variableCost);
+        acc.contribution = round2(acc.contribution + c.contribution);
+        return acc;
+      },
+      { combos: combos.length, orders: 0, units: 0, revenue: 0, discount: 0, variableCost: 0, contribution: 0 },
+    );
 
     res.json({
-      analytics,
+      analytics: snapshotFilter as any[],
+      performance,
+      trend,
+      combos,
+      comboSummary,
+      comboRankings: rankCombos(combos),
       summary: {
+        ...summary,
         totalOffers,
         activeOffers,
-        totalRedeemed,
-        totalRevenue,
+        // Explicitly null when the deterministic cost engine can't provide it
+        // — the UI renders "Data unavailable", never a fake number.
+        estimatedContribution: null,
+        estimatedContributionAvailable: false,
       },
     });
   } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('[Offers] analytics error:', error.message);
     res.status(500).json({ error: 'Failed to get analytics' });
+  }
+}
+
+/** GET /api/offers/analytics/trends — daily redemptions/revenue/discount trend. */
+export async function getOfferAnalyticsTrends(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = getRestaurantId(req);
+    if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
+    const window = analyticsWindow(req);
+    assertValidWindow(window);
+    const trend = await getAnalyticsTrend(window);
+    res.json({ trend });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('[Offers] trends error:', error.message);
+    res.status(500).json({ error: 'Failed to get analytics trend' });
+  }
+}
+
+/**
+ * GET /api/offers/:id/performance — full performance summary for one offer
+ * (redemptions, revenue, discount, AOV, unique customers, trend).
+ */
+export async function getOfferPerformanceDetail(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = getRestaurantId(req);
+    if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
+    const window = analyticsWindow(req, req.params.id);
+    assertValidWindow(window);
+    const performance = await getOfferPerformance(window);
+    if (performance.length === 0) {
+      res.json({ offerId: req.params.id, found: false, performance: null, reason: 'No analytics recorded for this offer yet' });
+      return;
+    }
+    res.json({ offerId: req.params.id, found: true, performance: performance[0] });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('[Offers] performance error:', error.message);
+    res.status(500).json({ error: 'Failed to get offer performance' });
+  }
+}
+
+/**
+ * POST /api/offers/analytics/rebuild — deterministic rebuild of OfferAnalytics
+ * snapshots straight from the authoritative CouponRedemption + Bill records.
+ * Repeatable and idempotent (upsert semantics); used to populate historical
+ * analytics and to re-derive after a data fix. Owner/Manager only.
+ */
+export async function rebuildOfferAnalytics(req: Request, res: Response): Promise<void> {
+  try {
+    const restaurantId = getRestaurantId(req);
+    if (!restaurantId) { res.status(400).json({ error: 'Missing restaurant ID' }); return; }
+    const { from, to, offerId, branchId } = req.body || {};
+    const window: any = { restaurantId };
+    if (offerId) window.offerId = offerId;
+    if (branchId) window.branchId = branchId;
+    if (from) window.from = String(from);
+    if (to) window.to = String(to);
+    assertValidWindow(window);
+    const result = await aggregateAndBackfill(window);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('[Offers] rebuild error:', error.message);
+    res.status(500).json({ error: 'Failed to rebuild offer analytics' });
   }
 }
 
@@ -362,16 +521,31 @@ export async function validateOffer(req: Request, res: Response): Promise<void> 
       }).lean();
     }
 
+    // ── PHASE B SECURITY FIX ────────────────────────────────────────
+    // Derive the authoritative subtotal from the bill's line items using
+    // current server-side prices. The client's billSubtotal is only a fallback
+    // when no line items are supplied (legacy callers) — with items present it
+    // is IGNORED so a client can never inflate it to raise a % discount.
+    let effectiveItems = Array.isArray(billItems) ? billItems : undefined;
+    let effectiveSubtotal = Number(billSubtotal) || 0;
+    if (Array.isArray(billItems) && billItems.length > 0) {
+      const derived = await offerValidationService.deriveSubtotal(restaurantId, billItems, branchId);
+      if (derived.subtotal > 0) {
+        effectiveSubtotal = derived.subtotal;
+        effectiveItems = derived.items;
+      }
+    }
+
     const result = await offerValidationService.validate(restaurantId, {
       offerId,
       couponCode,
       customer,
       customerPhone,
-      billSubtotal,
-      billItems,
+      billSubtotal: effectiveSubtotal,
+      billItems: effectiveItems,
       branchId,
     });
-    res.json(result);
+    res.json({ ...result, subtotal: effectiveSubtotal });
   } catch (error: any) {
     console.error('[Offers] validate error:', error.message);
     res.status(500).json({ error: 'Failed to validate offer' });
@@ -403,17 +577,31 @@ export async function applyOffer(req: Request, res: Response): Promise<void> {
       }).lean();
     }
 
+    // ── PHASE B SECURITY FIX ────────────────────────────────────────
+    // Same authoritative derivation as validate: with line items present the
+    // client billSubtotal is ignored. The derived subtotal also feeds
+    // analytics (salesAmount) so revenue is attributed from server prices.
+    let effectiveItems = Array.isArray(billItems) ? billItems : undefined;
+    let effectiveSubtotal = Number(billSubtotal) || 0;
+    if (Array.isArray(billItems) && billItems.length > 0) {
+      const derived = await offerValidationService.deriveSubtotal(restaurantId, billItems, branchId);
+      if (derived.subtotal > 0) {
+        effectiveSubtotal = derived.subtotal;
+        effectiveItems = derived.items;
+      }
+    }
+
     const result = await offerValidationService.validate(restaurantId, {
       offerId,
       couponCode,
       customer,
       customerPhone,
-      billSubtotal,
-      billItems,
+      billSubtotal: effectiveSubtotal,
+      billItems: effectiveItems,
       branchId,
     });
     if (!result.valid) {
-      res.status(400).json({ error: result.reason || 'Offer not applicable', ...result });
+      res.status(400).json({ error: result.reason || 'Offer not applicable', ...result, subtotal: effectiveSubtotal });
       return;
     }
 
@@ -425,10 +613,11 @@ export async function applyOffer(req: Request, res: Response): Promise<void> {
       billId,
       branchId,
       discountAmount: result.discount || 0,
+      salesAmount: effectiveSubtotal,
       redeemedBy: (req as any).user?.name || 'System',
     });
 
-    res.json({ ...result, redemption });
+    res.json({ ...result, redemption, subtotal: effectiveSubtotal });
   } catch (error: any) {
     if (error instanceof AppError) {
       res.status(error.statusCode).json({ error: error.message });

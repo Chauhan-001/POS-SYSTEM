@@ -21,6 +21,7 @@ import SubscriptionPlan from '../models/SubscriptionPlan';
 import Branch from '../models/Branch';
 import Employee from '../models/Employee';
 import Table from '../models/Table';
+import { effectiveFeatures } from '../utils/subscriptionFeatures';
 
 export interface EntitlementResult {
   allowed: boolean;
@@ -50,7 +51,7 @@ export class EntitlementService {
       return { allowed: true };
     }
 
-    const hasFeature = sub.features.includes(feature);
+    const hasFeature = effectiveFeatures(sub.features, sub.grantedFeatures).includes(feature);
     if (!hasFeature) {
       const plan = await SubscriptionPlan.findOne({ planId: sub.plan }).exec();
       return {
@@ -87,9 +88,10 @@ export class EntitlementService {
     // Determine the max branches limit from subscription snapshot or plan
     const maxBranches = sub.limits?.maxBranches ?? plan?.limits?.maxBranches ?? 1;
 
-    // Free trial unlocks every feature — multi-branch included.
+    // Free trial unlocks every feature — multi-branch included. Admin-granted
+    // add-ons count too, so granting multi_branch unlocks branch creation.
     // If the plan doesn't have multi_branch feature, only allow 1 branch (head branch)
-    const hasMultiBranch = sub.status === 'trial' || sub.features.includes('multi_branch');
+    const hasMultiBranch = sub.status === 'trial' || effectiveFeatures(sub.features, sub.grantedFeatures).includes('multi_branch');
     if (!hasMultiBranch && branchCount >= 1) {
       return {
         allowed: false,
@@ -180,6 +182,40 @@ export class EntitlementService {
   }
 
   /**
+   * Check if the restaurant can add another user account (Max Users is the
+   * TOTAL across the whole company — all branches combined, all roles).
+   * Trial subscriptions are unlimited (every feature unlocked).
+   */
+  async canAddUser(restaurantId: string): Promise<EntitlementResult> {
+    const sub = await Subscription.findOne({ restaurantId }).exec();
+    if (!sub) return { allowed: true }; // First-time setup, allow
+    if (sub.status === 'suspended') {
+      return { allowed: false, reason: 'Subscription is suspended. Please renew to manage users.' };
+    }
+    if (sub.status === 'trial') return { allowed: true }; // Trial = unlimited users
+
+    const plan = await SubscriptionPlan.findOne({ planId: sub.plan }).exec();
+    const maxUsers = sub.maxUsers ?? plan?.maxUsers ?? 5;
+    // 0 = unlimited
+    if (maxUsers === 0) return { allowed: true, limit: 0, current: 0, remaining: -1 };
+
+    const userCount = await Employee.countDocuments({
+      restaurantId,
+      isDeleted: { $ne: true },
+    }).exec();
+    if (userCount >= maxUsers) {
+      return {
+        allowed: false,
+        reason: `Your plan allows ${maxUsers} user${maxUsers > 1 ? 's' : ''} across all branches. Delete a user or upgrade your plan to add more.`,
+        limit: maxUsers,
+        current: userCount,
+        remaining: 0,
+      };
+    }
+    return { allowed: true, limit: maxUsers, current: userCount, remaining: maxUsers - userCount };
+  }
+
+  /**
    * Validate that a plan downgrade won't exceed the new plan's limits.
    * Returns the validation result with a reason if blocked.
    */
@@ -227,8 +263,9 @@ export class EntitlementService {
       plan: sub.plan,
       planName: plan?.name || sub.plan,
       status: sub.status,
-      limits: sub.limits || plan?.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 },
-      features: sub.features,
+      limits: sub.limits || plan?.limits || { maxBranches: 1, maxDevicesPerBranch: 3 },
+      features: effectiveFeatures(sub.features, sub.grantedFeatures),
+      grantedFeatures: sub.grantedFeatures || [],
     };
   }
 }

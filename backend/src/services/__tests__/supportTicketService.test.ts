@@ -210,14 +210,14 @@ describe('status lifecycle', () => {
     const restaurant = await seedRestaurant();
     const t = await svc.createSupportTicket(ticketInput(restaurant._id.toString()));
 
-    await svc.setTicketStatus(t._id.toString(), 'in_progress', null, actor);
+    await svc.setTicketStatus(t._id.toString(), 'in_progress', undefined, actor);
     const resolved = await svc.setTicketStatus(t._id.toString(), 'resolved', 'fixed config', actor);
     expect(resolved.status).toBe('resolved');
     expect(resolved.resolutionNote).toBe('fixed config');
     expect(resolved.closedByName).toBe('Super Admin');
     expect(resolved.closedAt).toBeTruthy();
 
-    const closed = await svc.setTicketStatus(t._id.toString(), 'closed', null, actor);
+    const closed = await svc.setTicketStatus(t._id.toString(), 'closed', undefined, actor);
     expect(closed.status).toBe('closed');
 
     expect(closed.timeline.filter((e: any) => e.action === 'status_changed').length).toBeGreaterThanOrEqual(2);
@@ -226,9 +226,9 @@ describe('status lifecycle', () => {
   it('rejects an invalid transition', async () => {
     const restaurant = await seedRestaurant();
     const t = await svc.createSupportTicket(ticketInput(restaurant._id.toString()));
-    await svc.setTicketStatus(t._id.toString(), 'cancelled', null, actor);
+    await svc.setTicketStatus(t._id.toString(), 'cancelled', undefined, actor);
     await expect(
-      svc.setTicketStatus(t._id.toString(), 'in_progress', null, actor)
+      svc.setTicketStatus(t._id.toString(), 'in_progress', undefined, actor)
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
@@ -236,14 +236,14 @@ describe('status lifecycle', () => {
     const restaurant = await seedRestaurant();
     const t = await svc.createSupportTicket(ticketInput(restaurant._id.toString()));
     await expect(
-      svc.setTicketStatus(t._id.toString(), 'new', null, actor)
+      svc.setTicketStatus(t._id.toString(), 'new', undefined, actor)
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it('writes an audit entry for status changes', async () => {
     const restaurant = await seedRestaurant();
     const t = await svc.createSupportTicket(ticketInput(restaurant._id.toString()));
-    await svc.setTicketStatus(t._id.toString(), 'resolved', null, actor);
+    await svc.setTicketStatus(t._id.toString(), 'resolved', undefined, actor);
     expect((await AuditLog.findOne({ action: 'SUPPORT_TICKET_STATUS_CHANGED', entityId: t._id.toString() }).exec())).toBeTruthy();
   });
 });
@@ -370,7 +370,7 @@ describe('delete / restore / stats / activity', () => {
     const id = restaurant._id.toString();
     const t1 = await svc.createSupportTicket(ticketInput(id, { priority: 'urgent' }));
     await svc.createSupportTicket(ticketInput(id, { priority: 'low' }));
-    await svc.setTicketStatus(t1._id.toString(), 'open', null, actor);
+    await svc.setTicketStatus(t1._id.toString(), 'open', undefined, actor);
 
     const stats = await svc.getTicketStats({});
     expect(stats.total).toBe(2);
@@ -383,7 +383,7 @@ describe('delete / restore / stats / activity', () => {
   it('exposes audit activity for a ticket', async () => {
     const restaurant = await seedRestaurant();
     const t = await svc.createSupportTicket(ticketInput(restaurant._id.toString()));
-    await svc.setTicketStatus(t._id.toString(), 'resolved', null, actor);
+    await svc.setTicketStatus(t._id.toString(), 'resolved', undefined, actor);
 
     const activity = await svc.getTicketActivity(t._id.toString());
     const actions = activity.map((a: any) => a.action);

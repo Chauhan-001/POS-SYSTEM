@@ -7,12 +7,27 @@ export const createBranchSchema = z.object({
   phone: z.string().max(20).optional(),
   isHeadBranch: optBool,
   isActive: optBool,
+  /** Which data categories to clone from the head branch into the new branch.
+   *  When omitted or empty, the new branch starts empty (no data export). */
+  exportData: z.object({
+    products: z.boolean().optional(),
+    recipes: z.boolean().optional(),
+    offers: z.boolean().optional(),
+    tables: z.boolean().optional(),
+    menuConfigTemplates: z.boolean().optional(),
+    printers: z.boolean().optional(),
+  }).optional(),
 }).strict();
 
 export const updateBranchSchema = createBranchSchema.partial();
 
 export const branchParamsSchema = z.object({
   id: objectId,
+}).strict();
+
+// Deleting a branch requires the owner password — destructive, irreversible.
+export const branchDeleteSchema = z.object({
+  password: z.string().min(1, 'Owner password is required'),
 }).strict();
 
 const moduleSettingsSchema = z.object({

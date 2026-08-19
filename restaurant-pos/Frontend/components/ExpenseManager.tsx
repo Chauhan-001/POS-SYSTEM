@@ -22,12 +22,13 @@ import {
   Plus, Trash2, Edit3, Search, X, ArrowLeft, DollarSign,
   Calendar, TrendingDown, FileText, Save, Download, Banknote,
   Building, UtensilsCrossed, Truck, Wifi, ShoppingBag, Wrench,
-  Megaphone, Shield, FileCheck, Monitor, MoreHorizontal, RefreshCw,
+  Megaphone, Shield, FileCheck, Monitor, MoreHorizontal,
   Repeat, Wallet, RotateCcw, Lock, Receipt, Landmark
 } from 'lucide-react';
 import type { ExpenseEntry, ExpenseCategory, Vendor, RecurringExpense, CashLedgerEntry, FinanceSummary, ExpensePaymentMethod } from '../src/types';
 import * as api from '../src/api/client';
 import { debugWarn } from '../src/utils/debugLog';
+import RefreshButton from './common/RefreshButton';
 
 interface ExpenseManagerProps {
   expenses: ExpenseEntry[];
@@ -114,31 +115,31 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(null);
 
   const refreshCategories = useCallback(() => {
-    api.fetchExpenseCategories().then((cats) => {
+    return api.fetchExpenseCategories().then((cats) => {
       if (Array.isArray(cats) && cats.length > 0) setCategories(cats);
     }).catch(err => debugWarn('ExpenseManager', 'fetchExpenseCategories failed:', err));
   }, []);
 
   const refreshVendors = useCallback(() => {
-    api.fetchVendors({ limit: 100 }).then((res: any) => {
+    return api.fetchVendors({ limit: 100 }).then((res: any) => {
       const list = Array.isArray(res) ? res : res?.data;
       if (Array.isArray(list)) setVendors(list);
     }).catch(err => debugWarn('ExpenseManager', 'fetchVendors failed:', err));
   }, []);
 
   const refreshFinance = useCallback(() => {
-    api.fetchFinanceSummary('month').then((s) => { if (s) setFinanceSummary(s); })
+    return api.fetchFinanceSummary('month').then((s) => { if (s) setFinanceSummary(s); })
       .catch(() => {/* offline — keep last */});
   }, []);
 
   const refreshLedger = useCallback(() => {
-    api.fetchCashLedger({ limit: 50 }).then((res: any) => {
+    return api.fetchCashLedger({ limit: 50 }).then((res: any) => {
       if (Array.isArray(res?.data)) { setLedger(res.data); setLedgerBalance(res.balance ?? 0); }
     }).catch(err => debugWarn('ExpenseManager', 'fetchCashLedger failed:', err));
   }, []);
 
   const refreshRecurring = useCallback(() => {
-    api.fetchRecurringExpenses({ limit: 100 }).then((res: any) => {
+    return api.fetchRecurringExpenses({ limit: 100 }).then((res: any) => {
       const list = Array.isArray(res) ? res : res?.data;
       if (Array.isArray(list)) setRecurring(list);
     }).catch(err => debugWarn('ExpenseManager', 'fetchRecurring failed:', err));
@@ -396,22 +397,22 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
   // ── Sub-renders ───────────────────────────────────────────────
   const renderKpis = () => (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+      <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
         <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Total Expenses ({visibleExpenses.length})</p>
         <p className="text-xl font-black text-gray-900 mt-0.5 font-mono">{formatCurrency(totalExpenses, currencySymbol)}</p>
         <p className="text-[9px] text-gray-400 mt-0.5">{visibleExpenses.length} entries shown</p>
       </div>
-      <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+      <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
         <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Today</p>
         <p className="text-xl font-black text-red-500 mt-0.5 font-mono">{formatCurrency(todayExpenses, currencySymbol)}</p>
         <p className="text-[9px] text-gray-400 mt-0.5">{todayStr}</p>
       </div>
-      <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+      <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
         <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">This Month</p>
         <p className="text-xl font-black text-gray-900 mt-0.5 font-mono">{formatCurrency(monthExpenses, currencySymbol)}</p>
         <p className="text-[9px] text-gray-400 mt-0.5">{todayStr.slice(0, 7)}</p>
       </div>
-      <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+      <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
         <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Net Profit (Month, server)</p>
         <p className={`text-xl font-black mt-0.5 font-mono ${(financeSummary?.pnl.netProfit ?? 0) >= 0 ? 'text-green-600' : 'text-red-500'}`}>
           {formatCurrency(financeSummary?.pnl.netProfit ?? 0, currencySymbol)}
@@ -422,7 +423,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
   );
 
   const renderTabs = () => (
-    <div className="flex items-center gap-1 px-4 pt-3 bg-white border-b border-[#e1e2ed]">
+    <div className="flex items-center gap-1 px-4 pt-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)]">
       {([['expenses', 'Expenses', FileText], ['cash', 'Cash Drawer', Wallet], ['vendors', 'Vendors', Building], ['recurring', 'Recurring', Repeat]] as [TabKey, string, any][]).map(([key, label, Icon]) => (
         <button key={key} onClick={() => setTab(key)}
           className={`flex items-center gap-1.5 px-3 py-2 rounded-t-lg text-[11px] font-bold transition-all cursor-pointer ${tab === key ? 'bg-red-50 text-red-600 border-b-2 border-red-500' : 'text-gray-400 hover:text-gray-600 border-b-2 border-transparent'}`}>
@@ -433,9 +434,9 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
   );
 
   return (
-    <div className="flex flex-col h-full bg-[#faf8ff]">
+    <div className="flex flex-col h-full bg-[var(--color-bg-page)]">
       {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-3 bg-white border-b border-[#e1e2ed] shrink-0">
+      <div className="flex items-center gap-3 px-5 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
         <div className="p-2 rounded-xl bg-red-50 text-red-600">
           <TrendingDown className="w-5 h-5" />
         </div>
@@ -444,25 +445,27 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
           <p className="text-[10px] text-gray-400">Multi-branch expense, cash & P&L management</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => { refreshCategories(); refreshVendors(); refreshFinance(); refreshLedger(); refreshRecurring(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
-            <RefreshCw className="w-3.5 h-3.5" /> Sync
-          </button>
+          <RefreshButton
+            onRefresh={() => Promise.all([refreshCategories(), refreshVendors(), refreshFinance(), refreshLedger(), refreshRecurring()]).then(() => undefined)}
+            className="gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)]"
+          >
+            Sync
+          </RefreshButton>
           {tab === 'expenses' && (
             <button onClick={handleExport}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
               <Download className="w-3.5 h-3.5" /> Export CSV
             </button>
           )}
           {tab === 'expenses' && (
             <button onClick={() => { resetForm(); setShowAddForm(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs">
               <Plus className="w-3.5 h-3.5" /> Add Expense
             </button>
           )}
           {tab === 'recurring' && (
             <button onClick={() => setShowRecurringForm(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs">
               <Plus className="w-3.5 h-3.5" /> New Template
             </button>
           )}
@@ -477,7 +480,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
             {renderKpis()}
 
             {/* Category breakdown */}
-            <div className="bg-white rounded-xl border border-[#e1e2ed] p-5 shadow-xs">
+            <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-5 shadow-xs">
               <div className="flex items-center gap-2 mb-4">
                 <TrendingDown className="w-4 h-4 text-red-500" />
                 <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Expense Breakdown by Category</h3>
@@ -517,23 +520,23 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
             </div>
 
             {/* Filters + list */}
-            <div className="bg-white rounded-xl border border-[#e1e2ed] shadow-xs overflow-hidden">
-              <div className="p-4 border-b border-[#e1e2ed] flex flex-wrap items-center gap-3">
+            <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] shadow-xs overflow-hidden">
+              <div className="p-4 border-b border-[var(--color-border-default)] flex flex-wrap items-center gap-3">
                 <div className="relative flex-1 min-w-[200px]">
                   <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search expenses..."
-                    className="w-full pl-9 pr-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full pl-9 pr-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
                 <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-white">
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-[var(--color-bg-white)]">
                   <option value="All">All Categories</option>
                   {categories.map(c => <option key={c.id} value={c.name}>{c.icon} {c.name}</option>)}
                 </select>
                 <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" title="From date" />
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" title="From date" />
                 <span className="text-[10px] text-gray-400">to</span>
                 <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" title="To date" />
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" title="To date" />
                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 cursor-pointer">
                   <input type="checkbox" checked={showDeleted} onChange={e => setShowDeleted(e.target.checked)} className="accent-red-500" />
                   Deleted
@@ -600,17 +603,17 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
           <div className="space-y-4">
             {/* Balance + actions */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Drawer Balance</p>
                 <p className={`text-2xl font-black mt-1 font-mono ${ledgerBalance >= 0 ? 'text-green-600' : 'text-red-500'}`}>{formatCurrency(ledgerBalance, currencySymbol)}</p>
                 <p className="text-[9px] text-gray-400 mt-0.5">live cash on hand (server ledger)</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Month Net Profit</p>
                 <p className={`text-2xl font-black mt-1 font-mono ${(financeSummary?.pnl.netProfit ?? 0) >= 0 ? 'text-green-600' : 'text-red-500'}`}>{formatCurrency(financeSummary?.pnl.netProfit ?? 0, currencySymbol)}</p>
                 <p className="text-[9px] text-gray-400 mt-0.5">gross − COGS − operating expenses</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Vendor Outstanding</p>
                 <p className="text-2xl font-black mt-1 font-mono text-amber-600">{formatCurrency(financeSummary?.vendorDues?.total ?? 0, currencySymbol)}</p>
                 <p className="text-[9px] text-gray-400 mt-0.5">{financeSummary?.vendorDues?.count ?? 0} credit-term vendors</p>
@@ -619,48 +622,48 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
 
             {/* Opening / entries / close */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <h3 className="text-[11px] font-black text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-1.5"><Banknote className="w-3.5 h-3.5 text-green-600" /> Opening Cash</h3>
                 <input type="number" min="0" step="0.01" value={openingAmount} onChange={e => setOpeningAmount(e.target.value)} placeholder="Amount"
-                  className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-green-400 mb-2" />
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-green-400 mb-2" />
                 <input type="text" value={cashNote} onChange={e => setCashNote(e.target.value)} placeholder="Note (optional)"
-                  className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-green-400 mb-2" />
-                <button onClick={handleOpenCash} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-green-400 mb-2" />
+                <button onClick={handleOpenCash} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-[var(--color-green-600-solid)] hover:bg-[var(--color-green-700-solid)] text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
                   <Banknote className="w-3.5 h-3.5" /> Open Drawer
                 </button>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <h3 className="text-[11px] font-black text-gray-900 uppercase tracking-wider mb-3">Cash In / Out</h3>
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <input type="number" min="0" step="0.01" value={cashInAmount} onChange={e => setCashInAmount(e.target.value)} placeholder="In amount"
-                    className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
                   <input type="number" min="0" step="0.01" value={cashOutAmount} onChange={e => setCashOutAmount(e.target.value)} placeholder="Out amount"
-                    className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => handleCashEntry('cash_in')} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                  <button onClick={() => handleCashEntry('cash_in')} className="px-3 py-2 bg-[var(--color-blue-600-solid)] hover:bg-[var(--color-blue-700-solid)] text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
                     + Cash In
                   </button>
-                  <button onClick={() => handleCashEntry('cash_out')} className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                  <button onClick={() => handleCashEntry('cash_out')} className="px-3 py-2 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
                     − Cash Out
                   </button>
                 </div>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <h3 className="text-[11px] font-black text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-1.5"><Landmark className="w-3.5 h-3.5 text-amber-600" /> Close Shift</h3>
                 <input type="number" min="0" step="0.01" value={countedCash} onChange={e => setCountedCash(e.target.value)} placeholder="Counted cash"
-                  className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 mb-2" />
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 mb-2" />
                 <input type="text" value={closeNote} onChange={e => setCloseNote(e.target.value)} placeholder="Note (optional)"
-                  className="w-full px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 mb-2" />
-                <button onClick={handleCloseShift} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 mb-2" />
+                <button onClick={handleCloseShift} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-[var(--color-amber-500-solid)] hover:bg-[var(--color-amber-600-solid)] text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
                   <Receipt className="w-3.5 h-3.5" /> Close & Reconcile
                 </button>
               </div>
             </div>
 
             {/* Ledger history */}
-            <div className="bg-white rounded-xl border border-[#e1e2ed] shadow-xs overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+            <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] shadow-xs overflow-hidden">
+              <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
                 <Wallet className="w-4 h-4 text-gray-500" />
                 <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Cash Ledger</h3>
                 <span className="text-[9px] text-gray-400 ml-auto">balance: {formatCurrency(ledgerBalance, currencySymbol)}</span>
@@ -698,26 +701,26 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
         {tab === 'vendors' && (
           <div className="space-y-4">
             {/* Add vendor */}
-            <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+            <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
               <h3 className="text-[11px] font-black text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-1.5"><Building className="w-3.5 h-3.5 text-blue-600" /> Add Vendor</h3>
               <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                 <input type="text" value={vendorForm.name} onChange={e => setVendorForm({ ...vendorForm, name: e.target.value })} placeholder="Vendor name *"
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 <input type="text" value={vendorForm.gstin} onChange={e => setVendorForm({ ...vendorForm, gstin: e.target.value })} placeholder="GSTIN"
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 <input type="text" value={vendorForm.phone} onChange={e => setVendorForm({ ...vendorForm, phone: e.target.value })} placeholder="Phone"
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 <input type="email" value={vendorForm.email} onChange={e => setVendorForm({ ...vendorForm, email: e.target.value })} placeholder="Email"
-                  className="px-3 py-2 rounded-lg border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                <button onClick={handleSaveVendor} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                  className="px-3 py-2 rounded-lg border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                <button onClick={handleSaveVendor} className="px-3 py-2 bg-[var(--color-blue-600-solid)] hover:bg-[var(--color-blue-700-solid)] text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer">
                   Save Vendor
                 </button>
               </div>
             </div>
 
             {/* Vendor list */}
-            <div className="bg-white rounded-xl border border-[#e1e2ed] shadow-xs overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#e1e2ed] flex items-center gap-2">
+            <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] shadow-xs overflow-hidden">
+              <div className="px-4 py-3 border-b border-[var(--color-border-default)] flex items-center gap-2">
                 <Building className="w-4 h-4 text-gray-500" />
                 <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Vendors</h3>
                 <span className="text-[9px] text-gray-400 ml-auto">{vendors.length} vendors</span>
@@ -750,7 +753,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
             {/* Vendor summary modal */}
             {selectedVendor && vendorSummary && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => { setSelectedVendor(null); setVendorSummary(null); }}>
-                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                   <div className="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
                     <h3 className="text-sm font-bold text-gray-900">{vendorSummary.vendor?.name}</h3>
                     <button onClick={() => { setSelectedVendor(null); setVendorSummary(null); }} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="w-5 h-5" /></button>
@@ -800,18 +803,18 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-[11px] text-gray-500">Templates generate child expenses automatically on their schedule. Pause to freeze, resume to continue.</p>
-              <button onClick={runRecurringNow} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e1e2ed] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
+              <button onClick={runRecurringNow} className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)] transition-all cursor-pointer">
                 <Repeat className="w-3.5 h-3.5" /> Generate Due Now
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {recurring.length === 0 ? (
-                <div className="col-span-full bg-white rounded-xl border border-[#e1e2ed] p-8 flex flex-col items-center text-gray-300">
+                <div className="col-span-full bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-8 flex flex-col items-center text-gray-300">
                   <Repeat className="w-10 h-10 mb-2" />
                   <p className="text-xs font-semibold">No recurring templates — create one to automate rent, salaries & subscriptions</p>
                 </div>
               ) : recurring.map(r => (
-                <div key={r.id} className={`bg-white rounded-xl border p-4 shadow-xs ${r.isPaused ? 'border-gray-200 opacity-70' : 'border-[#e1e2ed]'}`}>
+                <div key={r.id} className={`bg-[var(--color-bg-white)] rounded-xl border p-4 shadow-xs ${r.isPaused ? 'border-gray-200 opacity-70' : 'border-[var(--color-border-default)]'}`}>
                   <div className="flex items-start justify-between">
                     <div className="p-2 rounded-lg bg-red-50 text-red-600"><Repeat className="w-4 h-4" /></div>
                     <span className={`text-[8px] font-bold px-2 py-0.5 rounded ${r.isPaused ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-600'}`}>{r.isPaused ? 'Paused' : 'Active'}</span>
@@ -824,7 +827,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                       <p className="text-[8px] text-gray-400">next: {r.nextRunDate}</p>
                     </div>
                     <button onClick={() => toggleRecurringPause(r)}
-                      className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${r.isPaused ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                      className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all cursor-pointer ${r.isPaused ? 'bg-[var(--color-green-600-solid)] hover:bg-[var(--color-green-700-solid)] text-white' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
                       {r.isPaused ? 'Resume' : 'Pause'}
                     </button>
                   </div>
@@ -838,7 +841,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
       {/* Add/Edit Expense modal */}
       {showAddForm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-gray-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-lg border border-gray-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-sm font-bold text-gray-900">{editingId ? 'Edit Expense' : 'Add New Expense'}</h3>
               <button onClick={resetForm} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="w-5 h-5" /></button>
@@ -852,19 +855,19 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
               <div>
                 <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Description *</label>
                 <input type="text" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400"
+                  className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400"
                   placeholder="e.g. Weekly vegetable procurement" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Amount ({currencySymbol}) *</label>
                   <input type="number" min="0" step="0.01" value={form.amount || ''} onChange={e => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Date</label>
                   <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
               </div>
               <div>
@@ -873,7 +876,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                   const cat = categories.find(c => c.name === e.target.value);
                   setForm({ ...form, category: e.target.value, categoryId: cat?.id });
                 }}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-white">
+                  className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-[var(--color-bg-white)]">
                   {categories.map(c => <option key={c.id} value={c.name}>{c.icon} {c.name}{c.isCogs ? ' (COGS)' : ''}</option>)}
                 </select>
               </div>
@@ -881,7 +884,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Payment Method</label>
                   <select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value as ExpensePaymentMethod })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-white">
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-[var(--color-bg-white)]">
                     {PAYMENT_METHODS.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
@@ -892,7 +895,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                     const v = vendors.find(x => x.id === vid);
                     setForm({ ...form, vendorId: vid || undefined, vendor: v?.name || (vid === '__custom' ? form.vendor : undefined) });
                   }}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-white">
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-[var(--color-bg-white)]">
                     <option value="">— Free text —</option>
                     {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
@@ -902,14 +905,14 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Vendor Name (text)</label>
                   <input type="text" value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400"
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400"
                     placeholder="e.g. Fresh Farms Co." />
                 </div>
               )}
               <div>
                 <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Notes</label>
                 <textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 resize-none" />
+                  className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 resize-none" />
               </div>
               <div className="flex items-center gap-5">
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -926,7 +929,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
             <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
               <button onClick={resetForm} className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-50 transition-all cursor-pointer">Cancel</button>
               <button onClick={handleSave}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs">
+                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs">
                 <Save className="w-3.5 h-3.5" /> {editingId ? 'Update' : 'Save'} Expense
               </button>
             </div>
@@ -937,7 +940,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
       {/* Recurring form modal */}
       {showRecurringForm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-sm font-bold text-gray-900">New Recurring Expense</h3>
               <button onClick={() => setShowRecurringForm(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="w-5 h-5" /></button>
@@ -946,18 +949,18 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
               <div>
                 <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Description *</label>
                 <input type="text" value={recurForm.description} onChange={e => setRecurForm({ ...recurForm, description: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" placeholder="e.g. Monthly rent" />
+                  className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" placeholder="e.g. Monthly rent" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Amount *</label>
                   <input type="number" min="0" step="0.01" value={recurForm.amount || ''} onChange={e => setRecurForm({ ...recurForm, amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-bold font-mono focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Frequency</label>
                   <select value={recurForm.frequency} onChange={e => setRecurForm({ ...recurForm, frequency: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-white">
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-[var(--color-bg-white)]">
                     {Object.entries(RECURRENCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
@@ -968,7 +971,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                   const cat = categories.find(c => c.name === e.target.value);
                   setRecurForm({ ...recurForm, category: e.target.value, categoryId: cat?.id });
                 }}
-                  className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-white">
+                  className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400 bg-[var(--color-bg-white)]">
                   {categories.map(c => <option key={c.id} value={c.name}>{c.icon} {c.name}</option>)}
                 </select>
               </div>
@@ -976,18 +979,18 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Start Date</label>
                   <input type="date" value={recurForm.startDate} onChange={e => setRecurForm({ ...recurForm, startDate: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Day of Month (1-31)</label>
                   <input type="number" min="1" max="31" value={recurForm.dayOfMonth || ''} onChange={e => setRecurForm({ ...recurForm, dayOfMonth: parseInt(e.target.value) || 1 })}
-                    className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
                 </div>
               </div>
             </div>
             <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
               <button onClick={() => setShowRecurringForm(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-50 transition-all cursor-pointer">Cancel</button>
-              <button onClick={handleSaveRecurring} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs">
+              <button onClick={handleSaveRecurring} className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs">
                 <Save className="w-3.5 h-3.5" /> Create Template
               </button>
             </div>
@@ -998,7 +1001,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
       {/* Delete confirmation (with optional PIN) */}
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm border border-gray-200" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-sm border border-gray-200" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200 flex justify-between items-center">
               <h3 className="text-sm font-bold text-gray-900">Delete Expense</h3>
               <button onClick={() => setDeleteTarget(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="w-5 h-5" /></button>
@@ -1009,14 +1012,14 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                 {currentRole === 'Owner' ? '' : ' Manager PIN is required for accountability.'}
               </p>
               <input type="password" inputMode="numeric" maxLength={6} value={deletePin} onChange={e => setDeletePin(e.target.value.replace(/\D/g, ''))}
-                placeholder="Manager PIN (optional)" className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-bold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                placeholder="Manager PIN (optional)" className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-bold focus:outline-none focus:ring-1 focus:ring-red-400" />
               <input type="text" value={deleteReason} onChange={e => setDeleteReason(e.target.value)}
-                placeholder="Reason (audit trail)" className="w-full px-3 py-2 rounded-xl border border-[#c3c6d7] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
+                placeholder="Reason (audit trail)" className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-red-400" />
             </div>
             <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
               <button onClick={() => setDeleteTarget(null)} className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-50 transition-all cursor-pointer">Cancel</button>
               <button onClick={confirmDelete} disabled={deleting}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs">
+                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--color-red-600-solid)] hover:bg-[var(--color-red-700-solid)] disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs">
                 <Lock className="w-3.5 h-3.5" /> {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>

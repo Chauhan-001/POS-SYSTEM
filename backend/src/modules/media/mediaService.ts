@@ -41,9 +41,18 @@ export interface MediaActor {
   ipAddress?: string;
 }
 
+/**
+ * Standalone image folders for POS-uploaded images (product/offer/promotion
+ * photos). Stored under the same tenant namespace as restaurant media but in
+ * their own subfolder so they are never mistaken for restaurant branding.
+ */
+export type StandaloneImageKind = 'misc' | 'product' | 'offer' | 'promotion';
+
 export interface SaveImageInput {
   restaurantId: string;
-  kind: RestaurantMediaKind;
+  /** @deprecated Use standaloneKind for standalone uploads. */
+  kind?: RestaurantMediaKind;
+  standaloneKind?: StandaloneImageKind;
   buffer: Buffer;
   mimetype: string;
   originalName: string;
@@ -142,7 +151,7 @@ export class MediaService {
    * Upload (or replace) a restaurant image.
    * Returns the relative public path + persisted metadata.
    */
-  async saveImage(input: SaveImageInput): Promise<{ url: string; meta: IRestaurantMediaMeta }> {
+  async saveImage(input: SaveImageInput & { kind: RestaurantMediaKind }): Promise<{ url: string; meta: IRestaurantMediaMeta }> {
     if (input.buffer.length > config.uploads.maxFileSizeMB * MB) {
       throw new AppError(400, `File exceeds the maximum size of ${config.uploads.maxFileSizeMB} MB`);
     }
@@ -213,16 +222,17 @@ export class MediaService {
   }
 
   /**
-   * Upload a standalone image for POS use (product / offer / recipe photos).
-   * Kept deliberately decoupled from the Restaurant document — the returned
-   * relative public URL is what the caller stores on its own entity.
+   * Upload a standalone image for POS use (product / offer / recipe / promotion
+   * photos). Kept deliberately decoupled from the Restaurant document — the
+   * returned relative public URL is what the caller stores on its own entity.
    */
   async saveStandalone(input: SaveImageInput): Promise<{ url: string }> {
     if (input.buffer.length > config.uploads.maxFileSizeMB * MB) {
       throw new AppError(400, `File exceeds the maximum size of ${config.uploads.maxFileSizeMB} MB`);
     }
     const ext = assertValidImage(input.buffer, input.mimetype);
-    const key = await this.writeFile(input.restaurantId, 'misc', input.buffer, ext);
+    const folder: StandaloneImageKind = input.standaloneKind || 'misc';
+    const key = await this.writeFile(input.restaurantId, folder, input.buffer, ext);
     return { url: key };
   }
 

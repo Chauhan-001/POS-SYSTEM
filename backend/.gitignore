@@ -13,6 +13,10 @@ build/
 *.log
 logs/
 
+# ─── Debug auth tokens (never commit JWTs) ─────────────────────
+*_token*.txt
+_sec_*.json
+
 # ─── Test coverage ──────────────────────────────────────────────
 coverage/
 .nyc_output/

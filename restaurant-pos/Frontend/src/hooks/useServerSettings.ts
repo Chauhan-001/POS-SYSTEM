@@ -49,6 +49,8 @@ export interface ServerSettingsApi {
   hasServerData: boolean;
   /** Public store token (loyalty QR). null until the server provides one. */
   publicToken: string | null;
+  /** Public base URL of the customer QR site (for building receipt-QR previews). */
+  qrBaseUrl: string | null;
 }
 
 interface Options {
@@ -95,6 +97,7 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
   const [conflict, setConflict] = useState<SettingsConflict | null>(null);
   const [hasServerData, setHasServerData] = useState(false);
   const [publicToken, setPublicToken] = useState<string | null>(null);
+  const [qrBaseUrl, setQrBaseUrl] = useState<string | null>(null);
   const versionRef = useRef(0);
   const scopeRef = useRef<'restaurant' | 'branch' | 'device'>('restaurant');
   /**
@@ -132,6 +135,7 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
       setHasServerData(true);
     }
     if (effective.publicToken) setPublicToken(effective.publicToken);
+    if (effective.qrBaseUrl) setQrBaseUrl(effective.qrBaseUrl);
     if (effective.meta?.version) {
       versionRef.current = effective.meta.version;
       setServerVersion(effective.meta.version);
@@ -278,5 +282,6 @@ export function useServerSettings(opts: Options): ServerSettingsApi {
     rollback,
     hasServerData,
     publicToken,
+    qrBaseUrl,
   };
 }

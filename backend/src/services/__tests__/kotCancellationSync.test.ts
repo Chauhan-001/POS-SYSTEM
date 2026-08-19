@@ -16,7 +16,7 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vites
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import { orderService, orderAdjustmentService, billService } from '../index';
+import { orderService, orderAdjustmentService } from '../index';
 import Order from '../../models/Order';
 import OrderItem from '../../models/OrderItem';
 import OrderAdjustment from '../../models/OrderAdjustment';
@@ -95,8 +95,6 @@ describe('KOT cancellation sync — persistence, list embedding, adjustment', ()
       BranchSettings.deleteMany({}).exec(),
     ]);
     vi.restoreAllMocks();
-    // Never hit a real bill/refund path in these unit tests.
-    vi.spyOn(billService, 'refundBill').mockResolvedValue({ isRefunded: true } as any);
   });
 
   it('PUT /orders/:id persists KOT records server-side (upsert by orderId+kotNumber)', async () => {

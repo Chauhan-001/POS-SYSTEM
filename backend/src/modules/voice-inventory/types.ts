@@ -94,6 +94,11 @@ export interface ParsedItem {
     unit?: string;
     currentStock?: number;
   }>;
+  /**
+   * True when no product matched AND no partial candidates exist.
+   * The frontend should offer a "Create Product" button with pre-filled data.
+   */
+  productNotFound?: boolean;
 }
 
 export interface VoiceParseOutput {

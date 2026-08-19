@@ -29,7 +29,7 @@ import {
   CreditCard, Activity, FileText, CheckCircle, AlertTriangle, Key,
   Lock, Unlock, Plus, Trash2, Edit, Save, Clock, MapPin, Building, Building2,
   Crown, Users, ExternalLink, Search, ShieldOff, ShieldCheck, LogIn, Wallet,
-  BarChart3, Users2, Receipt, Upload, HardDrive, Image as ImageIcon
+  BarChart3, Users2, Receipt, Upload, HardDrive, Image as ImageIcon, Sparkles
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle } from '../components/ui/Card'
@@ -42,7 +42,7 @@ import { Modal, ConfirmDialog } from '../components/ui/Modal'
 import { Input } from '../components/ui/Input'
 import apiClient from '../api/client'
 import { getRestaurant, updateRestaurant, suspendRestaurant, activateRestaurant, createRestaurantBranch, getRestaurantDeviceActivitySummary, addAdminNote, resetRestaurantPassword, regenerateRestaurantCredentials, getRestaurantStatistics, uploadRestaurantImage, deleteRestaurantImage, getRestaurantStorage, resolveMediaUrl, type DeviceActivitySummary, type RestaurantStatistics, type StorageMetrics } from '../api/restaurants'
-import { getSubscriptionByRestaurant, renewSubscription, upgradeSubscription, downgradeSubscription, getSubscriptionPayments, getSubscriptionUsage } from '../api/subscriptions'
+import { getSubscriptionByRestaurant, renewSubscription, upgradeSubscription, downgradeSubscription, getSubscriptionPayments, getSubscriptionUsage, updateGrantedFeatures } from '../api/subscriptions'
 import { getPlans } from '../api/subscriptionPlans'
 import { getBranchUsageByRestaurant } from '../api/branches'
 import UsageDashboard from '../components/UsageDashboard'
@@ -160,6 +160,48 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   priority_support: 'Dedicated support with priority ticketing and SLAs',
 }
 
+/**
+ * Full feature catalog (mirrors backend constants/planFeatures.ts).
+ * Used by the admin feature-grant UI to show every grantable feature with
+ * its label + description, independent of what the current plan includes.
+ */
+const FEATURE_CATALOG: Array<{ key: string; label: string; description: string }> = [
+  { key: 'core_pos', label: 'Core POS', description: 'Billing, orders, table management, and payment processing' },
+  { key: 'table_service', label: 'Table Service', description: 'Dine-in floor plan with table states and guest counts' },
+  { key: 'takeaway', label: 'Takeaway', description: 'Takeaway and quick orders without a table' },
+  { key: 'delivery', label: 'Delivery', description: 'Delivery orders from partner apps (Swiggy, Zomato, Uber Eats)' },
+  { key: 'online_ordering', label: 'Online Ordering', description: 'Customer-facing online ordering website and order intake' },
+  { key: 'qr_ordering', label: 'QR Ordering', description: 'QR-based self-ordering from the table, car, or pickup' },
+  { key: 'waiter_management', label: 'Waiter Management', description: 'Assign waiters to tables and track service' },
+  { key: 'kitchen_display', label: 'Kitchen Display', description: 'Kitchen order tickets (KOT) and display screen' },
+  { key: 'products', label: 'Products & Menu', description: 'Product catalog, categories, variants, and menu management' },
+  { key: 'staff', label: 'Staff Management', description: 'Employees, roles, PINs, and shift management' },
+  { key: 'discounts', label: 'Discounts', description: 'Discounts, price overrides, and happy hours' },
+  { key: 'guest_checkout', label: 'Guest Checkout', description: 'Bill without a registered customer' },
+  { key: 'order_notes', label: 'Order Notes', description: 'Item notes, modifiers, and special instructions' },
+  { key: 'offers', label: 'Offers & Promotions', description: 'Coupons, BOGO, and promotional offers' },
+  { key: 'loyalty', label: 'Loyalty', description: 'Customer rewards program, points tracking, and promotions' },
+  { key: 'crm', label: 'CRM', description: 'Customer profiles, segmentation, and relationship management' },
+  { key: 'reservations', label: 'Reservations', description: 'Table booking and waitlist management' },
+  { key: 'inventory', label: 'Inventory', description: 'Stock tracking, purchase orders, and low-stock alerts' },
+  { key: 'expense_tracking', label: 'Expense Tracking', description: 'Record and categorize operational expenses' },
+  { key: 'finance', label: 'Finance', description: 'Cash flow, P&L, and financial statements' },
+  { key: 'analytics', label: 'Analytics', description: 'Advanced dashboards and business intelligence' },
+  { key: 'basic_reports', label: 'Basic Reports', description: 'Daily sales summaries and order history' },
+  { key: 'advanced_reports', label: 'Advanced Reports', description: 'Profit & loss, tax reports, and custom exports' },
+  { key: 'multi_branch', label: 'Multi Branch', description: 'Centralized management across multiple locations' },
+  { key: 'multi_device', label: 'Multi Device', description: 'Run the POS on multiple terminals concurrently' },
+  { key: 'ai', label: 'AI', description: 'AI menu suggestions, demand forecasting, and smart insights' },
+  { key: 'voice_ordering', label: 'Voice Ordering', description: 'Voice-assisted order entry and inventory' },
+  { key: 'offline_mode', label: 'Offline Mode', description: 'Continue billing during internet outages' },
+  { key: 'customer_display', label: 'Customer Display', description: 'Customer-facing order and payment display' },
+  { key: 'marketing', label: 'Marketing', description: 'Campaigns and promotional tools' },
+  { key: 'integrations', label: 'Integrations', description: 'Swiggy, Zomato, Uber Eats and delivery partners' },
+  { key: 'api_access', label: 'API Access', description: 'REST API for third-party integrations' },
+  { key: 'custom_branding', label: 'Custom Branding', description: 'White-label experience with custom logo and branding' },
+  { key: 'priority_support', label: 'Priority Support', description: 'Dedicated support with priority ticketing' },
+]
+
 export default function RestaurantDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -181,10 +223,12 @@ export default function RestaurantDetails() {
   const [activityPage, setActivityPage] = useState(1)
   const [devicePage, setDevicePage] = useState(1)
   const [showRenewConfirm, setShowRenewConfirm] = useState(false)
+  const [renewPeriod, setRenewPeriod] = useState<'monthly' | 'yearly'>('monthly')
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetResult, setResetResult] = useState<{ message: string; ownerUserId?: string } | null>(null)
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false)
   const [credentialsResult, setCredentialsResult] = useState<{ message: string; secretKey: string; apiKey: string } | null>(null)
+  const [pendingFeature, setPendingFeature] = useState<{ key: string; action: 'grant' | 'revoke' } | null>(null)
 
   // ─── Branding media (logo / cover) ─────────────────────────────
   const logoInputRef = useRef<HTMLInputElement>(null)
@@ -292,6 +336,19 @@ export default function RestaurantDetails() {
     queryKey: ['subscription-plans'],
     queryFn: () => getPlans({}),
   })
+  const currentPlan = plans?.data?.find((p: any) => p.planId === subscription?.plan)
+  // Effective feature state: what the PLAN includes vs what the ADMIN granted
+  // beyond the plan (grantedFeatures survives plan changes; revoking a feature
+  // the plan itself includes has no effect).
+  const planFeatureSet = new Set<string>(subscription?.planFeatures || [])
+  const grantedFeatureSet = new Set<string>(subscription?.grantedFeatures || [])
+  const monthlyPrice = currentPlan?.price || subscription?.price || 0
+  const yearlyPrice = currentPlan?.yearlyPrice || 0
+  const renewAmount = renewPeriod === 'yearly' ? (yearlyPrice > 0 ? yearlyPrice : monthlyPrice) : monthlyPrice
+  const openRenewModal = () => {
+    setRenewPeriod(subscription?.billingPeriod || 'monthly')
+    setShowRenewConfirm(true)
+  }
 
   // ─── Device queries ──────────────────────────────────────────
 
@@ -360,7 +417,7 @@ export default function RestaurantDetails() {
   })
 
   const renewMutation = useMutation({
-    mutationFn: () => renewSubscription(subscription?.id || ''),
+    mutationFn: () => renewSubscription(subscription?.id || '', { billingPeriod: renewPeriod }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['restaurant-subscription', id] })
       toast.success('Subscription renewed successfully')
@@ -444,6 +501,24 @@ export default function RestaurantDetails() {
       toast.error(err?.response?.data?.message || 'Failed to change plan')
       setPlanChangeTarget(null)
     },
+  })
+
+  // ─── Admin feature grants (add-ons on the current plan) ───────
+  const grantFeatureMutation = useMutation({
+    mutationFn: ({ feature, action }: { feature: string; action: 'grant' | 'revoke' }) =>
+      updateGrantedFeatures(id!, action === 'grant' ? { grant: [feature] } : { revoke: [feature] }),
+    onMutate: ({ feature, action }) => setPendingFeature({ key: feature, action }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['restaurant-subscription', id] })
+      queryClient.invalidateQueries({ queryKey: ['restaurant', id] })
+      toast.success(
+        vars.action === 'grant'
+          ? `Feature granted — active in the POS immediately`
+          : 'Feature revoked — no longer available in the POS'
+      )
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update feature access'),
+    onSettled: () => setPendingFeature(null),
   })
 
   if (error) return <ErrorPage message={(error as any).message} onRetry={() => refetch()} />
@@ -834,19 +909,37 @@ export default function RestaurantDetails() {
               </div>
             )}
 
-            {/* Enabled Features */}
+            {/* Enabled Features — plan features + admin-granted add-ons */}
             {subscription?.features && subscription.features.length > 0 && (
               <Card>
-                <CardHeader><CardTitle>Enabled Features</CardTitle></CardHeader>
-                <div className="flex flex-wrap gap-2">
-                  {subscription.features.map((f: string) => (
-                    <Tooltip key={f} content={FEATURE_DESCRIPTIONS[f] || f.replace(/_/g, ' ')}>
-                      <Badge variant="success" className="capitalize text-xs cursor-default">
-                        <CheckCircle size={12} /> {f.replace(/_/g, ' ')}
+                <CardHeader>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <CardTitle>Enabled Features</CardTitle>
+                    {subscription.grantedFeatures && subscription.grantedFeatures.length > 0 && (
+                      <Badge variant="info" className="text-xs">
+                        <Sparkles size={12} /> {subscription.grantedFeatures.length} admin grant
+                        {subscription.grantedFeatures.length > 1 ? 's' : ''}
                       </Badge>
-                    </Tooltip>
-                  ))}
+                    )}
+                  </div>
+                </CardHeader>
+                <div className="flex flex-wrap gap-2">
+                  {subscription.features.map((f: string) => {
+                    const granted = subscription.grantedFeatures?.includes(f) && !(subscription.planFeatures || []).includes(f)
+                    return (
+                      <Tooltip key={f} content={FEATURE_DESCRIPTIONS[f] || f.replace(/_/g, ' ')}>
+                        <Badge variant={granted ? 'info' : 'success'} className="capitalize text-xs cursor-default">
+                          {granted ? <Sparkles size={12} /> : <CheckCircle size={12} />} {f.replace(/_/g, ' ')}
+                        </Badge>
+                      </Tooltip>
+                    )
+                  })}
                 </div>
+                {subscription.grantedFeatures && subscription.grantedFeatures.length > 0 && (
+                  <p className="mt-3 text-[11px] text-surface-400">
+                    <Sparkles size={11} className="inline mr-1" />Badges with a sparkle are admin-granted add-ons beyond this plan.
+                  </p>
+                )}
               </Card>
             )}
 
@@ -927,10 +1020,25 @@ export default function RestaurantDetails() {
                 <div className="flex items-center justify-between">
                   <CardTitle>Subscription & Billing Management</CardTitle>
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => setShowRenewConfirm(true)} loading={renewMutation.isPending}>Renew Subscription</Button>
+                    <Button size="sm" onClick={openRenewModal} loading={renewMutation.isPending}>Renew Subscription</Button>
                   </div>
                 </div>
               </div>
+              {subscription?.status === 'grace' && subscription.graceEnd && (() => {
+                const days = Math.max(0, Math.ceil((new Date(subscription.graceEnd as string).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+                return (
+                  <div className="mx-6 mb-4 flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold">Subscription expired — 2-day warning active</p>
+                      <p className="text-xs mt-0.5 opacity-90">
+                        This restaurant will move to the <strong>Free plan</strong> (core POS only) in {days} day{days !== 1 ? 's' : ''}{' '}
+                        (from {formatDate(subscription.graceEnd as string)}). Renew now to keep the current plan.
+                      </p>
+                    </div>
+                  </div>
+                )
+              })()}
               {subLoading ? (
                 <div className="flex items-center justify-center py-8 px-6">
                   <div className="w-5 h-5 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" />
@@ -950,7 +1058,12 @@ export default function RestaurantDetails() {
                     </div>
                     <div>
                       <p className="text-xs text-surface-500">Billing Amount</p>
-                      <p className="text-lg font-bold text-surface-900 dark:text-surface-100 mt-1">{formatCurrency(subscription.price)}/mo</p>
+                      <p className="text-lg font-bold text-surface-900 dark:text-surface-100 mt-1">
+                        {formatCurrency(subscription.price)}{subscription.billingPeriod === 'yearly' ? '/yr' : '/mo'}
+                        {currentPlan && (subscription.billingPeriod === 'yearly'
+                          ? currentPlan.price > 0 && <span className="text-xs font-normal text-surface-500 ml-1">· {formatCurrency(currentPlan.price)}/mo</span>
+                          : currentPlan.yearlyPrice > 0 && <span className="text-xs font-normal text-surface-500 ml-1">· {formatCurrency(currentPlan.yearlyPrice)}/yr</span>)}
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs text-surface-500">Auto-Renew</p>
@@ -988,12 +1101,12 @@ export default function RestaurantDetails() {
                           <p className="font-bold">{subscription.limits.maxBranches === 0 ? 'Unlimited' : subscription.limits.maxBranches}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-surface-400">Devices</p>
-                          <p className="font-bold">{subscription.limits.maxDevices}</p>
+                          <p className="text-xs text-surface-400">Devices per Branch</p>
+                          <p className="font-bold">{subscription.limits.maxDevicesPerBranch ?? subscription.maxDevices ?? 3}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-surface-400">Employees</p>
-                          <p className="font-bold">{subscription.limits.maxEmployees}</p>
+                          <p className="text-xs text-surface-400">Users</p>
+                          <p className="font-bold">{subscription.maxUsers ?? 5}</p>
                         </div>
                       </div>
                     </div>
@@ -1002,6 +1115,77 @@ export default function RestaurantDetails() {
               ) : (
                 <div className="px-6 pb-6 text-sm text-surface-500 text-center">No subscription record found for this restaurant.</div>
               )}
+            </Card>
+
+            {/* Admin Feature Grants — additional features on the current plan */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-primary-600" />
+                  <CardTitle>Additional Features (Admin Grants)</CardTitle>
+                </div>
+              </CardHeader>
+              <div className="px-6 pb-6 space-y-4">
+                <p className="text-xs text-surface-500">
+                  Grant features beyond this restaurant's current plan. Grants apply immediately everywhere
+                  (server-side gates, POS, this page) and stay active even if the plan changes. Revoking a
+                  feature the plan itself includes has no effect.
+                </p>
+                {!subscription ? (
+                  <p className="text-sm text-surface-400 text-center py-4">Load subscription to manage feature access.</p>
+                ) : (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {FEATURE_CATALOG.map((f) => {
+                      const inPlan = planFeatureSet.has(f.key)
+                      const granted = grantedFeatureSet.has(f.key)
+                      const pending = pendingFeature?.key === f.key
+                      return (
+                        <div
+                          key={f.key}
+                          className="flex items-start justify-between gap-3 rounded-xl border border-surface-200 dark:border-surface-700 px-3 py-2.5"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-surface-900 dark:text-surface-100">{f.label}</span>
+                              {inPlan ? (
+                                <Badge variant="success" className="text-[10px]">In Plan</Badge>
+                              ) : granted ? (
+                                <Badge variant="info" className="text-[10px]">Granted</Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-surface-500 leading-snug">{f.description}</p>
+                          </div>
+                          <div className="shrink-0">
+                            {inPlan ? (
+                              <span className="text-[10px] text-surface-400">included</span>
+                            ) : granted ? (
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                disabled={pending}
+                                loading={pending}
+                                onClick={() => grantFeatureMutation.mutate({ feature: f.key, action: 'revoke' })}
+                              >
+                                Revoke
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={pending}
+                                loading={pending}
+                                onClick={() => grantFeatureMutation.mutate({ feature: f.key, action: 'grant' })}
+                              >
+                                Grant
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </Card>
 
             {/* Payment & Invoice History */}
@@ -1207,7 +1391,10 @@ export default function RestaurantDetails() {
                         <CardHeader>
                           <CardTitle className="text-base">{plan.name}</CardTitle>
                           <p className="text-xs text-surface-500">{plan.description}</p>
-                          <p className="text-2xl font-bold text-surface-900 dark:text-surface-100 mt-2">{formatCurrency(plan.price)}<span className="text-sm font-normal text-surface-400">/mo</span></p>
+                          <p className="text-2xl font-bold text-surface-900 dark:text-surface-100 mt-2">
+                            {formatCurrency(plan.price)}<span className="text-sm font-normal text-surface-400">/mo</span>
+                          </p>
+                          {plan.yearlyPrice > 0 && <p className="text-xs text-surface-500 mt-1">{formatCurrency(plan.yearlyPrice)}/yr</p>}
                         </CardHeader>
                         <div className="flex-1 space-y-3 text-sm">
                           <p className="text-xs font-semibold text-surface-500 uppercase">Limits</p>
@@ -1217,12 +1404,12 @@ export default function RestaurantDetails() {
                               <p className="font-bold">{plan.limits?.maxBranches === 0 ? '∞' : plan.limits?.maxBranches || 1}</p>
                             </div>
                             <div className="p-2 rounded-lg bg-surface-50 dark:bg-surface-800">
-                              <p className="text-surface-400">Devices</p>
-                              <p className="font-bold">{plan.limits?.maxDevices || plan.maxDevices}</p>
+                              <p className="text-surface-400">Devices per Branch</p>
+                              <p className="font-bold">{plan.limits?.maxDevicesPerBranch ?? plan.limits?.maxDevices ?? plan.maxDevices}</p>
                             </div>
                             <div className="p-2 rounded-lg bg-surface-50 dark:bg-surface-800">
                               <p className="text-surface-400">Users</p>
-                              <p className="font-bold">{plan.limits?.maxEmployees || plan.maxUsers}</p>
+                              <p className="font-bold">{plan.maxUsers}</p>
                             </div>
                           </div>
                           <p className="text-xs font-semibold text-surface-500 uppercase">Features</p>
@@ -1917,15 +2104,61 @@ export default function RestaurantDetails() {
       />
 
       {/* Renew Confirm Dialog */}
-      <ConfirmDialog
+      <Modal
         open={showRenewConfirm}
         onClose={() => setShowRenewConfirm(false)}
-        onConfirm={() => { setShowRenewConfirm(false); renewMutation.mutate() }}
         title="Renew Subscription"
-        message={`Renew the subscription for "${restaurant.name}"? This will charge the plan price and extend the subscription by 30 days.`}
-        confirmLabel="Renew"
-        variant="primary"
-      />
+        size="md"
+        footer={
+          <div className="flex w-full items-center justify-between gap-3">
+            <span className="text-xs text-surface-400">
+              Extends by {renewPeriod === 'yearly' ? '365 days' : '30 days'}
+            </span>
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => setShowRenewConfirm(false)} disabled={renewMutation.isPending}>Cancel</Button>
+              <Button onClick={() => { setShowRenewConfirm(false); renewMutation.mutate() }} loading={renewMutation.isPending}>
+                Renew — {formatCurrency(renewAmount)}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-surface-50 p-3 dark:bg-surface-800/50 text-sm">
+            <p className="font-medium text-surface-900 dark:text-surface-100">{restaurant.name}</p>
+            <p className="text-xs text-surface-500 mt-0.5">
+              Plan: <span className="font-semibold capitalize text-surface-700 dark:text-surface-300">{subscription?.plan || restaurant.plan}</span>
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Billing Period</label>
+            <div className="grid grid-cols-2 gap-3">
+              {(['monthly', 'yearly'] as const).map((period) => {
+                const selected = renewPeriod === period
+                const amount = period === 'yearly' ? (yearlyPrice > 0 ? yearlyPrice : monthlyPrice) : monthlyPrice
+                return (
+                  <button
+                    key={period}
+                    type="button"
+                    onClick={() => setRenewPeriod(period)}
+                    className={`rounded-xl border p-3 text-left transition-colors cursor-pointer ${
+                      selected
+                        ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 ring-1 ring-primary-600'
+                        : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                    }`}
+                  >
+                    <p className={`text-sm font-semibold capitalize ${selected ? 'text-primary-700 dark:text-primary-300' : 'text-surface-900 dark:text-surface-100'}`}>{period}</p>
+                    <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                      {formatCurrency(amount)}/{period === 'yearly' ? 'yr' : 'mo'}
+                    </p>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       {/* Plan Change Confirm Dialog */}
       <ConfirmDialog

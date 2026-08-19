@@ -18,9 +18,15 @@ export const createProductSchema = z.object({
   category: nonEmptyString.max(100),
   image: z.string().max(2000).optional(),
   gstPercent: z.number().min(0).max(100).optional(),
+  // Tax classification + source of assignment (registration flow).
+  // Classification is an INPUT to tax recommendation; the rate always lands in
+  // gstPercent, so billing/tax calculation is unchanged and stays deterministic.
+  taxClassification: z.enum(['prepared_food', 'beverage', 'packaged', 'other']).optional(),
+  taxSource: z.enum(['automatic', 'manual']).optional(),
   availability: z.boolean().optional(),
   favorite: z.boolean().optional(),
   branchPrice: z.record(z.string(), z.number().min(0)).optional(),
+  comboBranchPrice: z.record(z.string(), z.number().min(0)).optional(),
   // ─── Inventory Fields ─────────────────────────────────────────
   currentStock: z.number().min(0).optional(),
   unit: z.string().max(20).optional(),
@@ -47,6 +53,15 @@ export const createProductSchema = z.object({
     // product-level branchPrice so variant prices can differ per branch too.
     branchPrice: z.record(z.string(), z.number().min(0)).optional(),
   })).max(50).optional(),
+  // ─── Meal Combo fields (product-level bundle) ──────────────────
+  // A meal combo is a product that bundles other products at a single
+  // comboPrice. The backend validates the components (same tenant, ≥2 items,
+  // comboPrice < component total) and auto-syncs a backing Offer type='combo'
+  // so the existing billing / validation / analytics machinery works unchanged.
+  isCombo: z.boolean().optional(),
+  comboComponentIds: z.array(z.string().max(50)).max(50).optional(),
+  comboPrice: z.number().min(0).max(999999).optional(),
+  linkedComboOfferId: z.string().max(50).optional(),
   // In-place per-variant branch price updates: variantName → branchId → price.
   // Applied to the existing ProductVariant docs without replacing the whole
   // variant set (unlike `variants`, which is a wholesale replace).

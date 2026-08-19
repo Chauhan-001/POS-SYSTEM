@@ -12,9 +12,37 @@
  * is rendered, so the Settings preview always matches the real printed receipt.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { Heart } from 'lucide-react';
 import { Bill, SystemSettings } from '../src/types';
+import { computeTaxSummary, TaxSummary } from '../src/lib/taxSummary';
+
+/**
+ * Real scannable QR for the printed receipt. Encodes the bill's receipt URL
+ * ({qrBaseUrl}/#/r/{receiptToken}) — the customer site's sanitized landing
+ * page (reward earned + today's bill items + feedback). Generated client-side
+ * with the same `qrcode` package QrStudio uses, so printing works offline.
+ */
+function ReceiptQr({ url, size }: { url: string; size: number }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    QRCode.toDataURL(url, {
+      width: 220,
+      margin: 1,
+      color: { dark: '#000000', light: '#ffffff' },
+      errorCorrectionLevel: 'M',
+    })
+      .then((u) => { if (!cancelled) setDataUrl(u); })
+      .catch(() => { if (!cancelled) setDataUrl(null); });
+    return () => { cancelled = true; };
+  }, [url]);
+
+  if (!dataUrl) return null;
+  return <img src={dataUrl} alt="Scan to view your rewards" width={size} height={size} className="w-full h-full" />;
+}
 
 interface ThermalReceiptProps {
   bill: Bill;
@@ -25,11 +53,14 @@ interface ThermalReceiptProps {
 }
 
 export default function ThermalReceipt({ bill, settings, receiptRef, className }: ThermalReceiptProps) {
-  // Generate CGST and SGST splits (e.g. 5% GST is split 2.5% CGST & 2.5% SGST)
-  const isFivePercent = bill.gst > 0 && bill.items.some((item) => item.product.gstPercent === 5);
-  const totalTaxRate = isFivePercent ? 5 : 18;
-  const halfTaxRate = totalTaxRate / 2;
-  const splitTaxAmount = bill.gst / 2;
+  // Deterministic per-slab tax breakdown — mirrors the billing engine's math
+  // using the bill's own stored snapshots (priceAtSale / gstRateAtSale /
+  // discountAtSale). The receipt only DISPLAYS the aggregated result.
+  const taxSummary: TaxSummary = computeTaxSummary(bill.items || [], bill.discount || 0);
+  // Single distinct rate → keep the classic compact CGST/SGST two-line display.
+  // 2+ rates (or a 0% + taxable mix) → grouped GST SUMMARY table.
+  const multiSlab = taxSummary.rows.length > 1;
+  const singleRow = multiSlab ? null : taxSummary.rows[0] || null;
 
   // Round-off calculations aligned with active system configurations
   const roundOffActive = settings.roundOffTotal === true;
@@ -41,9 +72,11 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
   return (
     <div
       ref={receiptRef}
-      className={`bg-white border-2 border-dashed border-gray-300 w-full font-mono text-gray-800 leading-normal flex flex-col items-center print-receipt-only transition-all duration-300 h-fit ${
+      className={`bg-[var(--color-bg-white)] border-2 border-dashed border-gray-300 w-full font-mono text-gray-800 leading-normal flex flex-col items-center print-receipt-only transition-all duration-300 h-fit overflow-hidden ${
         settings.printSize === '58mm' ? 'max-w-[210px] p-3 text-[8.5px]' : 'max-w-[280px] p-5 text-[10px]'
       } ${className || ''}`}
+      // overflow-hidden keeps every line inside the paper at ANY browser zoom;
+      // min-w-0 on the item rows lets long names wrap instead of pushing out.
       style={{ wordBreak: 'break-word' }}
     >
       {/* Header Details */}
@@ -57,9 +90,9 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
           </div>
         )}
         <p className="text-xs font-extrabold tracking-wide uppercase text-gray-900">{settings.restaurantName || 'THE ROYAL BISTRO'}</p>
-        <p className="text-[8px] text-gray-500 leading-tight">{settings.address || 'Shop No. 12, Ground Floor, Fluent Horizon Plaza, Mumbai 400001'}</p>
-        <p className="text-[8px] text-gray-500 leading-tight">Phone: {settings.phone || '+91 22 2200 4400'}</p>
-        <p className="text-[8px] text-gray-500 font-bold uppercase">GSTIN: {settings.gstin || '27AAAAA1111A1Z1'}</p>
+        <p className="text-[8px] text-gray-500 leading-tight">{settings.address || 'Shop No. 12, Ground Floor, Fluent Horizon Plaza, Mumbai 400001'}{((settings as any).city ? ', ' + (settings as any).city : '')}{((settings as any).state ? ', ' + (settings as any).state : '')}{((settings as any).pinCode ? ' - ' + (settings as any).pinCode : '')}</p>
+        <p className="text-[8px] text-gray-500 leading-tight">Phone: {settings.phone || '+91 22 2200 4400'}{(settings as any).email ? ' | ' + (settings as any).email : ''}</p>
+        <p className="text-[8px] text-gray-500 font-bold uppercase">GSTIN: {settings.gstin || '27AAAAA1111A1Z1'}{(settings as any).fssai ? ' | FSSAI: ' + (settings as any).fssai : ''}</p>
         <div className="border-b border-dashed border-gray-300 pt-1"></div>
       </div>
 
@@ -131,18 +164,21 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
 
           const renderItem = (item: any) => (
             <div key={item.id} className="flex justify-between items-start">
-              <span className="w-1/2 text-left font-bold">
+              <span className="w-1/2 text-left font-bold min-w-0">
                 {item.isFree && <span className="text-emerald-700 font-extrabold mr-1">[FREE]</span>}
                 {item.product.name}
                 {settings.showItemModifiers !== false && item.selectedVariant && (
                   <span className="block text-[8px] text-gray-500 font-normal">- {item.selectedVariant.name}</span>
                 )}
+                {(item as any).configSummary && (
+                  <span className="block text-[8px] text-gray-500 font-normal">- {(item as any).configSummary}</span>
+                )}
                 {item.notes && (
                   <span className="block text-[8px] text-gray-400 font-normal italic">*Note: {item.notes}</span>
                 )}
               </span>
-              <span className="w-1/6 text-center">{item.quantity}</span>
-              <span className="w-1/3 text-right font-bold">
+              <span className="w-1/6 text-center min-w-0">{item.quantity}</span>
+              <span className="w-1/3 text-right font-bold min-w-0">
                 {item.isFree ? (
                   <span className="text-emerald-700 font-extrabold">FREE</span>
                 ) : (
@@ -171,7 +207,7 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
                   <p className="text-[8px] font-bold text-red-600 uppercase tracking-wider mb-1">CANCELLED ITEMS</p>
                   {cancelledItems.map((item: any) => (
                     <div key={item.id} className="flex justify-between items-start opacity-60">
-                      <span className="w-2/3 text-left font-bold line-through text-gray-400">
+                      <span className="w-2/3 text-left font-bold line-through text-gray-400 min-w-0">
                         {item.product.name}
                         {settings.showItemModifiers !== false && item.selectedVariant && (
                           <span className="block text-[8px] text-gray-400 font-normal">- {item.selectedVariant.name}</span>
@@ -208,16 +244,51 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
           </div>
         )}
         {bill.gst > 0 && settings.showTaxSummaryOnReceipt !== false && (
-          <>
-            <div className="flex justify-between text-[8px] text-gray-500">
-              <span>CGST ({halfTaxRate}%):</span>
-              <span>{sym}{splitTaxAmount.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-[8px] text-gray-500">
-              <span>SGST ({halfTaxRate}%):</span>
-              <span>{sym}{splitTaxAmount.toFixed(2)}</span>
-            </div>
-          </>
+          multiSlab ? (
+            <>
+              {/* ── GST SUMMARY — multiple tax slabs ─────────────────── */}
+              <div className="text-[8px] font-bold text-gray-500 uppercase tracking-wider pt-0.5">GST SUMMARY</div>
+              <div className="flex justify-between text-[7px] text-gray-500 font-bold border-b border-dashed border-gray-300 pb-0.5">
+                <span className="w-[24%]">RATE</span>
+                <span className="w-[34%] text-right">TAXABLE</span>
+                <span className="w-[21%] text-right">CGST</span>
+                <span className="w-[21%] text-right">SGST</span>
+              </div>
+              {taxSummary.rows.map((row) => (
+                <div key={row.rate} className="flex justify-between text-[8px] text-gray-500">
+                  <span className="w-[24%]">{row.rate}%</span>
+                  <span className="w-[34%] text-right">{sym}{row.taxableAmount.toFixed(2)}</span>
+                  <span className="w-[21%] text-right">{sym}{(row.components[0]?.amount || 0).toFixed(2)}</span>
+                  <span className="w-[21%] text-right">{sym}{(row.components[1]?.amount || 0).toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="border-b border-dashed border-gray-300 my-1" />
+              <div className="flex justify-between text-[8px] text-gray-500 font-bold">
+                <span>TOTAL CGST:</span>
+                <span>{sym}{taxSummary.rows.reduce((s, r) => s + (r.components[0]?.amount || 0), 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-[8px] text-gray-500 font-bold">
+                <span>TOTAL SGST:</span>
+                <span>{sym}{taxSummary.rows.reduce((s, r) => s + (r.components[1]?.amount || 0), 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-[8px] text-gray-500 font-bold">
+                <span>TOTAL TAX:</span>
+                <span>{sym}{taxSummary.totalTax.toFixed(2)}</span>
+              </div>
+            </>
+          ) : singleRow && singleRow.rate > 0 ? (
+            <>
+              {/* ── Single slab — classic compact display ─────────────── */}
+              <div className="flex justify-between text-[8px] text-gray-500">
+                <span>CGST ({singleRow.components[0]?.rate}%):</span>
+                <span>{sym}{(singleRow.components[0]?.amount || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-[8px] text-gray-500">
+                <span>SGST ({singleRow.components[1]?.rate}%):</span>
+                <span>{sym}{(singleRow.components[1]?.amount || 0).toFixed(2)}</span>
+              </div>
+            </>
+          ) : null
         )}
         {roundOffActive && finalRoundOff !== 0 && (
           <div className="flex justify-between text-[8px] text-gray-500">
@@ -298,52 +369,24 @@ export default function ThermalReceipt({ bill, settings, receiptRef, className }
         </div>
       )}
 
-      {/* Scan QR Code */}
-      {settings.showQrCodeOnReceipt !== false && (
+      {/* Scan QR Code — REAL scannable QR → customer receipt landing page */}
+      {settings.showQrCodeOnReceipt !== false && bill.receiptUrl && (
         <div className="flex flex-col items-center justify-center my-3 text-center w-full">
           <p className="font-bold mb-1.5 text-[8px] tracking-wide">SCAN TO CLAIM DISCOUNTS & STAMPS</p>
 
           {/* Fixed-size wrapper container to prevent browser printing engine width/scaling overflow bugs */}
           <div
-            className="p-1.5 bg-white border border-gray-200 rounded-lg shadow-xs flex items-center justify-center"
+            className="p-1.5 bg-[var(--color-bg-white)] border border-gray-200 rounded-lg shadow-xs flex items-center justify-center"
             style={{
               width: settings.printSize === '58mm' ? '64px' : '80px',
               height: settings.printSize === '58mm' ? '64px' : '80px',
             }}
           >
-            {/* Inline SVG QR Code (Clean & Fast rendering) */}
-<svg className="w-full h-full" viewBox="0 0 100 100">
-              <rect width="100" height="100" fill="#ffffff" />
-              <rect x="5" y="5" width="25" height="25" fill="#000000" />
-              <rect x="10" y="10" width="15" height="15" fill="#ffffff" />
-              <rect x="13" y="13" width="9" height="9" fill="#000000" />
-
-              <rect x="70" y="5" width="25" height="25" fill="#000000" />
-              <rect x="75" y="10" width="15" height="15" fill="#ffffff" />
-              <rect x="78" y="13" width="9" height="9" fill="#000000" />
-
-              <rect x="5" y="70" width="25" height="25" fill="#000000" />
-              <rect x="10" y="75" width="15" height="15" fill="#ffffff" />
-              <rect x="13" y="78" width="9" height="9" fill="#000000" />
-
-              <rect x="40" y="10" width="5" height="10" fill="#000000" />
-              <rect x="50" y="5" width="10" height="5" fill="#000000" />
-              <rect x="45" y="20" width="15" height="5" fill="#000000" />
-              <rect x="35" y="30" width="5" height="15" fill="#000000" />
-
-              <rect x="40" y="55" width="10" height="5" fill="#000000" />
-              <rect x="55" y="45" width="15" height="10" fill="#000000" />
-              <rect x="35" y="65" width="15" height="5" fill="#000000" />
-
-              <rect x="70" y="40" width="10" height="15" fill="#000000" />
-              <rect x="85" y="55" width="10" height="5" fill="#000000" />
-              <rect x="80" y="70" width="15" height="15" fill="#000000" />
-              <rect x="85" y="75" width="5" height="5" fill="#ffffff" />
-            </svg>
+            <ReceiptQr url={bill.receiptUrl} size={settings.printSize === '58mm' ? 56 : 72} />
           </div>
 
           <p className="text-[7.5px] text-gray-500 mt-1.5 max-w-[180px] mx-auto leading-tight">
-            Open smartphone camera & scan to claim points & discounts.
+            Open smartphone camera & scan to view your rewards, bill & share feedback.
           </p>
         </div>
       )}

@@ -202,8 +202,8 @@ describe('Redesigned POS Ordering UI', () => {
       expect(mockShowPayment).toHaveBeenCalled();
     });
 
-    it('shows CLOSE (not Clear) for an active order before any KOT, and calls onCloseOrder', () => {
-      const mockCloseOrder = vi.fn();
+    it('always shows Clear (never Close) and clears the cart', () => {
+      const mockClearCart = vi.fn();
       render(
         <CartPanel
           cartWidth={380}
@@ -223,8 +223,7 @@ describe('Redesigned POS Ordering UI', () => {
           calculateCartGrandTotal={() => 525}
           onAdjustQuantity={vi.fn()}
           onDeleteItem={vi.fn()}
-          onClearCart={vi.fn()}
-          onCloseOrder={mockCloseOrder}
+          onClearCart={mockClearCart}
           onShowKOT={vi.fn()}
           onShowPayment={vi.fn()}
           onHoldOrder={vi.fn()}
@@ -255,15 +254,15 @@ describe('Redesigned POS Ordering UI', () => {
         />
       );
 
-      // Close replaces Clear while the order has no KOT yet
-      expect(screen.getByText('Close')).toBeInTheDocument();
-      expect(screen.queryByText('Clear')).not.toBeInTheDocument();
-      fireEvent.click(screen.getByText('Close'));
-      expect(mockCloseOrder).toHaveBeenCalled();
+      // Clear is always available — the Close button no longer exists
+      expect(screen.getByText('Clear')).toBeInTheDocument();
+      expect(screen.queryByText('Close')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Clear'));
+      expect(mockClearCart).toHaveBeenCalled();
     });
 
-    it('locks the CLOSE button once a KOT has been sent to the kitchen', () => {
-      const mockCloseOrder = vi.fn();
+    it('keeps Clear (never Close) even after a KOT has been sent to the kitchen', () => {
+      const mockClearCart = vi.fn();
       render(
         <CartPanel
           cartWidth={380}
@@ -283,8 +282,7 @@ describe('Redesigned POS Ordering UI', () => {
           calculateCartGrandTotal={() => 525}
           onAdjustQuantity={vi.fn()}
           onDeleteItem={vi.fn()}
-          onClearCart={vi.fn()}
-          onCloseOrder={mockCloseOrder}
+          onClearCart={mockClearCart}
           onShowKOT={vi.fn()}
           onShowPayment={vi.fn()}
           onHoldOrder={vi.fn()}
@@ -315,14 +313,12 @@ describe('Redesigned POS Ordering UI', () => {
         />
       );
 
-      // After a KOT is sent the bill cannot be closed — button is locked
-      const closeBtn = screen.getByText('Locked');
-      expect(closeBtn).toBeInTheDocument();
-      expect(screen.queryByText('Clear')).not.toBeInTheDocument();
-      const parent = closeBtn.closest('button');
-      expect(parent).toBeDisabled();
-      fireEvent.click(closeBtn);
-      expect(mockCloseOrder).not.toHaveBeenCalled();
+      // Clear remains even after a KOT is sent — the Close button no longer exists
+      expect(screen.getByText('Clear')).toBeInTheDocument();
+      expect(screen.queryByText('Close')).not.toBeInTheDocument();
+      expect(screen.queryByText('Locked')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Clear'));
+      expect(mockClearCart).toHaveBeenCalled();
     });
   });
 });

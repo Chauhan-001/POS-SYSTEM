@@ -49,7 +49,7 @@ const ClosingAssistant: React.FC<ClosingAssistantProps> = ({
   if (loading) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-        className="bg-gradient-to-br from-[#f8f6ff] to-white rounded-2xl border border-purple-200 shadow-sm p-8 flex items-center justify-center"
+        className="bg-gradient-to-br from-[var(--color-surface-muted)] to-white rounded-2xl border border-purple-200 shadow-sm p-8 flex items-center justify-center"
       >
         <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
       </motion.div>
@@ -59,7 +59,7 @@ const ClosingAssistant: React.FC<ClosingAssistantProps> = ({
   if (!data) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-        className="bg-gradient-to-br from-[#f8f6ff] to-white rounded-2xl border border-purple-200 shadow-sm p-6"
+        className="bg-gradient-to-br from-[var(--color-surface-muted)] to-white rounded-2xl border border-purple-200 shadow-sm p-6"
       >
         <div className="flex items-center gap-3 text-gray-400">
           <Sparkles className="w-5 h-5 text-purple-300" />
@@ -78,12 +78,12 @@ const ClosingAssistant: React.FC<ClosingAssistantProps> = ({
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-gradient-to-br from-[#f8f6ff] to-white rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
+      className="bg-gradient-to-br from-[var(--color-surface-muted)] to-white rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
     >
       {/* Header */}
       <div className="px-5 py-3.5 border-b border-purple-100 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-purple-500 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-xl bg-[var(--color-purple-500-solid)] flex items-center justify-center">
             <Sparkles className="w-4 h-4 text-white" />
           </div>
           <div>

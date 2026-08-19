@@ -93,4 +93,63 @@ describe('ProductReportService (Phase 1.8)', () => {
     const other = await productReportService.top({ restaurantId: new mongoose.Types.ObjectId().toString(), startDate: '2026-08-01', endDate: '2026-08-01' }, 5);
     expect(other.length).toBe(0);
   });
+
+  // ─── Phase 5 — configured-sales breakdown ─────────────────────────
+  it('configBreakdown splits identical products by their configuration snapshot', async () => {
+    const bill = await seedBill(1200, [{ itemName: 'Coke', priceAtSale: 40, quantity: 3 }]);
+    await BillItem.create({
+      billId: bill._id, menuItemId: 'p1', itemName: 'Margherita Pizza',
+      priceAtSale: 549, quantity: 1, gstRateAtSale: 5, discountAtSale: 0, isFree: false,
+      configSummary: 'Large • Cheese Burst • Mushroom',
+    });
+    await BillItem.create({
+      billId: bill._id, menuItemId: 'p1', itemName: 'Margherita Pizza',
+      priceAtSale: 349, quantity: 2, gstRateAtSale: 5, discountAtSale: 0, isFree: false,
+      configSummary: 'Small • Regular',
+    });
+    await BillItem.create({
+      billId: bill._id, menuItemId: 'p1', itemName: 'Margherita Pizza',
+      priceAtSale: 499, quantity: 1, gstRateAtSale: 5, discountAtSale: 0, isFree: false,
+      configSummary: undefined,
+    });
+
+    const rows = await productReportService.configBreakdown(scope, 50);
+    const pizzaRows = rows.filter((r: any) => r.name === 'Margherita Pizza');
+    // One row per DISTINCT configuration — Large and Small never collapse,
+    // and legacy (unconfigured) lines group under null.
+    expect(pizzaRows).toHaveLength(3);
+
+    const largeCheese = pizzaRows.find((r: any) => r.configSummary === 'Large • Cheese Burst • Mushroom');
+    expect(largeCheese).toBeTruthy();
+    expect(largeCheese.qty).toBe(1);
+    expect(largeCheese.revenue).toBe(549);
+
+    const smallRegular = pizzaRows.find((r: any) => r.configSummary === 'Small • Regular');
+    expect(smallRegular.qty).toBe(2);
+    expect(smallRegular.revenue).toBe(698); // 349 × 2
+
+    const plain = pizzaRows.find((r: any) => r.configSummary === null);
+    expect(plain).toBeTruthy();
+    expect(plain.qty).toBe(1);
+
+    // Legacy / unconfigured lines are grouped under a null configSummary.
+    const coke = rows.find((r: any) => r.name === 'Coke');
+    expect(coke.configSummary).toBeNull();
+    expect(coke.qty).toBe(3);
+  });
+
+  it('configBreakdown uses the immutable snapshot — renaming the product later never rewrites history', async () => {
+    const bill = await seedBill(500, [{ itemName: 'Chicken Burger', priceAtSale: 250, quantity: 2 }]);
+    await BillItem.create({
+      billId: bill._id, menuItemId: 'p9', itemName: 'Chicken Burger',
+      priceAtSale: 250, quantity: 2, gstRateAtSale: 5, discountAtSale: 0, isFree: false,
+      configSummary: 'Double Patty',
+    });
+    // Today's product row is renamed — history must not follow it.
+    await Product.create({ restaurantId: REST_A, name: 'Classic Chicken Burger', code: 'BURGER-9', price: 300, category: 'Burgers', isDeleted: false });
+
+    const rows = await productReportService.configBreakdown(scope, 50);
+    expect(rows.find((r: any) => r.name === 'Chicken Burger' && r.configSummary === 'Double Patty')?.qty).toBe(2);
+    expect(rows.find((r: any) => r.name === 'Classic Chicken Burger')).toBeUndefined();
+  });
 });

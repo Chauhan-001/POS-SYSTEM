@@ -145,7 +145,7 @@ export default function Settings() {
                 ) : (
                   availablePlans.map((p: any) => (
                     <option key={p.planId} value={p.planId}>
-                      {p.name}{p.price && p.price > 0 ? ` - $${p.price}/mo` : ''}
+                      {p.name}{p.price && p.price > 0 ? ` - ₹${p.price}/mo` : ''}
                     </option>
                   ))
                 )}

@@ -14,6 +14,9 @@ export interface KOTDeltaItem {
   price: number;
   product: CartItem['product'];
   selectedVariant?: CartItem['selectedVariant'];
+  /** Phase 3/4: configured selections + human-readable summary for the kitchen. */
+  configuration?: CartItem['configuration'];
+  configSummary?: string;
   /** True if this item already existed and had quantity increased */
   isModified: boolean;
   /** True if this is a brand new item not in any previous KOT */
@@ -75,6 +78,8 @@ export function computeKOTDelta(
       price: item.price,
       product: item.product,
       selectedVariant: item.selectedVariant,
+      configuration: item.configuration,
+      configSummary: item.configSummary,
       isNew,
       isModified,
     };
@@ -101,6 +106,8 @@ export function computeKOTDelta(
           price: item.price,
           product: item.product,
           selectedVariant: item.selectedVariant,
+          configuration: item.configuration,
+          configSummary: item.configSummary,
           isNew: false,
           isModified: false,
         });

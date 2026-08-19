@@ -10,6 +10,9 @@ import Employee from '../models/Employee';
 import DeviceActivity from '../models/DeviceActivity';
 import { entitlementService } from '../services/entitlementService';
 import { branchService, restaurantService } from '../services';
+import { planPriceForPeriod } from '../modules/subscription/subscriptionService';
+import { effectiveFeatures } from '../utils/subscriptionFeatures';
+import { FEATURE_CATALOG } from '../constants/planFeatures';
 import { AppError } from '../utils/AppError';
 import { toAbsoluteMediaUrl } from '../modules/media';
 import crypto from 'crypto';
@@ -235,8 +238,18 @@ export async function getSubscriptionUsage(req: Request, res: Response): Promise
       ? await SubscriptionPlan.findOne({ planId: subscription.plan }).exec()
       : null;
 
-    const effectiveLimits = subscription?.limits || plan?.limits || { maxBranches: 1, maxDevices: 3, maxEmployees: 10 };
-    const effectiveFeatures = subscription?.features || plan?.features || [];
+    const effectiveLimits = subscription?.limits || plan?.limits || { maxBranches: 1, maxDevicesPerBranch: 3 };
+    // Effective feature keys = the REAL catalog, accounting for:
+    //   - trial  → every feature unlocked
+    //   - paid   → plan snapshot + admin-granted add-ons (grantedFeatures)
+    // The old code compared a hardcoded catalog using wrong keys (`kot`,
+    // `qr_menu`) against the snapshot, so KOT/QR ordering always showed as
+    // "not included" even when the subscription had kitchen_display and
+    // qr_ordering. Now the catalog and the keys are the single source of truth.
+    const resolvedFeatureKeys: string[] = subscription?.status === 'trial'
+      ? FEATURE_CATALOG.map((f) => f.key)
+      : effectiveFeatures(subscription?.features, subscription?.grantedFeatures);
+    const featureKeys: string[] = resolvedFeatureKeys && resolvedFeatureKeys.length > 0 ? resolvedFeatureKeys : (plan?.features || []);
 
     const maxBranches = effectiveLimits.maxBranches;
     const branchUsage = {
@@ -247,54 +260,46 @@ export async function getSubscriptionUsage(req: Request, res: Response): Promise
       isUnlimited: maxBranches === 0,
     };
 
-    const maxDevices = effectiveLimits.maxDevices;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const legacyLimits: any = effectiveLimits;
+    const maxDevicesPerBranch = legacyLimits.maxDevicesPerBranch ?? legacyLimits.maxDevices ?? 3;
     const deviceUsage = {
       current: deviceCount,
-      limit: maxDevices,
-      percentage: Math.round((deviceCount / maxDevices) * 100),
-      remaining: Math.max(0, maxDevices - deviceCount),
+      limit: maxDevicesPerBranch,
+      percentage: Math.round((deviceCount / maxDevicesPerBranch) * 100),
+      remaining: Math.max(0, maxDevicesPerBranch - deviceCount),
       isUnlimited: false,
     };
 
-    const maxEmployees = effectiveLimits.maxEmployees;
-    const employeeUsage = {
+    // Users are counted company-wide (all branches) against the plan's maxUsers.
+    const maxUsers = legacyLimits.maxUsers ?? subscription?.maxUsers ?? plan?.maxUsers ?? 10;
+    const userUsage = {
       current: employeeCount,
-      limit: maxEmployees,
-      percentage: Math.round((employeeCount / maxEmployees) * 100),
-      remaining: Math.max(0, maxEmployees - employeeCount),
+      limit: maxUsers,
+      percentage: Math.round((employeeCount / maxUsers) * 100),
+      remaining: Math.max(0, maxUsers - employeeCount),
       isUnlimited: false,
     };
 
-    const featureCatalog: Record<string, { label: string; description: string }> = {
-      core_pos: { label: 'Core POS', description: 'Point of Sale terminal, billing, and order management' },
-      basic_reports: { label: 'Basic Reports', description: 'Daily sales, payment, and tax summary reports' },
-      ai: { label: 'AI Assistant', description: 'Voice inventory, smart insights, and predictive analytics' },
-      inventory: { label: 'Inventory', description: 'Stock management, purchase orders, and low stock alerts' },
-      loyalty: { label: 'Loyalty Program', description: 'Customer rewards, points, and tier-based benefits' },
-      multi_branch: { label: 'Multi-Branch', description: 'Manage multiple restaurant branches from one platform' },
-      advanced_reports: { label: 'Advanced Reports', description: 'Custom date range, profit/loss, and trend analytics' },
-      expense_tracking: { label: 'Expense Tracking', description: 'Record and categorize operational expenses' },
-      kot: { label: 'KOT Management', description: 'Kitchen order tickets with split and merge' },
-      takeaway: { label: 'Takeaway Orders', description: 'Parcel and delivery order management' },
-      reservations: { label: 'Reservations', description: 'Table booking and guest management' },
-      online_ordering: { label: 'Online Ordering', description: 'Accept orders from Swiggy, Zomato, Uber Eats' },
-      qr_menu: { label: 'QR Menu', description: 'Digital menu with QR code scanning for customers' },
-    };
+    // Single source of truth — the same catalog the plans, entitlements and
+    // the admin feature-grant UI use (constants/planFeatures.ts).
+    const featureCatalog: Record<string, { label: string; description: string }> = Object.fromEntries(
+      FEATURE_CATALOG.map((f) => [f.key, { label: f.label, description: f.description }])
+    );
 
-    const features = effectiveFeatures.map((f: string) => ({
+    const features = featureKeys.map((f: string) => ({
       key: f,
       label: featureCatalog[f]?.label || f.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
       description: featureCatalog[f]?.description || '',
       enabled: true,
     }));
 
-    const allPossibleFeatures = Object.keys(featureCatalog);
-    const availableFeatures = allPossibleFeatures
-      .filter((f) => !effectiveFeatures.includes(f))
+    const availableFeatures = FEATURE_CATALOG
+      .filter((f) => !featureKeys.includes(f.key))
       .map((f) => ({
-        key: f,
-        label: featureCatalog[f].label,
-        description: featureCatalog[f].description,
+        key: f.key,
+        label: f.label,
+        description: f.description,
         enabled: false,
       }));
 
@@ -305,10 +310,14 @@ export async function getSubscriptionUsage(req: Request, res: Response): Promise
         id: subscription?.plan || 'N/A',
         name: plan?.name || subscription?.plan || 'N/A',
         status: subscription?.status || 'active',
+        billingPeriod: subscription?.billingPeriod || 'monthly',
         price: plan?.price || 0,
+        yearlyPrice: plan?.yearlyPrice || 0,
+        billingPrice: planPriceForPeriod(plan, subscription?.billingPeriod) || 0,
         expiryDate: subscription?.expiryDate?.toISOString() || null,
+        graceEnd: subscription?.graceEnd?.toISOString() || null,
       },
-      limits: { branches: branchUsage, devices: deviceUsage, employees: employeeUsage },
+      limits: { branches: branchUsage, devicesPerBranch: deviceUsage, users: userUsage },
       features: { enabled: features, available: availableFeatures },
     });
   } catch (error) {

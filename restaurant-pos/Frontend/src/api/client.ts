@@ -19,7 +19,7 @@ const BASE = '/api';
 import { debugWarn } from '../utils/debugLog';
 import { getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './axios';
 import { syncEngine } from '../lib/syncEngine';
-import { getDBData, getCachedData, setCachedData, invalidateCache, CACHE_TTL } from '../data';
+import { getDBData, getCachedData, setCachedData, invalidateCache, CACHE_TTL, localDateKey } from '../data';
 
 // ─── Auth token (JWT) — synced with Axios instance ──────────────
 let _authToken: string | null = null;
@@ -378,6 +378,11 @@ export async function registerOwner(data: {
   password: string;
   confirmPassword: string;
   restaurantName: string;
+  userId?: string;
+  planId?: string;
+  paymentOrderId?: string;
+  paymentId?: string;
+  paymentSignature?: string;
 }) {
   try {
     const res = await fetch(`${BASE}/auth/register-owner`, {
@@ -399,6 +404,11 @@ export async function registerOwner(data: {
     debugWarn('API', 'registerOwner failed:', err);
     return { success: false, error: 'Network error. Please try again.' };
   }
+}
+
+/** POST /api/auth/register-order — public: create a payment order for a plan BEFORE the owner account exists. */
+export async function createRegisterOrder(planId: string, billingPeriod?: 'monthly' | 'yearly') {
+  return post<any>('/auth/register-order', { planId, billingPeriod });
 }
 
 /** POST /api/auth/login — Verify employee/owner credentials and return session + JWT */
@@ -490,6 +500,86 @@ export async function updateProduct(id: string, product: any) {
 export async function deleteProduct(id: string) {
   // BACKEND CALLED — remove menu item from cloud
   return del<any>(`/products/${id}`);
+}
+
+// ─── Reusable Menu Configuration (Phase 1/2) ─────────────────────────
+
+/** GET /api/menu-config/templates — List reusable config templates. */
+export async function fetchMenuConfigTemplates(params?: { type?: string; status?: string; search?: string; page?: number; limit?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.type) qs.set('type', params.type);
+  if (params?.status) qs.set('status', params.status);
+  if (params?.search) qs.set('search', params.search);
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  return get<any>(`/menu-config/templates${query ? '?' + query : ''}`);
+}
+
+/** POST /api/menu-config/templates — Create a reusable config template. */
+export async function createMenuConfigTemplate(template: any) {
+  return post<any>('/menu-config/templates', template);
+}
+
+/** GET /api/menu-config/templates/:id — Fetch a single template. */
+export async function fetchMenuConfigTemplate(id: string) {
+  return get<any>(`/menu-config/templates/${id}`);
+}
+
+/** PUT /api/menu-config/templates/:id — Update a template (bumps version). */
+export async function updateMenuConfigTemplate(id: string, patch: any) {
+  return put<any>(`/menu-config/templates/${id}`, patch);
+}
+
+/** POST /api/menu-config/templates/:id/archive — Archive a template. */
+export async function archiveMenuConfigTemplate(id: string) {
+  return post<any>(`/menu-config/templates/${id}/archive`, {});
+}
+
+/** POST /api/menu-config/templates/:id/copy — Create an independent copy. */
+export async function copyMenuConfigTemplate(id: string, body?: { name?: string }) {
+  return post<any>(`/menu-config/templates/${id}/copy`, body ?? {});
+}
+
+/** GET /api/menu-config/templates/:id/usage — Which products use a template. */
+export async function fetchMenuConfigTemplateUsage(id: string) {
+  return get<any[]>(`/menu-config/templates/${id}/usage`);
+}
+
+/** POST /api/menu-config/products/:productId/configurations — Attach config to a product. */
+export async function attachProductConfig(productId: string, body: any) {
+  return post<any>(`/menu-config/products/${productId}/configurations`, body);
+}
+
+/** PUT /api/menu-config/products/:productId/configurations/:refId — Update a config relationship. */
+export async function updateProductConfig(productId: string, refId: string, body: any) {
+  return put<any>(`/menu-config/products/${productId}/configurations/${refId}`, body);
+}
+
+/** DELETE /api/menu-config/products/:productId/configurations/:refId — Detach config. */
+export async function detachProductConfig(productId: string, refId: string) {
+  return del<any>(`/menu-config/products/${productId}/configurations/${refId}`);
+}
+
+/** POST /api/menu-config/products/:productId/configurations/:refId/reset-overrides — Reset customizations. */
+export async function resetProductConfigOverrides(productId: string, refId: string) {
+  return post<any>(`/menu-config/products/${productId}/configurations/${refId}/reset-overrides`, {});
+}
+
+/** GET /api/menu-config/products/:productId/resolve — Effective configuration for a product. */
+export async function resolveProductConfig(productId: string, opts?: { includeArchived?: boolean }) {
+  const qs = opts?.includeArchived ? '?includeArchived=true' : '';
+  return get<any>(`/menu-config/products/${productId}/resolve${qs}`);
+}
+
+/** POST /api/menu-config/products/summary — Batch per-product config counts. */
+export async function fetchProductConfigSummary(productIds: string[]) {
+  return post<any>('/menu-config/products/summary', { productIds });
+}
+
+/** GET /api/menu-config/catalog — Offline catalog snapshot (products + templates + resolved). */
+export async function fetchMenuConfigCatalog() {
+  return get<any>('/menu-config/catalog');
 }
 
 // ─── Suppliers (inventory vendors) ───────────────────────────────
@@ -893,6 +983,31 @@ export async function deleteCampaign(id: string) {
   return del<any>(`/campaigns/${id}`);
 }
 
+/**
+ * GET /api/marketing/feedback — List customer feedback from receipt QR scans.
+ * Supports pagination, date range, rating filter, and text search.
+ */
+export async function fetchFeedback(params?: {
+  page?: number;
+  limit?: number;
+  rating?: number;
+  minRating?: number;
+  startDate?: string;
+  endDate?: string;
+  search?: string;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.rating) qs.set('rating', String(params.rating));
+  if (params?.minRating) qs.set('minRating', String(params.minRating));
+  if (params?.startDate) qs.set('startDate', params.startDate);
+  if (params?.endDate) qs.set('endDate', params.endDate);
+  if (params?.search) qs.set('search', params.search);
+  const q = qs.toString();
+  return get<any>(`/marketing/feedback${q ? `?${q}` : ''}`);
+}
+
 // ─── Marketing (Create-with-AI + Automations) ──────────────────
 
 /**
@@ -923,7 +1038,12 @@ export async function generateOfferCopy(input: {
   reason?: string;
   minOrderValue?: number;
   durationDays?: number;
-  language?: 'en' | 'hi';
+  /** Copy style the owner picked (Studio/Create/Promote): friendly, funky, zomato, professional, premium, festive, genz, minimal. */
+  tone?: 'friendly' | 'funky' | 'zomato' | 'professional' | 'premium' | 'festive' | 'genz' | 'minimal';
+  /** Message language: English, Hindi or Hinglish. */
+  language?: 'en' | 'hi' | 'hinglish';
+  /** Explicit user action (Regenerate) → bypass the AI cache (Phase 3). */
+  bustCache?: boolean;
 }) {
   // BACKEND CALLED — LLM offer copy generation
   return post<any>('/ai/offer-copy', input);
@@ -1009,13 +1129,17 @@ export async function fetchOrders(params?: { status?: string; branchId?: string;
  */
 export function toBackendOrder(order: any): any {
   const phone = typeof order.customerPhone === 'string' && /^\d{10}$/.test(order.customerPhone) ? order.customerPhone : undefined;
-  return {
+  const out: Record<string, any> = {
     orderNumber: order.orderNumber,
     type: order.type,
     status: order.status,
     tableId: order.tableId,
     tableNumber: order.tableNumber,
     platform: order.platform,
+    // Tenant identity — the server re-stamps this from the JWT anyway, but
+    // sending it keeps POS-created orders from landing orphaned (no tenant),
+    // which previously made them invisible to tenant-scoped reads.
+    restaurantId: order.restaurantId || getCurrentRestaurantId(),
     branchId: typeof order.branchId === 'string' && /^[a-fA-F0-9]{24}$/.test(order.branchId) ? order.branchId : undefined,
     customerPhone: phone,
     customerName: order.customerName,
@@ -1047,12 +1171,59 @@ export function toBackendOrder(order: any): any {
         }))
       : undefined,
   };
+  // Strip null/undefined: the backend's zod schemas accept an OMITTED optional
+  // field but REJECT `null` (e.g. paidAt/closedAt/deliveryEta on a fresh order
+  // doc). Sending null used to 400 EVERY KDS KOT-status PUT, so the Served
+  // transition never persisted — the 30s poll then reverted the KOT to
+  // Accepted and the served order reappeared under New Orders.
+  for (const key of Object.keys(out)) {
+    if (out[key] === undefined || out[key] === null) delete out[key];
+  }
+  return out;
 }
 
 /** POST /api/orders — Create a new order */
-export async function createOrder(order: any) {
+export interface CreateOrderResult {
+  data?: any;
+  ok: boolean;
+  /** HTTP status when the server rejected the order (e.g. 409 = table already has a live order). */
+  status?: number;
+  code?: string;
+}
+
+/**
+ * POST /api/orders — push a new order to the cloud. Unlike the generic `post`
+ * helper, this surfaces the server's rejection status/code (instead of silently
+ * returning null) so the lazy first-KOT flow can detect TABLE_ALREADY_OCCUPIED
+ * (a customer QR order landed on the same table while the cashier was
+ * preparing) and roll back cleanly instead of proceeding with a phantom order.
+ */
+export async function createOrder(order: any): Promise<CreateOrderResult> {
   // BACKEND CALLED — push new order to cloud for kitchen/management
-  return post<any>('/orders', toBackendOrder(order));
+  const result = await request('POST', '/orders', toBackendOrder(order));
+  if (!result) {
+    // Network failure / offline — the caller keeps the local optimistic order
+    // (it will sync later), same as the generic write path.
+    return { ok: false };
+  }
+  if (!result.ok) {
+    return { ok: false, status: result.status, code: result.json?.code };
+  }
+  return { ok: true, data: result.json?.data ?? result.json };
+}
+
+/** GET /api/orders/:id — Fetch one order with items/kotRecords/timeline assembled. */
+export async function fetchOrderById(id: string) {
+  const res = await get<any>(`/orders/${id}`);
+  const o = res?.data ?? res;
+  if (!o) return null;
+  return {
+    ...o,
+    id: o.id || o._id,
+    items: Array.isArray(o.items) ? o.items : [],
+    kotRecords: Array.isArray(o.kotRecords) ? o.kotRecords : [],
+    timeline: Array.isArray(o.timeline) ? o.timeline : [],
+  };
 }
 
 /** PUT /api/orders/:id — Update an order (status, items, etc.) */
@@ -1188,16 +1359,26 @@ export async function fetchQrTokens(params?: { branchId?: string }) {
 }
 
 /** POST /api/qr-tokens — generate a table / car / pickup sticker. */
-export async function createQrToken(body: { type: 'table' | 'car' | 'pickup'; tableId?: string; parkingSlot?: string; branchId?: string }) {
-  // BACKEND CALLED — mint a new sticker (server returns token + url)
-  const res = await post<any>('/qr-tokens', body);
-  return res?.token || res;
+export async function createQrToken(body: { type: 'table' | 'car' | 'pickup'; tableId?: string; parkingSlot?: string; branchId?: string; password?: string }) {
+  // BACKEND CALLED — mint a new sticker (server returns token + url). Uses the
+  // raw request (not the offline-queue `post`) so the server's error message
+  // reaches the caller — QR Studio must show WHY a sticker couldn't be made
+  // (e.g. "No public store token configured yet") instead of a generic
+  // offline message, and a queued sticker create must never replay later.
+  const result = await request('POST', '/qr-tokens', body);
+  if (!result) return { ok: false, error: 'Offline — could not reach the backend' };
+  if (!result.ok) return { ok: false, error: result.json?.error || 'Could not create the QR' };
+  return { ok: true, token: result.json?.token || result.json };
 }
 
 /** POST /api/qr-tokens/seed — generate stickers for every unstickered table. */
 export async function seedQrTokens() {
-  // BACKEND CALLED — bulk-create table stickers
-  return post<any>('/qr-tokens/seed', {});
+  // BACKEND CALLED — bulk-create table stickers (raw request, same rationale
+  // as createQrToken — surface the real failure reason to QR Studio).
+  const result = await request('POST', '/qr-tokens/seed', {});
+  if (!result) return { ok: false, error: 'Offline — could not reach the backend' };
+  if (!result.ok) return { ok: false, error: result.json?.error || 'Could not generate table QRs' };
+  return { ok: true, created: result.json?.created, total: result.json?.total };
 }
 
 /** DELETE /api/qr-tokens/:id — retire a sticker. */
@@ -1228,6 +1409,13 @@ export async function completeWaiterRequest(id: string, completedBy?: string) {
   return post<any>(`/qr-ordering/requests/${id}/complete`, completedBy ? { completedBy } : {});
 }
 
+/** POST /api/qr-ordering/requests/:id/seen — silence the reminder without resolving.
+ *  Used for online orders: the card stays live until the order's bill closes. */
+export async function markWaiterRequestSeen(id: string, seenBy?: string) {
+  // BACKEND CALLED — silence a service request reminder
+  return post<any>(`/qr-ordering/requests/${id}/seen`, seenBy ? { seenBy } : {});
+}
+
 // ─── Bills ─────────────────────────────────────────────────────────
 
 /** GET /api/bills?date=&branchId=&paymentMethod= — Fetch bills */
@@ -1245,17 +1433,56 @@ export async function fetchBills(params?: { date?: string; branchId?: string; pa
   // reports aggregation never reads .length on undefined.
   // Also normalize `id` (server sends `_id`) — the Reports ledger and reprint
   // flows key off bill.id, so without this every server bill gets key={undefined}.
-  return bills.map((b: any) => ({
+  const normalized = bills.map((b: any) => ({
     ...b,
     id: b._id || b.id,
     items: Array.isArray(b.items) ? b.items : [],
   }));
+  // Data integrity fallback: if any bills have revenue but empty items,
+  // batch-fetch the missing items from the BillItem collection.
+  const billsNeedingItems = normalized.filter((b) => b.grandTotal > 0 && (!b.items || b.items.length === 0));
+  if (billsNeedingItems.length > 0) {
+    try {
+      const batchItems = await fetchBillItemsBatch(billsNeedingItems.map((b) => b.id));
+      if (batchItems) {
+        for (const b of normalized) {
+          const items = batchItems[b.id] || batchItems[b._id] || [];
+          if (items.length > 0 && (!b.items || b.items.length === 0)) {
+            b.items = items;
+          }
+        }
+      }
+    } catch { /* non-fatal — dashboard uses backend summary as fallback */ }
+  }
+  return normalized;
 }
 
 /** POST /api/bills — Record a completed payment as a bill */
 export async function createBill(bill: any) {
   // BACKEND CALLED — save finalized payment to cloud ledger
   return post<any>('/bills', bill);
+}
+
+/** POST /api/bills/items-batch — Fetch line items for multiple bills (data integrity fallback). */
+export async function fetchBillItemsBatch(billIds: string[]): Promise<Record<string, any[]> | null> {
+  if (!billIds.length) return null;
+  const result = await post<any>('/bills/items-batch', { billIds });
+  return result?.data || null;
+}
+
+/** GET /api/bills/invoice-range — Reserve a contiguous invoice-number range for this terminal (offline billing). */
+export async function fetchInvoiceRange(size = 100): Promise<{ start: number; end: number } | null> {
+  try {
+    const res = await fetch(`${BASE}/bills/invoice-range?size=${size}`, {
+      headers: buildHeaders(),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.data ?? null;
+  } catch (err) {
+    debugWarn('API', 'fetchInvoiceRange failed:', err);
+    return null;
+  }
 }
 
 /** GET /api/bills/next-invoice — Get the next atomic invoice number from server */
@@ -1295,12 +1522,6 @@ export async function fetchNextOrderNumber(): Promise<number | null> {
 export async function deleteBill(id: string, voidData?: { reason?: string; voidedBy?: string; managerPin?: string }) {
   // BACKEND CALLED — void a bill entry in cloud (with audit trail)
   return del<any>(`/bills/${id}`, voidData);
-}
-
-/** POST /api/bills/:id/refund — Refund a bill (full or partial, manager PIN required) */
-export async function refundBill(id: string, data: { items?: Array<{ menuItemId?: string; itemName?: string; quantity?: number }>; reason: string; refundedBy: string; managerPin: string }) {
-  // BACKEND CALLED — process a full/partial refund with stock restore + audit
-  return post<any>(`/bills/${id}/refund`, data);
 }
 
 // ─── Employees ─────────────────────────────────────────────────────
@@ -1555,7 +1776,7 @@ function reportParams(startDate?: string, endDate?: string, extra: Record<string
   const p = new URLSearchParams();
   // When neither bound is given the caller means "All Time" — the backend's
   // date range defaults to *today*, so substitute a wide range explicitly.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
   const start = startDate || (!endDate ? '2000-01-01' : undefined);
   const end = endDate || (!startDate ? today : undefined);
   if (start) p.set('startDate', start);
@@ -1587,8 +1808,8 @@ async function getCached<T>(name: string, params: Record<string, string | undefi
 
 export interface ReportFetchResult<T> { data: T; fromCache: boolean; }
 
-export async function fetchSalesSummary(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
-  return getCached('sales-summary', { startDate, endDate }, `/reports/sales/summary?${reportParams(startDate, endDate)}`);
+export async function fetchSalesSummary(startDate?: string, endDate?: string, openingTime?: string): Promise<ReportFetchResult<any>> {
+  return getCached('sales-summary', { startDate, endDate, openingTime }, `/reports/sales/summary?${reportParams(startDate, endDate, { openingTime })}`);
 }
 export async function fetchSalesTrend(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('sales-trend', { startDate, endDate }, `/reports/sales/trend?${reportParams(startDate, endDate)}`);
@@ -1596,26 +1817,26 @@ export async function fetchSalesTrend(startDate?: string, endDate?: string): Pro
 export async function fetchSalesPayments(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('sales-payments', { startDate, endDate }, `/reports/sales/payments?${reportParams(startDate, endDate)}`);
 }
-export async function fetchSalesOrderTypes(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
-  return getCached('sales-ordertypes', { startDate, endDate }, `/reports/sales/order-types?${reportParams(startDate, endDate)}`);
+export async function fetchSalesOrderTypes(startDate?: string, endDate?: string, openingTime?: string): Promise<ReportFetchResult<any>> {
+  return getCached('sales-ordertypes', { startDate, endDate, openingTime }, `/reports/sales/order-types?${reportParams(startDate, endDate, { openingTime })}`);
 }
 export async function fetchSalesCashiers(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('sales-cashiers', { startDate, endDate }, `/reports/sales/cashiers?${reportParams(startDate, endDate)}`);
 }
-export async function fetchSalesPeakHours(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
-  return getCached('sales-peakhours', { startDate, endDate }, `/reports/sales/peak-hours?${reportParams(startDate, endDate)}`);
+export async function fetchSalesPeakHours(startDate?: string, endDate?: string, openingTime?: string): Promise<ReportFetchResult<any>> {
+  return getCached('sales-peakhours', { startDate, endDate, openingTime }, `/reports/sales/peak-hours?${reportParams(startDate, endDate, { openingTime })}`);
 }
 export async function fetchSalesTopDays(startDate?: string, endDate?: string, limit = 10): Promise<ReportFetchResult<any>> {
   return getCached('sales-topdays', { startDate, endDate }, `/reports/sales/top-days?${reportParams(startDate, endDate, { limit })}`);
 }
-export async function fetchProductTop(startDate?: string, endDate?: string, limit = 10): Promise<ReportFetchResult<any>> {
-  return getCached('products-top', { startDate, endDate }, `/reports/products/top?${reportParams(startDate, endDate, { limit })}`);
+export async function fetchProductTop(startDate?: string, endDate?: string, limit = 10, openingTime?: string): Promise<ReportFetchResult<any>> {
+  return getCached('products-top', { startDate, endDate, openingTime }, `/reports/products/top?${reportParams(startDate, endDate, { limit, openingTime })}`);
 }
 export async function fetchProductLeast(startDate?: string, endDate?: string, limit = 10): Promise<ReportFetchResult<any>> {
   return getCached('products-least', { startDate, endDate }, `/reports/products/least?${reportParams(startDate, endDate, { limit })}`);
 }
-export async function fetchProductCategories(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
-  return getCached('products-categories', { startDate, endDate }, `/reports/products/categories?${reportParams(startDate, endDate)}`);
+export async function fetchProductCategories(startDate?: string, endDate?: string, openingTime?: string): Promise<ReportFetchResult<any>> {
+  return getCached('products-categories', { startDate, endDate, openingTime }, `/reports/products/categories?${reportParams(startDate, endDate, { openingTime })}`);
 }
 export async function fetchProductMenuEngineering(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('products-menueng', { startDate, endDate }, `/reports/products/menu-engineering?${reportParams(startDate, endDate)}`);
@@ -1674,6 +1895,8 @@ export interface EffectiveSettings {
   settings: Record<string, any>;
   /** Public store token embedded in the loyalty QR (minted lazily by the server). */
   publicToken?: string | null;
+  /** Public base URL of the customer QR site (baked into printed receipt QRs). */
+  qrBaseUrl?: string;
   meta: {
     version: number;
     scope: 'restaurant' | 'branch' | 'device';
@@ -1770,6 +1993,14 @@ export async function fetchSettingsAudit(page = 1, limit = 50) {
   const result = await request('GET', `/settings/audit?page=${page}&limit=${limit}`);
   if (!result || !result.ok) return null;
   return result.json?.data !== undefined ? { data: result.json.data, total: result.json.total ?? (Array.isArray(result.json.data) ? result.json.data.length : 0), page: result.json.page ?? page, limit: result.json.limit ?? limit } : result.json;
+}
+
+/** GET /api/settings/restaurant-profile — Restaurant profile from registration / admin panel. */
+export async function fetchRestaurantProfile(): Promise<Record<string, string> | null> {
+  try {
+    const res = await get<any>('/settings/restaurant-profile');
+    return res || null;
+  } catch { return null; }
 }
 
 // ─── Printers (Phase 1.9) — real registry, replaces fake IPs ──
@@ -1918,6 +2149,11 @@ export async function createInventoryEvent(event: any) {
   return post<any>('/inventory-events', event);
 }
 
+/** DELETE /api/inventory-events/:id — Remove an activity event (undo). */
+export async function deleteInventoryEvent(id: string) {
+  return del<any>(`/inventory-events/${id}`);
+}
+
 /** PATCH /api/purchases/:id — Correct a mistaken purchase entry */
 export async function updatePurchase(id: string, data: any) {
   // BACKEND CALLED — push corrected quantity/price/etc to cloud
@@ -1986,10 +2222,19 @@ export async function updateBranch(id: string, branch: any) {
   return put<any>(`/branches/${id}`, branch);
 }
 
-/** DELETE /api/branches/:id — Delete a branch */
-export async function deleteBranch(id: string) {
-  // BACKEND CALLED — remove branch from cloud
-  return del<any>(`/branches/${id}`);
+/** DELETE /api/branches/:id — Delete a branch (owner password required) */
+export async function deleteBranch(id: string, password?: string) {
+  // BACKEND CALLED — remove branch from cloud; the server verifies the owner
+  // password before deleting (destructive, irreversible).
+  return del<any>(`/branches/${id}`, { password });
+}
+
+/** POST /api/branches/:id/reset-credentials — regenerate a branch manager's
+ *  password + PIN (User ID stays the same). Owner only. Returns the new
+ *  plaintext credentials exactly once. */
+export async function resetBranchCredentials(id: string) {
+  // BACKEND CALLED — mint a fresh password/PIN for the branch manager account
+  return post<{ username: string; password: string; pin: string; employeeId: string }>(`/branches/${id}/reset-credentials`, {});
 }
 
 // ─── Sync ──────────────────────────────────────────────────────────
@@ -2033,7 +2278,26 @@ export async function fetchTables(params?: { branchId?: string }) {
     occupiedSince: t.occupiedSince,
     reservationName: t.reservationName,
     reservationTime: t.reservationTime,
+    // Customer's ACTIVE table-QR seat session (attached by the server). Used
+    // by the floor plan + grid to show "session active" and let the cashier
+    // end the session (never the QR itself).
+    activeSession: t.activeSession || null,
   }));
+}
+
+/**
+ * POST /api/tables/:id/expire-session — end a customer's ACTIVE table-QR
+ * seat session (the QR sticker stays valid forever — only the session dies).
+ * The table is freed (Available) unless a live order holds it.
+ */
+export async function expireTableSession(id: string) {
+  // Raw request (not the offline queue): ending a seat session must take
+  // effect NOW and must never replay later from an offline queue — a queued
+  // expire could silently kill a guest's live seating after they reconnected.
+  const result = await request('POST', `/tables/${encodeURIComponent(id)}/expire-session`);
+  if (!result) throw new Error('Offline — could not reach the backend');
+  if (!result.ok) throw new Error(result.json?.error || 'Could not end the session');
+  return result.json?.data;
 }
 
 /** POST /api/tables — Create a table (Owner/Manager) */
@@ -2530,7 +2794,7 @@ export async function fetchBranchUsage() {
 
 /** GET /api/bills?date=today — Fetch only today's bills (lightweight) */
 export async function fetchBillsToday(branchId?: string) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateKey();
   return fetchBills({ date: today, branchId });
 }
 
@@ -2556,14 +2820,37 @@ export async function fetchOfferList() {
 }
 
 /** POST /api/offers/recommendations — Generate AI offer recommendations */
-export async function fetchOfferRecommendations() {
-  // BACKEND CALLED — request AI-powered offer suggestions
-  const result = await post<any>('/offers/recommendations', {});
+export async function fetchOfferRecommendations(limit = 10) {
+  // BACKEND CALLED — request AI-powered offer suggestions.
+  // The engine is designed to produce 10+ distinct suggestions; the limit is
+  // just a ceiling the owner can raise.
+  const result = await post<any>('/offers/recommendations', { limit });
   if (!result) return null;
   // Normalize both shapes: { suggestions } (backend) or { data: { suggestions } }
   if (Array.isArray(result.suggestions)) return result;
   if (Array.isArray(result.data?.suggestions)) return { suggestions: result.data.suggestions };
   return result;
+}
+
+/**
+ * POST /api/ai/offer-recommendations — call the LLM directly for fresh
+ * offer suggestions (advisory only; the deterministic engine remains the
+ * fallback when AI is unavailable/off-subscription).
+ */
+export async function fetchAiOfferRecommendations(input: {
+  totalRevenue?: number;
+  orderCount?: number;
+  averageOrderValue?: number;
+  topSellingCategories?: Array<{ name: string; qty: number; revenue: number }>;
+  lowStockItems?: Array<{ name: string; currentStock: number; minStock: number }>;
+  currentOffers?: string[];
+  customerCount?: number;
+  weather?: any;
+  /** Explicit user refresh → bypass the AI cache (Phase 3). */
+  bustCache?: boolean;
+}) {
+  // BACKEND CALLED — LLM-powered suggestions from real tenant context.
+  return post<any>('/ai/offer-recommendations', input).catch(() => null);
 }
 
 // ─── Recipe Manager (Cost Intelligence) ───────────────────────────
@@ -2728,6 +3015,91 @@ export async function uploadImage(file: File): Promise<string | null> {
     if (!res.ok) return null;
     const json = await res.json().catch(() => null);
     return json?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Promotion Studio (Phase C) ──────────────────────────────────
+
+/** GET /api/promotions/branding — Restaurant name/logo/cover for the studio. */
+export async function fetchRestaurantBranding() {
+  return get<any>('/promotions/branding');
+}
+
+/** GET /api/promotions — List promotions (status filter). */
+export async function fetchPromotions(params?: { status?: string; limit?: number; page?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set('status', params.status);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.page) qs.set('page', String(params.page));
+  const query = qs.toString();
+  return get<any>(`/promotions${query ? '?' + query : ''}`);
+}
+
+/** GET /api/promotions/:id — Single promotion + linked offer. */
+export async function fetchPromotion(id: string) {
+  return get<any>(`/promotions/${id}`);
+}
+
+/** POST /api/promotions — Create a promotion (draft). */
+export async function createPromotion(body: any) {
+  return post<any>('/promotions', body);
+}
+
+/** PATCH /api/promotions/:id — Update creative/config. */
+export async function updatePromotion(id: string, body: any) {
+  return patch<any>(`/promotions/${id}`, body);
+}
+
+/** POST /api/promotions/:id/publish — Publish (requires live offer). */
+export async function publishPromotion(id: string) {
+  return post<any>(`/promotions/${id}/publish`, {});
+}
+
+/** POST /api/promotions/:id/archive — Archive. */
+export async function archivePromotion(id: string) {
+  return post<any>(`/promotions/${id}/archive`, {});
+}
+
+/** POST /api/promotions/:id/restore — Restore archived → draft. */
+export async function restorePromotion(id: string) {
+  return post<any>(`/promotions/${id}/restore`, {});
+}
+
+/** POST /api/promotions/:id/duplicate — Duplicate creative config as draft. */
+export async function duplicatePromotion(id: string) {
+  return post<any>(`/promotions/${id}/duplicate`, {});
+}
+
+/** GET /api/promotions/:id/mismatch — Offer/creative consistency check. */
+export async function checkPromotionMismatch(id: string) {
+  return get<any>(`/promotions/${id}/mismatch`);
+}
+
+/** POST /api/promotions/ai/copy — AI creative copy (sanitized context). */
+export async function generatePromotionCopy(body: any) {
+  return post<any>('/promotions/ai/copy', body);
+}
+
+/** GET /api/promotions/offers/:offerId/images — Product images for an offer. */
+export async function fetchOfferProductImages(offerId: string) {
+  return get<any>(`/promotions/offers/${offerId}/images`);
+}
+
+/** POST /api/promotions/media — Upload a promotion image (reuses media module). */
+export async function uploadPromotionMedia(file: File, meta?: { source?: string; productId?: string; offerId?: string }): Promise<{ url: string; meta: any } | null> {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (meta?.source) fd.append('source', meta.source);
+  if (meta?.productId) fd.append('productId', meta.productId);
+  if (meta?.offerId) fd.append('offerId', meta.offerId);
+  try {
+    const headers: Record<string, string> = { 'X-Device-Id': getOrCreateDeviceId() };
+    if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+    const res = await fetch(`${BASE}/promotions/media`, { method: 'POST', headers, body: fd });
+    if (!res.ok) return null;
+    return await res.json().catch(() => null);
   } catch {
     return null;
   }
@@ -3010,4 +3382,118 @@ export async function fetchLegalAcceptanceStats(): Promise<any> {
   // BACKEND CALLED — acceptance/consent stats for this restaurant (owner/manager)
   const result = await get<any>(`/legal/acceptance-stats`);
   return result || null;
+}
+
+// ─── Help-content usage analytics ─────────────────────────────────
+// Track WHICH FAQ questions and legal documents are actually viewed so help
+// content can be improved based on real usage. Fire-and-forget: these events
+// must NEVER enter the offline sync queue (a replayed analytics event is
+// noise, not a transaction) and a failed event must never surface an error
+// to the cashier — so they bypass the writeOfflineAware/post helpers.
+
+async function fireAndForgetHelpEvent(body: Record<string, unknown>): Promise<void> {
+  try {
+    await fetch(`${BASE}/help-analytics/events`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // Best-effort analytics — never throw into the UI flow.
+  }
+}
+
+/** Record that a FAQ question (or legal document) was opened. */
+export function trackHelpView(
+  contentType: 'faq' | 'legal',
+  contentKey: string,
+  contentTitle: string,
+): void {
+  void fireAndForgetHelpEvent({ eventType: 'view', contentType, contentKey, contentTitle });
+}
+
+/** Record a FAQ search (query + how many results matched). */
+export function trackHelpSearch(query: string, resultCount: number): void {
+  const q = (query || '').trim().slice(0, 300);
+  if (!q) return;
+  void fireAndForgetHelpEvent({
+    eventType: 'search',
+    contentType: 'faq',
+    contentKey: `search:${q.toLowerCase()}`,
+    contentTitle: `Search: ${q}`,
+    query: q,
+    resultCount: Number.isFinite(resultCount) ? Math.max(0, Math.floor(resultCount)) : 0,
+  });
+}
+
+/** GET /api/help-analytics/stats — per-content view counts (owner/manager). */
+export async function fetchHelpAnalytics(): Promise<any> {
+  // BACKEND CALLED — help-content usage stats for this restaurant
+  const result = await get<any>(`/help-analytics/stats`);
+  return result || null;
+}
+
+// ─── Business Advisor ──────────────────────────────────────────────
+
+/**
+ * POST /api/advisor/recommend — analyze the restaurant for a business goal and
+ * return 3-5 ranked recommendations. Deterministic facts are computed server
+ * side; the LLM (when available) only rewrites the explanation. Always returns
+ * recommendations (never fabricated) — or an explicit insufficient-data note.
+ */
+export async function advisorRecommend(body: {
+  goal: string;
+  branchId?: string;
+}) {
+  // BACKEND CALLED — Business Advisor analysis (deterministic + AI explanation)
+  return post<any>('/advisor/recommend', body);
+}
+
+/** POST /api/advisor/:id/action — record accept/reject/dismiss + action taken. */
+export async function advisorAction(id: string, body: {
+  status: 'accepted' | 'rejected' | 'dismissed';
+  actionTaken?: string;
+}) {
+  // BACKEND CALLED — persist the owner's decision for outcome tracking
+  return post<any>(`/advisor/${id}/action`, body);
+}
+
+/** POST /api/advisor/:id/outcome — record a measurable result (feedback loop). */
+export async function advisorOutcome(id: string, outcome: string) {
+  // BACKEND CALLED — store the business result for future recommendation ranking
+  return post<any>(`/advisor/${id}/outcome`, { outcome });
+}
+
+/** POST /api/advisor/:id/converted — mark recommendation as converted when offer is created. */
+export async function advisorMarkConverted(id: string, offerId: string, campaignId?: string) {
+  return post<any>(`/advisor/${id}/converted`, { offerId, campaignId });
+}
+
+/** GET /api/advisor/history — recent recommendations + status/outcome. */
+export async function advisorHistory(params?: { goal?: string; limit?: number }) {
+  // BACKEND CALLED — load recommendation history
+  const qs = new URLSearchParams();
+  if (params?.goal) qs.set('goal', params.goal);
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  const res = await get<any>(`/advisor/history${query ? '?' + query : ''}`);
+  return res?.recommendations ?? res ?? null;
+}
+
+// ─── Marketing Studio ─────────────────────────────────────────────
+
+/** POST /api/marketing/generate-message — AI generates a campaign message. */
+export async function generateMarketingMessage(params: {
+  offer: any; restaurantName: string; branchNames: string;
+  style: string; language: string; length: string; useEmojis: boolean;
+  channel: string; modify?: string; currentMessage?: string;
+}) {
+  return post<any>('/marketing/generate-message', params);
+}
+
+/** POST /api/marketing/test-message — send a test message. */
+export async function sendTestMessage(params: {
+  target: string; message: string; channels: string[];
+}) {
+  return post<any>('/marketing/test-message', params);
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Clock, ChefHat, UtensilsCrossed, Bell, AlertCircle, CheckCircle, ArrowRight, Table2, User, RefreshCw, Maximize2, Minimize2, Volume2, VolumeX, XCircle, Ban } from 'lucide-react';
+import { Clock, ChefHat, UtensilsCrossed, Bell, AlertCircle, CheckCircle, ArrowRight, Table2, User, Maximize2, Minimize2, Volume2, VolumeX, XCircle, Ban } from 'lucide-react';
+import RefreshButton from './common/RefreshButton';
 import type { Order, KOTRecord, KOTStatus } from '../src/types';
 import { getKOTElapsedMinutes, kotPrintedTimeMs } from '../src/utils/kotTime';
 import { setKotAlertEnabled } from '../src/lib/alertSound';
@@ -29,6 +30,8 @@ interface KitchenDisplayProps {
   onCancelOrderItem?: (orderId: string, itemId: string, reason: string) => void;
   showToast?: (message: string, type?: 'success' | 'info' | 'warning') => void;
   settings?: any;
+  /** Force a server refetch of orders — makes the Refresh button real. */
+  onRefreshOrders?: () => Promise<boolean> | void;
 }
 
 const AGING_THRESHOLDS = {
@@ -39,9 +42,9 @@ const AGING_THRESHOLDS = {
 };
 
 const COLUMN_CONFIG = [
-  { id: 'Accepted' as KOTStatus, label: 'New Orders', icon: Bell, color: 'bg-blue-500', borderColor: 'border-blue-400', bgColor: 'bg-blue-50', textColor: 'text-blue-700' },
-  { id: 'Preparing' as KOTStatus, label: 'Preparing', icon: ChefHat, color: 'bg-amber-500', borderColor: 'border-amber-400', bgColor: 'bg-amber-50', textColor: 'text-amber-700' },
-  { id: 'Ready' as KOTStatus, label: 'Ready to Serve', icon: CheckCircle, color: 'bg-green-500', borderColor: 'border-green-400', bgColor: 'bg-green-50', textColor: 'text-green-700' },
+  { id: 'Accepted' as KOTStatus, label: 'New Orders', icon: Bell, color: 'bg-[var(--color-blue-500-solid)]', borderColor: 'border-blue-400', bgColor: 'bg-blue-50', textColor: 'text-blue-700' },
+  { id: 'Preparing' as KOTStatus, label: 'Preparing', icon: ChefHat, color: 'bg-[var(--color-amber-500-solid)]', borderColor: 'border-amber-400', bgColor: 'bg-amber-50', textColor: 'text-amber-700' },
+  { id: 'Ready' as KOTStatus, label: 'Ready to Serve', icon: CheckCircle, color: 'bg-[var(--color-green-500-solid)]', borderColor: 'border-green-400', bgColor: 'bg-green-50', textColor: 'text-green-700' },
 ];
 
 function formatElapsed(minutes: number): string {
@@ -55,7 +58,7 @@ function formatElapsed(minutes: number): string {
 }
 
 function getUrgencyStyle(minutes: number): { bg: string; text: string; border: string; dot: string } {
-  if (minutes >= AGING_THRESHOLDS.critical) return { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', dot: 'bg-red-500' };
+  if (minutes >= AGING_THRESHOLDS.critical) return { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', dot: 'bg-[var(--color-red-500-solid)]' };
   if (minutes >= AGING_THRESHOLDS.urgent) return { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200', dot: 'bg-red-400' };
   if (minutes >= AGING_THRESHOLDS.warning) return { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-200', dot: 'bg-amber-400' };
   return { bg: 'bg-gray-50', text: 'text-gray-500', border: 'border-gray-200', dot: 'bg-gray-300' };
@@ -71,7 +74,7 @@ function getKOTStatusTransitions(currentStatus: KOTStatus): KOTStatus[] {
   return flow[currentStatus] || [];
 }
 
-export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrderItem, showToast, settings }: KitchenDisplayProps) {
+export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrderItem, showToast, settings, onRefreshOrders }: KitchenDisplayProps) {
   const [fullscreen, setFullscreen] = useState(false);
   // Initial alert-sound state follows the Settings "Quick Sound Alerts" module
   // toggle (default ON when unset, so existing behavior is unchanged).
@@ -118,6 +121,30 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
     }
     return cards;
   }, [orders]);
+
+  // Track KOT card count changes to notify chef when orders are closed
+  const prevKotCountRef = React.useRef(kotCards.length);
+  useEffect(() => {
+    const prevCount = prevKotCountRef.current;
+    const currCount = kotCards.length;
+    if (prevCount > currCount && currCount >= 0) {
+      // Some KOTs disappeared — likely an order was closed/paid
+      // Find which orders lost their KOTs
+      const prevOrderIds = new Set(orders.filter(o => o.kotRecords?.some((k: any) => k.status !== 'Served' && k.status !== 'Cancelled')).map(o => o.id));
+      const currOrderIds = new Set(kotCards.map(c => c.orderId));
+      const closedOrderIds = [...prevOrderIds].filter(id => !currOrderIds.has(id));
+      if (closedOrderIds.length > 0) {
+        const closedNumbers = closedOrderIds.map(id => {
+          const o = orders.find(or => or.id === id);
+          return o?.orderNumber ? `#${o.orderNumber}` : '';
+        }).filter(Boolean).join(', ');
+        if (closedNumbers) {
+          showToast(`Order ${closedNumbers} closed by cashier — items removed from kitchen`, 'info');
+        }
+      }
+    }
+    prevKotCountRef.current = currCount;
+  }, [kotCards, orders, showToast]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -175,16 +202,23 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
     setCancelTarget(null);
   }, [cancelTarget, onCancelOrderItem, showToast]);
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
     setNow(Date.now());
-    if (showToast) showToast('Kitchen display refreshed', 'info');
-  }, [showToast]);
+    if (onRefreshOrders) {
+      const ok = await onRefreshOrders();
+      if (showToast) {
+        showToast(ok ? 'Kitchen orders refreshed from server' : 'Server unreachable — showing latest synced orders', ok ? 'success' : 'warning');
+      }
+    } else if (showToast) {
+      showToast('Kitchen display refreshed', 'info');
+    }
+  }, [onRefreshOrders, showToast]);
 
   // --- Empty state ---
   if (totalActiveKots === 0) {
     return (
-      <div className={`flex flex-col h-full min-h-0 bg-[#faf8ff] ${fullscreen ? 'fixed inset-0 z-50' : ''}`}>
-        <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-[#e1e2ed] shrink-0">
+      <div className={`flex flex-col h-full min-h-0 bg-[var(--color-bg-page)] ${fullscreen ? 'fixed inset-0 z-50' : ''}`}>
+        <div className="flex items-center justify-between px-5 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
               <UtensilsCrossed className="w-5 h-5" />
@@ -198,16 +232,14 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
             <button onClick={toggleSound} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title={soundEnabled ? 'Mute alerts' : 'Enable alerts'}>
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
-            <button onClick={handleRefresh} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title="Refresh">
-              <RefreshCw className="w-4 h-4" />
-            </button>
+            <RefreshButton onRefresh={handleRefresh} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100" iconClassName="w-4 h-4" title="Refresh" />
             <button onClick={() => setFullscreen(!fullscreen)} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
               {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
           </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center gap-4 text-gray-400">
-          <ChefHat className="w-20 h-20 text-gray-200" />
+          <ChefHat className="w-20 h-20 text-gray-500" />
           <h2 className="text-lg font-bold text-gray-300">No Active Kitchen Orders</h2>
           <p className="text-sm text-gray-300">Orders with KOT records will appear here in real-time.</p>
           <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 rounded-xl border border-amber-100">
@@ -220,9 +252,9 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
   }
 
   return (
-    <div className={`flex flex-col h-full min-h-0 bg-[#faf8ff] ${fullscreen ? 'fixed inset-0 z-50' : ''}`}>
+    <div className={`flex flex-col h-full min-h-0 bg-[var(--color-bg-page)] ${fullscreen ? 'fixed inset-0 z-50' : ''}`}>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-[#e1e2ed] shrink-0">
+      <div className="flex items-center justify-between px-5 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
             <UtensilsCrossed className="w-5 h-5" />
@@ -251,9 +283,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
           <button onClick={toggleSound} className={`p-2 rounded-lg transition-all cursor-pointer ${soundEnabled ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-red-400 bg-red-50'}`} title={soundEnabled ? 'Mute alerts' : 'Enable alerts'}>
             {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </button>
-          <button onClick={handleRefresh} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title="Refresh">
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          <RefreshButton onRefresh={handleRefresh} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100" iconClassName="w-4 h-4" title="Refresh" />
           <button onClick={() => setFullscreen(!fullscreen)} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all cursor-pointer" title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
             {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
@@ -265,7 +295,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
         {COLUMN_CONFIG.map(column => {
           const columnCards = columns[column.id] || [];
           return (
-            <div key={column.id} className="flex-1 min-w-[320px] max-w-[420px] flex flex-col">
+            <div key={column.id} className="flex-1 min-w-[320px] flex flex-col">
               {/* Column Header */}
               <div className={`flex items-center justify-between px-3 py-2 rounded-t-xl ${column.color} text-white`}>
                 <div className="flex items-center gap-2">
@@ -276,7 +306,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
               </div>
 
               {/* Column Body */}
-              <div className="flex-1 bg-white border-x border-b border-[#e1e2ed] rounded-b-xl p-3 space-y-3 overflow-y-auto min-h-[200px]">
+              <div className="flex-1 bg-[var(--color-bg-white)] border-x border-b border-[var(--color-border-default)] rounded-b-xl p-3 space-y-3 overflow-y-auto min-h-[200px]">
                 {columnCards.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-300 py-8">
                     <column.icon className="w-10 h-10 mb-2 opacity-50" />
@@ -360,6 +390,9 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
                                       <span className="text-red-500 ml-1 font-bold text-[8px]">CANCELLED ({item.cancelReason})</span>
                                     )}
                                   </span>
+                                  {item?.configSummary && !item?.cancelled && (
+                                    <span className="block text-[9px] text-gray-500 italic truncate pl-4">{item.configSummary}</span>
+                                  )}
                                   <div className="flex items-center gap-1 shrink-0 ml-1">
                                     {item?.notes && <span className="text-[9px] text-amber-600 italic">📝</span>}
                                     {!item?.cancelled && onCancelOrderItem && (
@@ -397,10 +430,10 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
                           <div className="px-3 pb-3 pt-0 flex gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
                             {transitions.map(targetStatus => {
                               const btnConfig = {
-                                'Preparing': { icon: ChefHat, label: 'Start Preparing', color: 'bg-amber-500 hover:bg-amber-600 text-white' },
-                                'Ready': { icon: CheckCircle, label: 'Mark Ready', color: 'bg-green-500 hover:bg-green-600 text-white' },
-                                'Served': { icon: ArrowRight, label: 'Mark Served', color: 'bg-blue-500 hover:bg-blue-600 text-white' },
-                                'Accepted': { icon: Bell, label: 'Accept', color: 'bg-blue-500 hover:bg-blue-600 text-white' },
+                                'Preparing': { icon: ChefHat, label: 'Start Preparing', color: 'bg-[var(--color-amber-500-solid)] hover:bg-[var(--color-amber-600-solid)] text-white' },
+                                'Ready': { icon: CheckCircle, label: 'Mark Ready', color: 'bg-[var(--color-green-500-solid)] hover:bg-[var(--color-green-600-solid)] text-white' },
+                                'Served': { icon: ArrowRight, label: 'Mark Served', color: 'bg-[var(--color-blue-500-solid)] hover:bg-[var(--color-blue-600-solid)] text-white' },
+                                'Accepted': { icon: Bell, label: 'Accept', color: 'bg-[var(--color-blue-500-solid)] hover:bg-[var(--color-blue-600-solid)] text-white' },
                               } as const;
                               const cfg = btnConfig[targetStatus as keyof typeof btnConfig];
                               if (!cfg) return null;
@@ -420,7 +453,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
                         )}
 
                         {/* Footer meta */}
-                        <div className="px-3 py-1.5 border-t border-[#e1e2ed] flex justify-between text-[8px] text-gray-400">
+                        <div className="px-3 py-1.5 border-t border-[var(--color-border-default)] flex justify-between text-[8px] text-gray-400">
                           <span>KOT #{kot.kotNumber} · {kot.type}</span>
                           {customerName && <span>👤 {customerName}</span>}
                         </div>
@@ -437,7 +470,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
       {/* Cancel Item Reason Modal */}
       {cancelTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setCancelTarget(null)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full border border-[#e1e2ed] p-5" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--color-border-default)] p-5" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-sm mb-1 flex items-center gap-1.5">
               <Ban className="w-4 h-4 text-red-500" />
               Cancel Item
@@ -450,7 +483,7 @@ export default function KitchenDisplay({ orders, onUpdateKOTStatus, onCancelOrde
                 <button
                   key={r.id}
                   onClick={() => handleCancelConfirm(r.label)}
-                  className="w-full text-left px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-semibold border border-[#e1e2ed] cursor-pointer transition-all hover:border-red-200"
+                  className="w-full text-left px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-semibold border border-[var(--color-border-default)] cursor-pointer transition-all hover:border-red-200"
                 >
                   {r.label}
                 </button>

@@ -11,7 +11,7 @@ interface Plan {
   maxUsers: number
   maxDevices: number
   features: string[]
-  limits?: { maxBranches: number; maxDevices: number; maxEmployees: number }
+  limits?: { maxBranches: number; maxDevicesPerBranch: number }
 }
 
 interface SubscriptionStatus {
@@ -19,6 +19,7 @@ interface SubscriptionStatus {
   plan: string
   trialEnd?: string
   trialStart?: string
+  graceEnd?: string
 }
 
 export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?: () => void }) {
@@ -28,6 +29,12 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
   const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null)
   const [error, setError] = useState('')
   const [mode, setMode] = useState<'create_only' | 'trial_expired'>('create_only')
+
+  // True when the restaurant was downgraded to the Free tier (core POS only)
+  // after its subscription period expired and the 2-day warning elapsed.
+  const isFreeTier = subscription?.status === 'active' && subscription?.plan === 'free'
+  // True during the 2-day expiry warning window (grace).
+  const isGrace = subscription?.status === 'grace'
 
   useEffect(() => {
     (async () => {
@@ -81,7 +88,7 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#faf8ff]">
+      <div className="h-screen flex items-center justify-center bg-[var(--color-bg-page)]">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-[var(--brand-color)] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-sm text-gray-500">Loading plans...</p>
@@ -91,9 +98,9 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
   }
 
   return (
-    <div className="h-screen overflow-y-auto bg-[#faf8ff] text-[#191b23] flex flex-col">
+    <div className="h-screen overflow-y-auto bg-[var(--color-bg-page)] text-[var(--color-text-primary)] flex flex-col">
       {/* Header */}
-      <div className="bg-white border-b border-[#e1e2ed] px-6 py-5">
+      <div className="bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] px-6 py-5">
         <div className="max-w-5xl mx-auto">
           <div className="flex items-center gap-3 mb-1">
             <Crown size={24} className="text-[var(--brand-color)]" />
@@ -103,6 +110,16 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
             <div className="flex items-center gap-2 mt-2 text-sm text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
               <AlertTriangle size={16} />
               Your 7-day free trial has ended. Select a plan to continue using the POS system.
+            </div>
+          ) : isFreeTier ? (
+            <div className="flex items-center gap-2 mt-2 text-sm text-blue-700 bg-blue-50 rounded-lg px-3 py-2">
+              <Crown size={16} />
+              You're on the <strong>Free plan</strong> — core POS only. Upgrade to unlock AI, inventory, reports &amp; more.
+            </div>
+          ) : isGrace ? (
+            <div className="flex items-center gap-2 mt-2 text-sm text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+              <AlertTriangle size={16} />
+              Your subscription expired. Select a plan now — otherwise you'll move to the Free plan.
             </div>
           ) : (
             <p className="text-sm text-gray-500 mt-1">
@@ -122,47 +139,58 @@ export default function PlanSelectionPage({ onPlanSelected }: { onPlanSelected?:
             </div>
           ) : (
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {plans.map((plan) => {
+              {plans
+                // The Free tier is fallback-only: it only appears in the grid
+                // for restaurants already on it (downgraded). Paid, trial and
+                // grace subscribers never see it — no voluntary downgrades.
+                .filter((p) => p.planId !== 'free' || isFreeTier)
+                .map((plan) => {
                 const isSelected = selecting === plan.planId
                 const currentPlan = subscription?.plan === plan.planId
                 return (
                   <div
                     key={plan.id}
-                    className={`bg-white rounded-xl border-2 transition-all ${
+                    className={`bg-[var(--color-bg-white)] rounded-xl border-2 transition-all ${
                       currentPlan
                         ? 'border-[var(--brand-color)] ring-2 ring-[var(--brand-color)]/20'
-                        : 'border-[#e1e2ed] hover:border-[var(--brand-color)]/50 hover:shadow-md'
+                        : 'border-[var(--color-border-default)] hover:border-[var(--brand-color)]/50 hover:shadow-md'
                     }`}
                   >
+                    {/* Current-plan ribbon — makes a free-tier downgrade unmistakable */}
+                    {currentPlan && (
+                      <div className="flex items-center justify-center gap-1.5 rounded-t-[10px] bg-[var(--brand-color)] text-white px-4 py-2 text-xs font-bold">
+                        <CheckCircle size={13} />
+                        {plan.planId === 'free' ? 'Current Plan · Free tier (core POS only)' : 'Current Plan'}
+                      </div>
+                    )}
                     <div className="p-5">
-                      <h3 className="text-lg font-bold text-[#191b23]">{plan.name}</h3>
+                      <h3 className="text-lg font-bold text-[var(--color-text-primary)]">{plan.name}</h3>
                       {plan.description && (
                         <p className="text-xs text-gray-500 mt-1">{plan.description}</p>
                       )}
                       <div className="mt-3">
-                        <span className="text-3xl font-bold text-[#191b23]">₹{plan.price}</span>
+                        <span className="text-3xl font-bold text-[var(--color-text-primary)]">₹{Number(plan.price || 0).toLocaleString('en-IN')}</span>
                         <span className="text-sm text-gray-400 ml-1">/mo</span>
                       </div>
 
                       {/* Limits */}
                       <div className="mt-4 space-y-2">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Limits</p>
-                        <div className="grid grid-cols-3 gap-2 text-xs">
-                          <div className="bg-[#f5f5ff] rounded-lg p-2 text-center">
-                            <p className="text-gray-400">Users</p>
-                            <p className="font-bold text-[#191b23]">{plan.limits?.maxEmployees || plan.maxUsers}</p>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Limits</p>                          <div className="grid grid-cols-3 gap-2 text-xs">
+                            <div className="bg-[var(--color-surface-muted)] rounded-lg p-2 text-center">
+                              <p className="text-gray-400">Users</p>
+                              <p className="font-bold text-[var(--color-text-primary)]">{plan.maxUsers}</p>
+                            </div>
+                            <div className="bg-[var(--color-surface-muted)] rounded-lg p-2 text-center">
+                              <p className="text-gray-400">Devices / Branch</p>
+                              <p className="font-bold text-[var(--color-text-primary)]">{plan.limits?.maxDevicesPerBranch ?? plan.maxDevices ?? 3}</p>
+                            </div>
+                            <div className="bg-[var(--color-surface-muted)] rounded-lg p-2 text-center">
+                              <p className="text-gray-400">Branches</p>
+                              <p className="font-bold text-[var(--color-text-primary)]">
+                                {plan.limits?.maxBranches === 0 ? '∞' : plan.limits?.maxBranches || 1}
+                              </p>
+                            </div>
                           </div>
-                          <div className="bg-[#f5f5ff] rounded-lg p-2 text-center">
-                            <p className="text-gray-400">Devices</p>
-                            <p className="font-bold text-[#191b23]">{plan.limits?.maxDevices || plan.maxDevices}</p>
-                          </div>
-                          <div className="bg-[#f5f5ff] rounded-lg p-2 text-center">
-                            <p className="text-gray-400">Branches</p>
-                            <p className="font-bold text-[#191b23]">
-                              {plan.limits?.maxBranches === 0 ? '∞' : plan.limits?.maxBranches || 1}
-                            </p>
-                          </div>
-                        </div>
                       </div>
 
                       {/* Features */}

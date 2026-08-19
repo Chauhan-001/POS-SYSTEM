@@ -76,6 +76,10 @@ export interface ResolveOptions {
   restaurantCalibration?: number;
   /** Category names already in the catalog (for new-product detection). */
   existingCategories?: string[];
+  /** When true, only match inventory items (availability=false), not menu
+   *  items. Prevents "paneer" from resolving to "Kadhai Paneer" in the
+   *  voice inventory context. */
+  inventoryOnly?: boolean;
 }
 
 // ====================================================================
@@ -86,9 +90,16 @@ export interface ResolveOptions {
  * Build the tenant-scoped product filter: a restaurant sees its OWN products
  * PLUS the shared/global catalog (restaurantId null/missing). This matches the
  * existing productsController behavior.
+ *
+ * When `inventoryOnly` is true, only inventory items (availability=false) are
+ * included — menu items are excluded so voice inventory commands never resolve
+ * to prepared dishes.
  */
-function tenantFilter(restaurantId?: string) {
+function tenantFilter(restaurantId?: string, inventoryOnly = false) {
   const base: any = { isDeleted: { $ne: true } };
+  if (inventoryOnly) {
+    base.availability = false;
+  }
   if (restaurantId && mongoose.Types.ObjectId.isValid(restaurantId)) {
     base.$or = [
       { restaurantId: new mongoose.Types.ObjectId(restaurantId) },
@@ -163,7 +174,7 @@ export async function resolveProduct(
     };
   }
 
-  const filter = tenantFilter(restaurantId);
+  const filter = tenantFilter(restaurantId, !!options.inventoryOnly);
 
   // ─── STAGE 1: Exact Name ───────────────────────────────────────────
   const exactStageStart = Date.now();
@@ -464,31 +475,70 @@ async function loadCandidateProducts(
   limit: number,
   queryHint?: string
 ): Promise<ResolvableProduct[]> {
-  const query: any = { ...filter };
-  if (queryHint) {
-    // Use indexed text search to pre-narrow the candidate pool.
-    const textFilter: any = {};
-    try {
-      const tokens = normalizeForFuzzy(queryHint)
-        .split(' ')
-        .filter(Boolean)
-        .slice(0, 4)
-        .map((t) => `"${t}"`)
-        .join(' ');
-      if (tokens) textFilter.$text = { $search: tokens };
-    } catch {
-      // $text requires a text index — fall back to alias $in.
-    }
-    if (textFilter.$text) {
-      query.$text = textFilter.$text;
-    }
+  if (!queryHint) {
+    return Product.find(filter)
+      .select(RESOLUTION_PROJECTION)
+      .limit(limit)
+      .lean()
+      .then((docs) => docs as unknown as ResolvableProduct[]);
   }
 
-  return Product.find(query)
-    .select(RESOLUTION_PROJECTION)
-    .limit(limit)
-    .lean()
-    .then((docs) => docs as unknown as ResolvableProduct[]);
+  const normalized = normalizeForFuzzy(queryHint);
+
+  // Strategy 1: Try $text search (fast, indexed)
+  const textQuery: any = { ...filter };
+  try {
+    const tokens = normalized
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 4)
+      .map((t) => `"${t}"`)
+      .join(' ');
+    if (tokens) textQuery.$text = { $search: tokens };
+  } catch {
+    // $text requires a text index — fall through to regex.
+  }
+
+  let candidates: ResolvableProduct[] = [];
+  try {
+    candidates = await Product.find(textQuery)
+      .select(RESOLUTION_PROJECTION)
+      .limit(limit)
+      .lean()
+      .then((docs) => docs as unknown as ResolvableProduct[]);
+  } catch {
+    // $text query failed — fall through to regex.
+  }
+
+  // Strategy 2: If text search returned nothing (or failed), use regex
+  // prefix + contains matching. This handles short ingredient names like
+  // "cashew", "mushroom" that $text may not surface.
+  if (candidates.length === 0 && normalized.length >= 2) {
+    const regexQuery: any = { ...filter, name: { $regex: normalized, $options: 'i' } };
+    candidates = await Product.find(regexQuery)
+      .select(RESOLUTION_PROJECTION)
+      .limit(limit)
+      .lean()
+      .then((docs) => docs as unknown as ResolvableProduct[]);
+  }
+
+  // Strategy 3: Also check aliases via $or for short names
+  if (candidates.length === 0 && normalized.length >= 2) {
+    const aliasQuery: any = {
+      ...filter,
+      $or: [
+        { voiceAliases: { $regex: normalized, $options: 'i' } },
+        { searchAliases: { $regex: normalized, $options: 'i' } },
+      ],
+    };
+    candidates = await Product.find(aliasQuery)
+      .select(RESOLUTION_PROJECTION)
+      .limit(limit)
+      .lean()
+      .then((docs) => docs as unknown as ResolvableProduct[]);
+  }
+
+  return candidates;
 }
 
 async function loadExistingCategories(filter: any): Promise<string[]> {

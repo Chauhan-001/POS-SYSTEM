@@ -11,7 +11,7 @@
  *     permanent-delete and status transitions (active / draft / archived /
  *     deprecated / hidden).
  *   - Configurable limits with 0 = unlimited (maxRestaurants, maxBranches,
- *     maxDevices, maxEmployees, maxProducts, maxCustomers, maxMonthlyOrders,
+ *     maxDevicesPerBranch, maxProducts, maxCustomers, maxMonthlyOrders,
  *     maxStorageMB, maxAIRequests, maxVoiceRequests, maxImages, maxExports).
  *   - Centralized feature flags (see constants/planFeatures.ts) validated on
  *     write and integrated with the existing subscription snapshot.
@@ -43,7 +43,7 @@ import { auditLogRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 import { parsePagination, parseSearch, parseDateRange } from '../utils/queryParser';
 import { DEFAULT_LIMITS, LIMIT_KEYS, FEATURE_KEYS, PLAN_STATUSES, type PlanLimitKey } from '../constants/planFeatures';
-import { subscriptionService, SUBSCRIPTION_DURATION_DAYS, GRACE_PERIOD_DAYS } from '../modules/subscription/subscriptionService';
+import { subscriptionService, SUBSCRIPTION_DURATION_DAYS, GRACE_PERIOD_DAYS, billingDurationDays, isBillingPeriod } from '../modules/subscription/subscriptionService';
 import { entitlementService } from './entitlementService';
 
 export interface AdminIdentity {
@@ -76,6 +76,7 @@ function toPlanRow(p: any): any {
     name: p.name,
     description: p.description || '',
     price: p.price,
+    yearlyPrice: typeof p.yearlyPrice === 'number' ? p.yearlyPrice : 0,
     maxUsers: p.maxUsers,
     maxDevices: p.maxDevices,
     features: p.features || [],
@@ -107,6 +108,7 @@ function snapshot(plan: any, note: string, actor: AdminIdentity): any {
     name: plan.name,
     description: plan.description || '',
     price: plan.price,
+    yearlyPrice: typeof plan.yearlyPrice === 'number' ? plan.yearlyPrice : 0,
     maxUsers: plan.maxUsers,
     maxDevices: plan.maxDevices,
     features: plan.features || [],
@@ -132,6 +134,11 @@ function resolveLimits(body: Record<string, any>, existing: any): Record<PlanLim
     for (const key of LIMIT_KEYS) {
       if (typeof existing.limits[key] === 'number') base[key] = existing.limits[key];
     }
+    // Legacy migration: pre-rename plans stored the device limit under
+    // limits.maxDevices — carry it into maxDevicesPerBranch (per-branch).
+    if (typeof existing.limits.maxDevices === 'number' && typeof existing.limits.maxDevicesPerBranch !== 'number') {
+      base.maxDevicesPerBranch = existing.limits.maxDevices;
+    }
   }
   const incoming = body.limits || body;
   for (const key of LIMIT_KEYS) {
@@ -139,12 +146,24 @@ function resolveLimits(body: Record<string, any>, existing: any): Record<PlanLim
       base[key] = Number(incoming[key]);
     }
   }
-  // Top-level shorthand limit fields (e.g. maxDevices on the plan) are merged
-  // too, so creating/updating a plan never silently resets unmentioned limits.
+  // Legacy alias: incoming limits.maxDevices (old name) → maxDevicesPerBranch.
+  if (incoming.maxDevices !== undefined && incoming.maxDevices !== null
+    && incoming.maxDevicesPerBranch === undefined) {
+    base.maxDevicesPerBranch = Number(incoming.maxDevices);
+  }
+  // Top-level shorthand limit fields are merged too, so creating/updating a
+  // plan never silently resets unmentioned limits.
   for (const key of LIMIT_KEYS) {
     if (body[key] !== undefined && body[key] !== null) {
       base[key] = Number(body[key]);
     }
+  }
+  // Legacy top-level maxDevices shorthand → maxDevicesPerBranch (no nested
+  // limit provided).
+  if (body.maxDevices !== undefined && body.maxDevices !== null
+    && base.maxDevicesPerBranch === DEFAULT_LIMITS.maxDevicesPerBranch
+    && incoming.maxDevicesPerBranch === undefined && incoming.maxDevices === undefined) {
+    base.maxDevicesPerBranch = Number(body.maxDevices);
   }
   if (incoming.storageLimitMB !== undefined && incoming.storageLimitMB !== null) {
     base.maxStorageMB = Number(incoming.storageLimitMB);
@@ -280,6 +299,7 @@ export class PlanService {
       version: v.version,
       name: v.name,
       price: v.price,
+      yearlyPrice: typeof v.yearlyPrice === 'number' ? v.yearlyPrice : 0,
       status: v.status,
       createdBy: v.createdBy,
       note: v.note,
@@ -313,8 +333,10 @@ export class PlanService {
       name: body.name.trim(),
       description: body.description || '',
       price: body.price ?? 0,
+      yearlyPrice: body.yearlyPrice ?? 0,
       maxUsers: body.maxUsers ?? 5,
-      maxDevices: body.maxDevices ?? 6,
+      // Legacy top-level field kept in sync with the canonical per-branch limit.
+      maxDevices: body.maxDevices ?? limits.maxDevicesPerBranch ?? 6,
       features,
       aiEnabled: !!body.aiEnabled,
       trialDays: body.trialDays ?? 14,
@@ -353,7 +375,7 @@ export class PlanService {
 
     const updates: Record<string, any> = {};
     const editable = [
-      'name', 'description', 'price', 'maxUsers', 'maxDevices', 'aiEnabled',
+      'name', 'description', 'price', 'yearlyPrice', 'maxUsers', 'maxDevices', 'aiEnabled',
       'trialDays', 'sortOrder', 'isActive', 'isDefault', 'status', 'planType',
       'visibility',
     ];
@@ -385,6 +407,9 @@ export class PlanService {
       LIMIT_KEYS.some((key) => body[key] !== undefined && body[key] !== null);
     if (hasLimitsUpdate) {
       updates.limits = resolveLimits(body, plan);
+      // Keep the legacy top-level maxDevices in sync with the per-branch limit
+      // so legacy subscription snapshots never drift from the plan.
+      updates.maxDevices = updates.limits.maxDevicesPerBranch;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -430,6 +455,7 @@ export class PlanService {
       name: body.name.trim(),
       description: source.description,
       price: source.price,
+      yearlyPrice: typeof source.yearlyPrice === 'number' ? source.yearlyPrice : 0,
       maxUsers: source.maxUsers,
       maxDevices: source.maxDevices,
       features: source.features || [],
@@ -565,6 +591,7 @@ export class PlanService {
       version: v.version,
       name: v.name,
       price: v.price,
+      yearlyPrice: typeof v.yearlyPrice === 'number' ? v.yearlyPrice : 0,
       status: v.status,
       planType: v.planType,
       features: v.features || [],
@@ -600,6 +627,7 @@ export class PlanService {
           name: target.name,
           description: target.description || '',
           price: target.price,
+          yearlyPrice: typeof target.yearlyPrice === 'number' ? target.yearlyPrice : 0,
           maxUsers: target.maxUsers,
           maxDevices: target.maxDevices,
           features: target.features || [],
@@ -639,6 +667,7 @@ export class PlanService {
     if (!restaurant) throw new AppError(404, 'Restaurant not found');
 
     let sub = await Subscription.findOne({ restaurantId }).exec();
+    const billingPeriod = isBillingPeriod(body.billingPeriod) ? body.billingPeriod : (sub?.billingPeriod || 'monthly');
 
     const effectiveDate = body.effectiveDate ? new Date(body.effectiveDate) : null;
     const isScheduled = effectiveDate && effectiveDate.getTime() > Date.now() + 1000;
@@ -660,6 +689,7 @@ export class PlanService {
           restaurantId,
           plan: planId,
           status: 'trial',
+          billingPeriod,
           startDate: new Date(),
           maxUsers: plan.maxUsers,
           maxDevices: plan.maxDevices,
@@ -669,6 +699,7 @@ export class PlanService {
       }
       sub.pendingPlan = planId;
       sub.pendingEffectiveDate = effectiveDate;
+      sub.billingPeriod = billingPeriod;
       await sub.save();
       await this.audit('ADMIN_PLAN_ASSIGN_SCHEDULED', plan, actor, {
         restaurantId, restaurantName: restaurant.name, effectiveDate: effectiveDate.toISOString(),
@@ -683,16 +714,17 @@ export class PlanService {
     // Immediate assignment — reuse the canonical snapshot semantics.
     let changed: any;
     if (sub) {
-      changed = await subscriptionService.changePlan(restaurantId, planId);
+      changed = await subscriptionService.changePlan(restaurantId, planId, billingPeriod);
     } else {
       // No subscription row yet — create one immediately (immediate activation
       // with a fresh billing period, mirroring changePlan's activation block).
       const now = new Date();
-      const expiry = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+      const expiry = new Date(now.getTime() + billingDurationDays(billingPeriod) * 24 * 60 * 60 * 1000);
       changed = await Subscription.create({
         restaurantId,
         plan: plan.planId,
         status: 'active',
+        billingPeriod,
         startDate: now,
         subscriptionStart: now,
         expiryDate: expiry,
@@ -724,14 +756,14 @@ export class PlanService {
   }
 
   /** Trial conversion — activate a trial subscription to a paid plan immediately. */
-  async convertTrial(restaurantId: string, planId: string, actor: AdminIdentity) {
+  async convertTrial(restaurantId: string, planId: string, actor: AdminIdentity, billingPeriod?: string) {
     const plan = await SubscriptionPlan.findOne({ planId, isDeleted: { $ne: true } }).lean().exec();
     if (!plan) throw new AppError(404, `Plan "${planId}" not found`);
     if (INACTIVE_STATUSES.has(plan.status)) {
       throw new AppError(400, `Plan "${plan.name}" is ${plan.status} and cannot be assigned`);
     }
 
-    const changed = await subscriptionService.changePlan(restaurantId, planId);
+    const changed = await subscriptionService.changePlan(restaurantId, planId, billingPeriod);
 
     await this.audit('ADMIN_PLAN_TRIAL_CONVERSION', plan, actor, { restaurantId }, { planId });
     return {

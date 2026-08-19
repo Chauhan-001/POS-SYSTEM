@@ -19,15 +19,34 @@ export interface Product {
   category: string;
   image: string;
   gstPercent: number;
+  /** Owner-facing classification used to auto-recommend tax at registration. */
+  taxClassification?: 'prepared_food' | 'beverage' | 'packaged' | 'other' | '';
+  /** How gstPercent was assigned: automatic recommendation or manual override. */
+  taxSource?: 'automatic' | 'manual';
   availability: boolean;
   variants?: ProductVariant[];
   favorite?: boolean;
   code: string; // SKU or short-code for typing/barcode search
+  /** Reusable menu-configuration references (Phase 2 menu editor). */
+  menuConfig?: ProductMenuConfig;
   branchId?: string;
   /** Per-branch price overrides (branchId → price). Server-authoritative — the
    *  customer site prices from this; the POS mirrors it into its local
    *  branchProductPrices map so dine-in orders use the same override. */
   branchPrice?: Record<string, number>;
+  /** Meal combo: this product is a bundle of other products sold at comboPrice.
+   *  The backend auto-syncs a backing Offer (type 'combo', linkedProductId →
+   *  this product) so billing, analytics and the customer site work unchanged.
+   *  comboComponentIds may be server Mongo ids or local temp ids — the POS
+   *  resolves them against the current menu at add time. */
+  isCombo?: boolean;
+  comboComponentIds?: string[];
+  comboPrice?: number;
+  linkedComboOfferId?: string;
+  /** Per-branch combo price overrides (branchId → combo price) for meal
+   *  combos — mirrors branchPrice so a bundle can be priced per branch.
+   *  Synced to the backing Offer so billing resolves it server-side. */
+  comboBranchPrice?: Record<string, number>;
 }
 
 export interface CartItem {
@@ -45,6 +64,18 @@ export interface CartItem {
   cancelReason?: string;
   cancelledAt?: string;
   cancelledBy?: string;
+  /** Phase 3/4 — configured selections (variants/modifiers/add-ons). */
+  configuration?: { selections: Array<{ groupId: string; optionIds: string[]; quantities?: Record<string, number> }> };
+  /** Human-readable configured line ("Large • Cheese Burst") for cart/KOT/receipt. */
+  configSummary?: string;
+  /** Immutable price evidence captured at add-to-cart time. */
+  pricingSnapshot?: Record<string, unknown>;
+  /** Historical snapshot persisted by the backend bill service (priceAtSale,
+   *  gstRateAtSale, discountAtSale) — receipts must use these, not the live
+   *  product, so a bill finalized yesterday still shows yesterday's tax. */
+  priceAtSale?: number;
+  gstRateAtSale?: number;
+  discountAtSale?: number;
 }
 
 export interface PurchaseHistoryItem {
@@ -272,6 +303,10 @@ export interface Bill {
   pointsRedeemed: number;
   redeemedRewardTitle?: string;
   milestoneRewardAwarded?: string;
+  /** Receipt QR capability — full scannable URL to the customer receipt page
+   *  ({qrBaseUrl}/#/r/{receiptToken}); expires 12h after minting. */
+  receiptUrl?: string;
+  receiptToken?: string;
   /** Table number for dine-in orders (used by showTableNumber setting) */
   tableNumber?: number;
   /** Original order creation time (used by showOrderTime setting) */
@@ -542,6 +577,8 @@ export interface TableInfo {
   priority?: 'normal' | 'high' | 'urgent';
   isOnlineOrder?: boolean;
   platform?: string;
+  /** Customer's ACTIVE table-QR seat session (scan claim) — null when none. */
+  activeSession?: { sessionId: string; expiresAt: string } | null;
 }
 
 /** Restaurant floor (multi-floor layout management) */
@@ -680,6 +717,9 @@ export interface ModuleSettings {
   /** Re-notify unacknowledged customer calls/online orders every N seconds
    *  (0 disables reminders). Persisted under moduleSettings. */
   callReminderIntervalSec?: number;
+  /** QR table session timeout in minutes (auto-expire when no order placed).
+   *  Default 30 min. Once an order is placed, the session is permanent. */
+  qrSessionTimeoutMinutes?: number;
 }
 
 export interface SystemSettings {
@@ -687,9 +727,18 @@ export interface SystemSettings {
   gstin: string;
   address: string;
   phone: string;
+  fssai?: string;
+  pan?: string;
+  ownerName?: string;
+  email?: string;
+  city?: string;
+  state?: string;
+  pinCode?: string;
   currency: string;
   currencySymbol: string;
   defaultTaxRate: number; // default GST %
+  /** Centralized tax rules: product classification → GST % (null = not configured → needs confirmation). */
+  taxRules?: Record<'prepared_food' | 'beverage' | 'packaged' | 'other', number | null>;
   loyaltyPointsPerDollar: number; // e.g. 1 point per $10 spent (so value is 0.1)
   pointsNeededForOneUnitCurrency: number; // e.g. 10 points = $1 value (so value is 10)
   visitThresholdForBonus: number; // visits required for bonus points
@@ -720,6 +769,17 @@ export interface SystemSettings {
    *  'print' → paper ticket only, 'kds' → kitchen display only, 'both' → both.
    *  Defaults to 'both' (current behaviour) when unset. */
   kotOutputMode?: 'print' | 'kds' | 'both';
+  /** Whether online/QR orders fire their KOT automatically on placement.
+   *  true (default) → kitchen receives it immediately.
+   *  false → the cashier reviews the order in the billing workspace and sends
+   *  the KOT manually with the KOT button. */
+  onlineOrderAutoKot?: boolean;
+  /** Business-day window (HH:mm, 24h). "Today's" revenue/Z-report/hourly
+   *  charts count bills from openingTime until the next day's openingTime
+   *  (default 08:00 → 23:59), so early-morning bills roll into the previous
+   *  business day instead of being counted as a fresh "today". */
+  openingTime?: string;
+  closingTime?: string;
   receiptFooterMessage?: string;
   receiptFooterImageUrl?: string;
   showTaxSummaryOnReceipt?: boolean;
@@ -1297,6 +1357,149 @@ export interface Reservation {
   occasion?: string;
   createdAt: string;
   createdBy?: string;
+}
+
+// ─── Reusable Menu Configuration (Phase 1/2) ───────────────────────
+// Frontend mirrors of the backend menu-config contracts. The UI only DISPLAYS
+// these — all resolution/inheritance logic lives server-side (the resolver).
+
+export type ConfigType = 'VARIANT_GROUP' | 'MODIFIER_GROUP' | 'ADD_ON_GROUP';
+export type ConfigMode = 'shared' | 'override' | 'copy';
+export type SelectionMode = 'SINGLE' | 'MULTIPLE';
+export type ConfigStatus = 'draft' | 'active' | 'archived';
+
+export interface ProductConfigOptionOverride {
+  optionId: string;
+  priceDelta?: number;
+  name?: string;
+  active?: boolean;
+  sortOrder?: number;
+  removed?: boolean;
+}
+
+/** A product's reference to a reusable template (stored on Product.menuConfig). */
+export interface ProductConfigRef {
+  _id?: string;
+  templateId: string;
+  mode: ConfigMode;
+  /** Provenance for 'copy' refs. */
+  sourceTemplateId?: string;
+  overrides?: {
+    group?: {
+      required?: boolean;
+      minSelections?: number;
+      maxSelections?: number;
+      selectionMode?: SelectionMode;
+    };
+    options?: ProductConfigOptionOverride[];
+  };
+}
+
+export interface ProductMenuConfig {
+  variantConfigurations: ProductConfigRef[];
+  modifierConfigurations: ProductConfigRef[];
+  addOnConfigurations: ProductConfigRef[];
+}
+
+export interface MenuConfigOption {
+  id: string;
+  name: string;
+  priceDelta?: number;
+  price?: number;
+  productId?: string;
+  sku?: string;
+  barcode?: string;
+  active?: boolean;
+  sortOrder?: number;
+  minQuantity?: number;
+  maxQuantity?: number;
+  recipeMappingId?: string;
+  kitchenInstruction?: string;
+}
+
+export interface MenuConfigTemplateData {
+  selectionMode?: SelectionMode;
+  required?: boolean;
+  minSelections?: number;
+  maxSelections?: number;
+  freeSelectionCount?: number;
+  options: MenuConfigOption[];
+}
+
+export interface MenuConfigTemplate {
+  _id: string;
+  name: string;
+  description?: string;
+  type: ConfigType;
+  status: ConfigStatus;
+  version: number;
+  versionNote?: string;
+  sourceTemplateId?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  data: MenuConfigTemplateData;
+  /** Number of products using this template (server-computed). */
+  productCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ResolvedConfigOption {
+  id: string;
+  name: string;
+  /** Variant/modifier delta. Add-on options use `price` instead. */
+  priceDelta?: number;
+  price?: number;
+  productId?: string;
+  sku?: string;
+  barcode?: string;
+  active: boolean;
+  sortOrder: number;
+  minQuantity?: number;
+  maxQuantity?: number;
+  recipeMappingId?: string;
+  kitchenInstruction?: string;
+}
+
+export interface ResolvedConfigGroup {
+  id: string;
+  name: string;
+  description?: string;
+  type: ConfigType;
+  status: ConfigStatus;
+  version: number;
+  sourceTemplateId?: string;
+  mode: ConfigMode;
+  selectionMode: SelectionMode;
+  required: boolean;
+  minSelections: number;
+  maxSelections: number | null;
+  freeSelectionCount: number;
+  options: ResolvedConfigOption[];
+}
+
+export interface ResolvedProductConfig {
+  product: {
+    id: string;
+    name: string;
+    baseProductPrice: number;
+    category: string;
+    availability: boolean;
+  };
+  configVersion: number;
+  variantGroups: ResolvedConfigGroup[];
+  modifierGroups: ResolvedConfigGroup[];
+  addOnGroups: ResolvedConfigGroup[];
+}
+
+/** Per-product display counts for the menu-management cards. */
+export interface ProductConfigSummary {
+  productId: string;
+  variantCount: number;
+  modifierCount: number;
+  addOnCount: number;
+  hasConfiguration: boolean;
+  configVersion: number;
 }
 
 export type WaitingStatus = 'Waiting' | 'Seated' | 'Cancelled';

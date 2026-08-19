@@ -14,24 +14,92 @@
  */
 
 import mongoose from 'mongoose';
+import crypto from 'crypto';
 import { billRepo, billItemRepo, customerRepo, employeeRepo, auditLogRepo, dailySummaryRepo } from '../repositories';
 import { InvoiceCounter, DailySummary, MonthlySummary, YearlySummary, Customer } from '../models';
 import { stockMovementService } from './stockMovementService';
-import { loyaltyService } from './index';
+import { loyaltyService, customerService } from './index';
 import { verifyPin } from '../utils/bcrypt';
 import { AppError } from '../utils/AppError';
+import { config } from '../config';
+import { consumptionService } from '../modules/recipes/services/consumptionService';
+import { resolveProductConfiguration } from '../modules/menu-config/services/configurationResolver';
+import { validateProductConfigurationSelection } from '../modules/menu-config/services/configurationValidator';
+import { calculateLineItemPrice } from '../modules/menu-config/services/pricingEngine';
+
+/** Receipt QR links expire 12 hours after minting. */
+export const RECEIPT_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * Mint a fresh receipt-QR capability for a bill. The token is opaque, unique,
+ * expires after RECEIPT_TOKEN_TTL_MS and resolves ONLY to a sanitized public
+ * summary (reward earned + line items) — never to customer PII.
+ */
+export function mintReceiptToken(): { receiptToken: string; receiptTokenExpiresAt: Date; receiptUrl: string } {
+  const receiptToken = 'rcpt_' + crypto.randomBytes(12).toString('hex');
+  const receiptTokenExpiresAt = new Date(Date.now() + RECEIPT_TOKEN_TTL_MS);
+  const receiptUrl = `${config.qrBaseUrl}/#/r/${receiptToken}`;
+  return { receiptToken, receiptTokenExpiresAt, receiptUrl };
+}
+
+/**
+ * Best-effort: ensure a bill carries a receipt QR capability. Legacy bills
+ * created before the feature have none — lazily minting on read means a
+ * reprint/review flow always shows a working QR. Never fails the caller.
+ */
+async function ensureReceiptToken(bill: any): Promise<void> {
+  try {
+    if (!bill || (bill as any).receiptToken) return;
+    const minted = mintReceiptToken();
+    await billRepo.update((bill as any)._id.toString(), {
+      $set: {
+        receiptToken: minted.receiptToken,
+        receiptTokenExpiresAt: minted.receiptTokenExpiresAt,
+        receiptUrl: minted.receiptUrl,
+      },
+    } as any);
+    (bill as any).receiptToken = minted.receiptToken;
+    (bill as any).receiptTokenExpiresAt = minted.receiptTokenExpiresAt;
+    (bill as any).receiptUrl = minted.receiptUrl;
+  } catch (err: any) {
+    console.warn('[BillService] receipt-token backfill skipped (non-fatal):', err.message);
+  }
+}
+
+/**
+ * Normalize a raw bill item into the shape the recipe consumption engine
+ * expects: a stable menuItemId, itemName and variantName (the raw payload uses
+ * `product.id` / `selectedVariant.name`). This is what generateForBill and the
+ * active-recipe guard both read, so variant resolution and the double-deduction
+ * skip stay consistent with the bill's actual line items.
+ */
+function normalizeBillItems(items: any[]): any[] {
+  return (items || []).map((item: any) => ({
+    ...item,
+    menuItemId: item?.product?.id || item?.menuItemId,
+    itemName: item?.product?.name || item?.itemName,
+    variantName: item?.selectedVariant?.name || item?.variantName,
+  }));
+}
 
 /**
  * Best-effort stock deduction for a bill's line items. Each item deducts from
  * its product via the centralized stock engine. Failures are logged but NEVER
  * fail the bill (billing must not break). Overselling is clamped per-item.
+ *
+ * Phase A double-deduction guard: items whose product has an ACTIVE recipe
+ * (keys `productId::variantName`) are SKIPPED here — their ingredient stock is
+ * consumed through recipe consumption instead, so the same physical stock is
+ * never deducted twice. Products without a recipe keep the legacy deduction.
  */
-async function deductBillStock(items: any[], ctx: { restaurantId?: string; branchId?: string; operator?: string }) {
+async function deductBillStock(items: any[], ctx: { restaurantId?: string; branchId?: string; operator?: string }, skipRecipeKeys?: Set<string>) {
   if (!ctx.restaurantId || !Array.isArray(items)) return;
   for (const item of items) {
     const productId = item?.product?.id || item?.menuItemId;
     const qty = Number(item?.quantity) || 0;
     if (!productId || qty <= 0) continue;
+    const variant = item?.selectedVariant?.name || item?.variantName || '';
+    if (skipRecipeKeys && skipRecipeKeys.has(`${productId}::${variant}`)) continue; // recipe consumes ingredients
     try {
       await stockMovementService.applyMovement({
         restaurantId: ctx.restaurantId,
@@ -51,13 +119,18 @@ async function deductBillStock(items: any[], ctx: { restaurantId?: string; branc
 
 /**
  * Best-effort stock restore when a bill is voided (return movement).
+ * Phase A: items whose product was recipe-consumed (keys `productId::variantName`)
+ * are SKIPPED here — recipe consumption reversal restores their ingredients, so
+ * restoring the menu product as well would over-restore stock.
  */
-async function restoreBillStock(items: any[], ctx: { restaurantId?: string; branchId?: string; operator?: string }) {
+async function restoreBillStock(items: any[], ctx: { restaurantId?: string; branchId?: string; operator?: string }, skipRecipeKeys?: Set<string>) {
   if (!ctx.restaurantId || !Array.isArray(items)) return;
   for (const item of items) {
     const productId = item?.menuItemId || item?.product?.id;
     const qty = Number(item?.quantity) || 0;
     if (!productId || qty <= 0) continue;
+    const variant = item?.selectedVariant?.name || item?.variantName || '';
+    if (skipRecipeKeys && skipRecipeKeys.has(`${productId}::${variant}`)) continue; // reversed via recipe consumption
     try {
       await stockMovementService.applyMovement({
         restaurantId: ctx.restaurantId,
@@ -101,6 +174,35 @@ export class BillService {
     // the post-increment value minus 1.
     return (counter?.sequence ?? startingNumber) - 1;
   }
+
+  /**
+   * Reserve a contiguous range of invoice numbers for ONE terminal.
+   *
+   * Atomically advances the shared InvoiceCounter by `size`, so reserved ranges
+   * never overlap — neither with other terminals' ranges nor with single numbers
+   * issued by getNextInvoiceNumber. A terminal draws offline bills from its own
+   * reserved range, so two offline terminals can never collide on invoice
+   * numbers (the previous localStorage fallback seeded every terminal at 1001).
+   *
+   * @param size - how many numbers to reserve (clamped 1..10000, default 100)
+   * @returns The inclusive [start, end] range owned by the caller.
+   */
+  async reserveInvoiceRange(size: number = 100): Promise<{ start: number; end: number }> {
+    const safeSize = Math.max(1, Math.min(Math.floor(size) || 1, 10000));
+    const counter = await InvoiceCounter.findOneAndUpdate(
+      { name: 'invoice' },
+      { $inc: { sequence: safeSize } },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      }
+    ).lean();
+    // Same semantics as getNextInvoiceNumber: on first upsert the default
+    // sequence is 1001, so the first reserved range starts at 1001.
+    const end = (counter?.sequence ?? 1001) - 1;
+    return { start: end - safeSize + 1, end };
+  }
   /**
    * List bills with optional filtering by date, branch, payment method.
    * Restaurant isolation: scoped to the requesting restaurant when known.
@@ -117,7 +219,70 @@ export class BillService {
     // so historical data never disappears from Receipt History / reports.
     if (params.restaurantId) query.restaurantId = { $in: [params.restaurantId, null] };
 
-    return billRepo.findAll(query, { sort: { createdAt: -1 } });
+    const docs = await billRepo.findAll(query, { sort: { createdAt: -1 } });
+    // Lazy backfill receipt QR capabilities on legacy bills (best-effort,
+    // never fails the list).
+    try {
+      await Promise.all(
+        (docs.data || [])
+          .filter((b: any) => b && !(b as any).receiptToken)
+          .map((b: any) => ensureReceiptToken(b))
+      );
+    } catch { /* non-fatal */ }
+
+    // Attach line items so receipt reprints / report drill-downs can render
+    // the real item rows + per-slab tax summary (list responses used to arrive
+    // with an empty items array). Best-effort and never fails the list.
+    try {
+      const billIds = (docs.data || []).map((b: any) => String(b._id));
+      if (billIds.length > 0) {
+        // Build both ObjectId and string versions of the IDs to handle the
+        // common case where billId is stored as an ObjectId but queried as
+        // a string (or vice versa) — MongoDB $in matches either.
+        const validObjectIds = billIds.filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+        const objectIds = validObjectIds.map((id: string) => new mongoose.Types.ObjectId(id));
+        const all = await billItemRepo.findAll(
+          { billId: { $in: [...objectIds, ...billIds] } } as any,
+          { sort: { createdAt: 1 }, limit: Math.max(1000, billIds.length * 100) }
+        );
+        let byBill = new Map<string, any[]>();
+        for (const it of (all as any).data || []) {
+          const key = String((it as any).billId);
+          const arr = byBill.get(key) || [];
+          arr.push(it);
+          byBill.set(key, arr);
+        }
+        // If the repo query returned no items but bills have revenue, try a
+        // direct Model.find with explicit casting as a last resort.
+        const hasRevenue = (docs.data || []).some((b: any) => (b as any).grandTotal > 0);
+        const hasEmptyItems = [...byBill.values()].every(arr => arr.length === 0);
+        if (hasRevenue && hasEmptyItems && billIds.length > 0) {
+          try {
+            const { default: BillItemModel } = await import('../models/BillItem');
+            const directItems = await BillItemModel.find(
+              { billId: { $in: [...objectIds, ...billIds] } }
+            ).sort({ createdAt: 1 }).lean().exec();
+            if (directItems.length > 0) {
+              byBill = new Map<string, any[]>();
+              for (const it of directItems) {
+                const key = String((it as any).billId);
+                const arr = byBill.get(key) || [];
+                arr.push(it);
+                byBill.set(key, arr);
+              }
+            }
+          } catch (err: any) {
+            console.warn('[BillService] direct BillItem fallback failed:', err.message);
+          }
+        }
+        for (const b of docs.data || []) {
+          (b as any).items = byBill.get(String((b as any)._id)) || [];
+        }
+      }
+    } catch (err: any) {
+      console.warn('[BillService] item attachment failed:', err?.message);
+    }
+    return docs;
   }
 
   /**
@@ -130,6 +295,10 @@ export class BillService {
     if (ctx.restaurantId && (bill as any).restaurantId && (bill as any).restaurantId.toString() !== ctx.restaurantId) {
       return null;
     }
+
+    // Legacy bills predating the receipt-QR feature get a lazily minted
+    // capability so reprints always carry a working (12h-expiring) QR.
+    await ensureReceiptToken(bill);
 
     const items = await billItemRepo.findAll({ billId: id } as any, { sort: { createdAt: 1 } });
     return {
@@ -219,6 +388,144 @@ export class BillService {
   }
 
   /**
+   * Phase 3 — Authoritative pricing for configured line items.
+   *
+   * For every item carrying a `configuration.selections`:
+   *   1. Resolve the product configuration (tenant-scoped) — same resolver the
+   *      POS used, so online and offline pricing come from ONE rule.
+   *   2. Validate the selection with the Phase 1 validator (stable codes).
+   *   3. Reprice with the deterministic pricing engine.
+   *   4. origin === 'offline'  → keep the client's historical price (snapshot
+   *      is authoritative; a completed offline sale is never rewritten by a
+   *      catalog change). Structure is still validated — structural failures
+   *      are logged, not fatal, so a deleted/archived config never bricks the
+   *      offline bill replay.
+   *   5. origin === 'online'  → the recomputed price is authoritative; any
+   *      meaningful mismatch with the client-supplied price rejects the bill
+   *      (an arbitrary "price: 1" payload can never bypass server pricing).
+   *
+   * Returns a Map<itemId, { price, snapshot }> where `price` is the unit price
+   * to persist. Legacy items are absent from the map (price untouched).
+   */
+  private async resolveConfiguredItemPricing(
+    items: any[],
+    ctx: { restaurantId?: string; branchId?: string; operator?: string },
+    billData: any
+  ): Promise<Map<string, { price: number; snapshot: any }>> {
+    const map = new Map<string, { price: number; snapshot: any }>();
+    if (!ctx.restaurantId || !Array.isArray(items)) return map;
+
+    for (const item of items) {
+      const selection = item?.configuration;
+      const snapshot = item?.pricingSnapshot;
+      const origin: 'online' | 'offline' = snapshot?.origin === 'offline' ? 'offline' : 'online';
+      const productId = item?.product?.id || item?.menuItemId;
+      const isFree = !!item?.isFree;
+      if (!selection?.selections?.length || !productId) continue;
+      if (isFree) continue; // free reward items stay free
+
+      let resolved;
+      try {
+        resolved = await resolveProductConfiguration(ctx.restaurantId, String(productId));
+      } catch (err: any) {
+        if (origin === 'offline') {
+          // Historical offline sale — product may have been deleted since. Keep
+          // the snapshot price and let the bill sync (structure was valid at
+          // sale time; the snapshot carries the version evidence).
+          console.warn('[BillService] offline configured item not re-resolvable, keeping snapshot:', item?.itemName || productId, err.message);
+          map.set(String(item.id), {
+            price: Number(item.price) || 0,
+            snapshot: {
+              ...(snapshot ?? {}),
+              origin,
+              basePrice: (snapshot?.basePrice ?? Number(item.price)) || 0,
+              grossItemPrice: Number(item.price) || 0,
+              configVersion: snapshot?.configVersion ?? 0,
+              pricingVersion: snapshot?.pricingVersion ?? 0,
+            },
+          });
+          continue;
+        }
+        throw err;
+      }
+
+      const validation = validateProductConfigurationSelection(resolved, selection);
+      if (!validation.valid) {
+        const first = validation.errors[0];
+        if (origin === 'offline') {
+          console.warn('[BillService] offline configured item structurally invalid, keeping snapshot:', item?.itemName || productId, first?.code, first?.message);
+          map.set(String(item.id), {
+            price: Number(item.price) || 0,
+            snapshot: {
+              ...(snapshot ?? {}),
+              origin,
+              basePrice: (snapshot?.basePrice ?? Number(item.price)) || 0,
+              grossItemPrice: Number(item.price) || 0,
+              configVersion: resolved.configVersion,
+              pricingVersion: snapshot?.pricingVersion ?? 0,
+            },
+          });
+          continue;
+        }
+        throw new AppError(400, `Invalid configuration for ${item?.product?.name || productId}: ${first?.code} — ${first?.message}`);
+      }
+
+      const qty = Math.max(1, Number(item?.quantity) || 1);
+      const price = calculateLineItemPrice(resolved, selection, qty);
+      const unitPrice = price.grossItemPrice;
+
+      if (origin === 'offline') {
+        // Historical snapshot is authoritative — keep the price paid at sale.
+        map.set(String(item.id), {
+          price: Number(item.price) || 0,
+          snapshot: {
+            basePrice: price.basePrice,
+            variantDelta: price.variantDelta,
+            modifierDelta: price.modifierDelta,
+            addonDelta: price.addonDelta,
+            grossItemPrice: Number(item.price) || 0,
+            lineTotal: price.lineTotal,
+            configVersion: price.configVersion,
+            pricingVersion: price.pricingVersion,
+            origin,
+          },
+        });
+        continue;
+      }
+
+      // Online — authoritative reprice. A mismatch means the catalog changed
+      // after the cashier configured the item (or the client lied): reject so
+      // the cashier refreshes, rather than silently billing a wrong total.
+      const clientUnit = Number(item.price) || 0;
+      if (Math.abs(unitPrice - clientUnit) > 0.01) {
+        console.warn('[BillService] configured item price mismatch (client vs server):',
+          item?.itemName || productId, clientUnit, 'vs', unitPrice);
+        throw new AppError(
+          400,
+          `Price changed for ${item?.product?.name || productId} — refresh the item and retry (expected ${unitPrice.toFixed(2)}, got ${clientUnit.toFixed(2)})`
+        );
+      }
+
+      map.set(String(item.id), {
+        price: unitPrice,
+        snapshot: {
+          basePrice: price.basePrice,
+          variantDelta: price.variantDelta,
+          modifierDelta: price.modifierDelta,
+          addonDelta: price.addonDelta,
+          grossItemPrice: unitPrice,
+          lineTotal: price.lineTotal,
+          configVersion: price.configVersion,
+          pricingVersion: price.pricingVersion,
+          origin: 'online',
+        },
+      });
+    }
+
+    return map;
+  }
+
+  /**
    * Verify an Owner/Manager PIN for refund/void authorization.
    * Checks every active Owner/Manager employee of the restaurant; returns true
    * when any matches (bcrypt compare).
@@ -279,15 +586,30 @@ export class BillService {
 
     // ── Loyalty customer resolution (Phase 1.6) ──────────────
     // Bills now reference customerId (phone snapshot kept for historical
-    // integrity). Resolution is tenant-scoped and best-effort.
+    // integrity). Resolution is tenant-scoped and best-effort. When the phone
+    // belongs to NO existing customer (first-time diner typing their number),
+    // the customer is ENROLLED server-side so the very first bill earns the
+    // spend + welcome points — otherwise a concurrent createCustomer race leaves
+    // customerId unset and recordBill (and thus points) silently skipped.
     if (billData.customerPhone && ctx.restaurantId && !billData.customerId) {
       try {
-        const cust = await Customer.findOne({
+        let cust = await Customer.findOne({
           phone: billData.customerPhone,
           restaurantId: ctx.restaurantId,
         }).lean().exec();
+        if (!cust) {
+          const created = await customerService.create(ctx.restaurantId, {
+            phone: billData.customerPhone,
+            name: billData.customerName || 'Guest Diner',
+          }, { operator: billData.cashierName || ctx.operator, branchId: ctx.branchId });
+          if (created && created.customer) {
+            cust = created.customer;
+          } else if (created && created.existing) {
+            cust = created.existing;
+          }
+        }
         if (cust) {
-          billData.customerId = cust._id;
+          billData.customerId = String(cust._id);
           billData.customerName = billData.customerName || cust.name;
         }
       } catch (err: any) {
@@ -295,32 +617,123 @@ export class BillService {
       }
     }
 
+    // ── Phase 3 — Configured-item authoritative pricing ────────────
+    // For items carrying a configuration selection, re-resolve the product's
+    // configuration with tenant isolation, revalidate the selection, and
+    // reprice with the deterministic pricing engine. Online-origin items are
+    // REPRICED authoritatively (a client-supplied mismatch is rejected — never
+    // trusted); offline-origin items keep their immutable historical snapshot
+    // (a completed offline sale is never rewritten by today's catalog). Legacy
+    // items without configuration pass through untouched. Runs BEFORE the bill
+    // is created so a rejected online mismatch can never leave an orphan row.
+    const configuredInfo = await this.resolveConfiguredItemPricing(items, ctx, billData);
+
+    // ── Phase 4 — Financial invariants (server-side) ─────────────────
+    // The terminal is an offline-first trusted device, but the persisted
+    // record must still be internally consistent: discount can never exceed
+    // the subtotal, and the grand total must reconcile as
+    // subtotal − discount + gst. This catches stray keystrokes (an unbounded
+    // manual-discount input), client tampering, and corrupt offline payloads
+    // BEFORE a wrong record is persisted.
+    const rawSubtotal = Number(billData.subtotal) || 0;
+    let rawDiscount = Number(billData.discount) || 0;
+    const rawGst = Number(billData.gst) || 0;
+    const rawGrandTotal = Number(billData.grandTotal) || 0;
+    if (rawDiscount > rawSubtotal + 0.01) {
+      // Clamp rather than reject so offline queue replays (which cannot be
+      // corrected from the terminal) still sync. The paid total is unchanged
+      // because the frontend already taxed only the clamped taxable base
+      // (rowTaxable = max(0, rowTotal − rowDiscount)), so grandTotal stays
+      // consistent while the stored discount becomes sane.
+      console.warn(`[BillService] discount ${rawDiscount} exceeded subtotal ${rawSubtotal} — clamped to subtotal (clientRef=${billData.clientRef || 'n/a'})`);
+      rawDiscount = rawSubtotal;
+      billData.discount = rawSubtotal;
+    }
+    const expectedGrandTotal = rawSubtotal - rawDiscount + rawGst;
+    if (Math.abs(rawGrandTotal - expectedGrandTotal) > 0.02) {
+      throw new AppError(
+        400,
+        `Bill totals are inconsistent — subtotal ₹${rawSubtotal.toFixed(2)}, discount ₹${rawDiscount.toFixed(2)}, gst ₹${rawGst.toFixed(2)} do not reconcile with grand total ₹${rawGrandTotal.toFixed(2)}. Please re-open the bill and try again.`
+      );
+    }
+
+    // ── Receipt QR capability (12h expiry) ───────────────────────────
+    // Minted ONCE at creation; the printed receipt QR encodes this URL and
+    // the public endpoint serves a sanitized summary until it expires.
+    const minted = mintReceiptToken();
+    billData.receiptToken = minted.receiptToken;
+    billData.receiptTokenExpiresAt = minted.receiptTokenExpiresAt;
+    billData.receiptUrl = minted.receiptUrl;
+
     // Create the bill
     const bill = await billRepo.create(billData);
 
     // Create bill items with historical snapshots
     if (items && Array.isArray(items) && items.length > 0) {
-      const itemDocs = items.map((item: any) => ({
-        billId: bill._id.toString(),
-        menuItemId: item.product?.id || item.menuItemId,
-        itemName: item.product?.name || item.itemName,
-        priceAtSale: item.price,
-        quantity: item.quantity,
-        gstRateAtSale: item.product?.gstPercent || item.gstRateAtSale || 5,
-        discountAtSale: item.discount || 0,
-        notes: item.notes,
-        variantName: item.selectedVariant?.name,
-        isFree: item.isFree || false,
-      }));
+      const itemDocs = items.map((item: any) => {
+        const info = configuredInfo.get(String(item.id));
+        return {
+          billId: bill._id.toString(),
+          menuItemId: item.product?.id || item.menuItemId,
+          itemName: item.product?.name || item.itemName,
+          priceAtSale: info?.price ?? item.price,
+          quantity: item.quantity,
+          gstRateAtSale: item.product?.gstPercent || item.gstRateAtSale || 5,
+          discountAtSale: item.discount || 0,
+          notes: item.notes,
+          variantName: item.selectedVariant?.name,
+          isFree: item.isFree || false,
+          configurationSnapshot: info?.snapshot ? { selections: item.configuration?.selections ?? [] } : undefined,
+          pricingSnapshot: info?.snapshot ?? undefined,
+          configSummary: item.configSummary || undefined,
+        };
+      });
       await billItemRepo.bulkCreate(itemDocs as any);
     }
 
+    // ── Phase A — Recipe consumption + double-deduction guard ──────
+    // The bill and its line items are now safely persisted. Products with an
+    // ACTIVE recipe are prepared items: their ingredient stock is consumed via
+    // recipe consumption, so the legacy per-menu-product deduction below is
+    // SKIPPED for them (never deduct the same physical stock twice). Products
+    // without a recipe keep the legacy path unchanged.
+    const restaurantId = ctx.restaurantId || billData.restaurantId;
+    const branchId = ctx.branchId || billData.branchId;
+    const normalizedItems = normalizeBillItems(items);
+    const recipeKeys = await consumptionService.activeRecipeKeys(restaurantId, normalizedItems);
+
     // Stock engine: deduct stock for every sold item (best-effort, clamped).
-    await deductBillStock(items, {
-      restaurantId: ctx.restaurantId || billData.restaurantId,
-      branchId: ctx.branchId || billData.branchId,
+    await deductBillStock(normalizedItems, {
+      restaurantId,
+      branchId,
       operator: ctx.operator || billData.cashierName,
-    });
+    }, recipeKeys);
+
+    // Recipe consumption — best-effort and NEVER fails billing. Any failure is
+    // logged + audited so it stays observable while the completed bill
+    // response remains successful.
+    try {
+      await consumptionService.generateForBill(bill, normalizedItems, {
+        restaurantId,
+        branchId,
+        operator: ctx.operator || billData.cashierName,
+      });
+    } catch (err: any) {
+      console.error('[BillService] recipe consumption failed (non-fatal):', err.message);
+      try {
+        await auditLogRepo.create({
+          action: 'RECIPE_CONSUMPTION_FAILED',
+          entityType: 'bill',
+          entityId: bill._id.toString(),
+          performedBy: billData.cashierName || 'System',
+          details: {
+            clientRef: billData.clientRef,
+            invoiceNumber: billData.invoiceNumber,
+            error: err.message,
+          },
+        } as any);
+      } catch { /* audit failure must not fail the bill either */ }
+    }
 
     // Daily sales snapshot (best-effort upsert).
     await this.bumpDailySummary({
@@ -418,6 +831,17 @@ export class BillService {
       },
     } as any);
 
+    // Live broadcast: other terminals see the new bill in receipt history instantly.
+    try {
+      const { emitToRestaurant } = await import('../socket');
+      emitToRestaurant(ctx.restaurantId, 'bill:created', {
+        billId: bill._id.toString(),
+        invoiceNumber: billData.invoiceNumber,
+        grandTotal: billData.grandTotal,
+        paymentMethod: billData.paymentMethod,
+      });
+    } catch { /* socket not ready — non-fatal */ }
+
     return this.getById(bill._id.toString());
   }
 
@@ -430,7 +854,7 @@ export class BillService {
    */
   async voidBill(id: string, voidData: { reason: string; voidedBy: string; managerPin?: string }, ctx: { restaurantId?: string; branchId?: string } = {}) {
     const existing = await billRepo.findById(id);
-    // Tenant isolation first (parity with refundBill) — a bill outside the
+    // Tenant isolation first — a bill outside the
     // requester's restaurant is not found, before any state checks that could
     // leak another restaurant's bill state.
     if (ctx.restaurantId && existing && (existing as any).restaurantId && (existing as any).restaurantId.toString() !== ctx.restaurantId) {
@@ -465,12 +889,54 @@ export class BillService {
 
     if (!bill) return null;
 
+    // ── Phase A — Void reversal ───────────────────────────────────
+    // The bill's products that were recipe-consumed are skipped in the legacy
+    // restore below (their ingredients are restored via recipe reversal), then
+    // the consumption record is reversed. Both are best-effort: a reversal
+    // failure never turns a void into an error response.
+    //
+    // The skip set comes from the RecipeConsumption RECORD (what was actually
+    // consumed at sale time), not from re-resolving current recipe state — a
+    // recipe deactivated after the sale must not turn the legacy restore back
+    // on for a menu product that was never deducted.
+    const voidRestaurantId = ctx.restaurantId || (bill as any).restaurantId;
+    const normalizedVoidItems = normalizeBillItems(items);
+    let voidRecipeKeys = new Set<string>();
+    try {
+      const record = await consumptionService.getByBill(voidRestaurantId, id);
+      if (record && Array.isArray(record.lines)) {
+        for (const line of record.lines) {
+          voidRecipeKeys.add(`${line.productId}::${line.variantName || ''}`);
+        }
+      }
+    } catch { /* non-fatal — fall back to legacy restore for all items */ }
+
     // Stock engine: restore stock for every item on the voided bill.
-    await restoreBillStock(items, {
-      restaurantId: ctx.restaurantId || (bill as any).restaurantId,
+    await restoreBillStock(normalizedVoidItems, {
+      restaurantId: voidRestaurantId,
       branchId: ctx.branchId || (bill as any).branchId,
       operator: voidData.voidedBy,
-    });
+    }, voidRecipeKeys);
+
+    // Reverse recipe consumption for this bill (restores consumed ingredients).
+    try {
+      await consumptionService.reverseForBill(id, {
+        restaurantId: voidRestaurantId,
+        branchId: ctx.branchId || (bill as any).branchId,
+        operator: voidData.voidedBy,
+      }, `Bill voided: ${voidData.reason}`);
+    } catch (err: any) {
+      console.error('[BillService] recipe consumption reversal failed (non-fatal):', err.message);
+      try {
+        await auditLogRepo.create({
+          action: 'RECIPE_CONSUMPTION_REVERSAL_FAILED',
+          entityType: 'bill',
+          entityId: id,
+          performedBy: voidData.voidedBy,
+          details: { reason: voidData.reason, error: err.message },
+        } as any);
+      } catch { /* audit failure must not fail the void either */ }
+    }
 
     // Daily summary decrement — mirror the refund path so a voided bill does
     // not leave inflated revenue/orders in the daily snapshot (best-effort).
@@ -501,6 +967,17 @@ export class BillService {
       performedBy: voidData.voidedBy,
       details: { reason: voidData.reason },
     } as any);
+
+    // Live broadcast: other terminals see the voided bill + restored stock instantly.
+    try {
+      const { emitToRestaurant } = await import('../socket');
+      emitToRestaurant(ctx.restaurantId || (bill as any).restaurantId, 'bill:voided', {
+        billId: id,
+        invoiceNumber: (bill as any).invoiceNumber,
+        reason: voidData.reason,
+        voidedBy: voidData.voidedBy,
+      });
+    } catch { /* socket not ready — non-fatal */ }
 
     return bill;
   }
@@ -533,7 +1010,19 @@ export class BillService {
     } catch { /* non-fatal */ }
 
     // Resolve which quantities to refund: full bill when no subset given.
+    // Phase 4 — refund the AMOUNT ACTUALLY PAID, never the raw pre-tax
+    // pre-discount subtotal. The customer paid grandTotal = subtotal −
+    // discount + gst; handing back the raw subtotal would over-refund when
+    // discount > gst and under-refund (withholding tax) when discount < gst,
+    // and would also break the daily-summary reversal (revenue is recorded as
+    // grandTotal). Each refunded line is scaled by paidRatio = grandTotal /
+    // subtotal so a full refund always equals grandTotal and a partial refund
+    // never exceeds it.
     const requested = data.items && data.items.length > 0 ? data.items : undefined;
+    const billSubtotal = Math.max(0, Number((bill as any).subtotal) || 0);
+    const billGrandTotal = Math.max(0, Number((bill as any).grandTotal) || 0);
+    const paidRatio = billSubtotal > 0 ? billGrandTotal / billSubtotal : 1;
+    const scale = (amount: number) => Math.round(amount * paidRatio * 100) / 100;
     const refundLines: Array<{ menuItemId?: string; itemName: string; quantity: number; amount: number }> = [];
     const restoreTargets: any[] = [];
     let refundAmount = 0;
@@ -542,11 +1031,11 @@ export class BillService {
       // Full refund of every line.
       for (const item of originalItems) {
         const qty = Number(item.quantity) || 0;
-        const amount = (Number(item.priceAtSale) || 0) * qty;
+        const amount = scale((Number(item.priceAtSale) || 0) * qty);
         if (amount <= 0 && qty <= 0) continue;
         refundLines.push({ menuItemId: item.menuItemId, itemName: item.itemName || 'Item', quantity: qty, amount });
         refundAmount += amount;
-        restoreTargets.push({ menuItemId: item.menuItemId || item.product?.id, quantity: qty });
+        restoreTargets.push({ menuItemId: item.menuItemId || item.product?.id, quantity: qty, variantName: item.variantName || undefined });
       }
     } else {
       // Partial refund — match requested items to original lines (by menuItemId
@@ -561,21 +1050,50 @@ export class BillService {
         if (!original) continue;
         const refundQty = Math.min(qty, Number(original.quantity) || 0);
         if (refundQty <= 0) continue;
-        const amount = (Number(original.priceAtSale) || 0) * refundQty;
+        const amount = scale((Number(original.priceAtSale) || 0) * refundQty);
         refundLines.push({ menuItemId: original.menuItemId, itemName: original.itemName || 'Item', quantity: refundQty, amount });
         refundAmount += amount;
-        restoreTargets.push({ menuItemId: original.menuItemId, quantity: refundQty });
+        restoreTargets.push({ menuItemId: original.menuItemId, quantity: refundQty, variantName: original.variantName || undefined });
       }
       if (refundLines.length === 0) throw new AppError(400, 'No matching bill items found for the requested refund');
     }
 
+    // Phase 4 — invariant: a refund can never exceed the amount actually paid.
+    // Guards floating-point drift in the proportional scaling above.
+    if (refundAmount > billGrandTotal + 0.01) {
+      const excess = refundAmount - billGrandTotal;
+      refundAmount = billGrandTotal;
+      // Trim the excess from the LAST line so per-line amounts stay consistent.
+      const last = refundLines[refundLines.length - 1];
+      if (last) last.amount = Math.max(0, Math.round((last.amount - excess) * 100) / 100);
+    }
+
+    // ── Phase A — Refund recipe reversal ──────────────────────────
+    // Refunded products that were recipe-consumed skip the legacy menu-product
+    // restore (their ingredients are reversed via reversePartial below), so the
+    // same physical stock is never restored twice. Both are best-effort. As in
+    // the void path, the skip set comes from the consumption RECORD — the
+    // authoritative list of what was consumed at sale time.
+    const refundRestaurantId = ctx.restaurantId || (bill as any).restaurantId;
+    let refundRecipeKeys = new Set<string>();
+    try {
+      const record = await consumptionService.getByBill(refundRestaurantId, id);
+      if (record && Array.isArray(record.lines)) {
+        for (const line of record.lines) {
+          refundRecipeKeys.add(`${line.productId}::${line.variantName || ''}`);
+        }
+      }
+    } catch { /* non-fatal — fall back to legacy restore for all items */ }
+
     // Restore stock for every refunded quantity (return movement).
-    if (restoreTargets.length > 0 && ctx.restaurantId) {
+    if (restoreTargets.length > 0 && refundRestaurantId) {
       for (const t of restoreTargets) {
         if (!t.menuItemId || t.quantity <= 0) continue;
+        const variant = t.variantName || '';
+        if (refundRecipeKeys.has(`${t.menuItemId}::${variant}`)) continue; // reversed via recipe consumption
         try {
           await stockMovementService.applyMovement({
-            restaurantId: ctx.restaurantId,
+            restaurantId: refundRestaurantId,
             branchId: ctx.branchId,
             productId: t.menuItemId,
             delta: t.quantity,
@@ -587,6 +1105,28 @@ export class BillService {
           console.warn('[BillService] refund stock restore skipped:', t.menuItemId, err.message);
         }
       }
+    }
+
+    // Reverse the refunded portion of recipe consumption (restores the exact
+    // refunded quantity of each ingredient). Never fails the refund response.
+    try {
+      await consumptionService.reversePartial(
+        id,
+        refundLines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity })),
+        { restaurantId: refundRestaurantId, branchId: ctx.branchId, operator: data.refundedBy },
+        `Refund: ${data.reason}`
+      );
+    } catch (err: any) {
+      console.error('[BillService] recipe consumption partial reversal failed (non-fatal):', err.message);
+      try {
+        await auditLogRepo.create({
+          action: 'RECIPE_CONSUMPTION_REVERSAL_FAILED',
+          entityType: 'bill',
+          entityId: id,
+          performedBy: data.refundedBy,
+          details: { reason: data.reason, error: err.message },
+        } as any);
+      } catch { /* audit failure must not fail the refund either */ }
     }
 
     // Reverse earned loyalty points proportionally (best-effort, Phase 1.6).

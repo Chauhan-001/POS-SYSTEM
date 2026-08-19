@@ -24,11 +24,12 @@
  * - SAFE TO EXTEND: Add new workspace tab cases inside the workspace router switch
  * ============================================================================
  */
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import { normalizeRole, type Order, type Bill, type LoyaltyReward } from './types';
-import { setDBData, getDBData } from './data';
+import { setDBData, getDBData, localDateKey, clearAllCache } from './data';
+import { decideFirstRun } from './firstRun';
 import { syncEngine } from './lib/syncEngine';
 import { workspaceToPath, pathToWorkspace, DEFAULT_WORKSPACE, type WorkspaceName } from './routes';
 import * as api from './api/client';
@@ -37,6 +38,7 @@ import { getOrCreateDeviceId } from './api/axios';
 import { setAiAuth, setAiToken } from './ai/aiClient';
 import { debugWarn } from './utils/debugLog';
 import { computeKOTDelta } from './utils/kotDelta';
+import { mergeOrdersWithServer } from './utils/orderMerge';
 import { computeRunningBillTotals } from './utils/runningBill';
 import { printKOT } from './utils/printKOT';
 import { isKotAlertEnabled, playKotAlertSound } from './lib/alertSound';
@@ -52,6 +54,10 @@ import ShortcutsGuide from '../components/ShortcutsGuide';
 import KOTModal from '../components/KOTModal';
 import OrderTimeline from '../components/OrderTimeline';
 import AddOnModal, { hasCustomizationOptions, getAddOnsForCategory } from '../components/AddOnModal';
+import ConfiguredItemModal from '../components/ConfiguredItemModal';
+import { hasConfigSelection } from './lib/configSelection';
+import { useConfigCatalog } from './hooks/useConfigCatalog';
+import type { ResolvedProductConfig } from './types';
 import AppTitleBar from '../components/AppTitleBar';
 import AppSidebar from '../components/AppSidebar';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -99,6 +105,7 @@ const ReservationWorkspace = safeLazy(() => import('../components/ReservationWor
 const AnalyticsWorkspace = safeLazy(() => import('../components/AnalyticsWorkspace'));
 const FinanceWorkspace = safeLazy(() => import('../components/FinanceWorkspace'));
 const InventoryManager = safeLazy(() => import('../components/inventory/InventoryManager'));
+const FeedbackPanel = safeLazy(() => import('../components/marketing/FeedbackPanel'));
 const GuidedTour = safeLazy(() => import('../components/GuidedTour'));
 
 // Hooks
@@ -110,7 +117,7 @@ import { useLoyalty } from './hooks/useLoyalty';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { usePOSLiveEvents } from './hooks/usePOSLiveEvents';
 import { useKotAlertSound } from './hooks/useKotAlertSound';
-import type { PendingCall } from '../components/CustomerCallsPanel';
+import { isOrderResolvedStatus, type PendingCall } from '../components/CustomerCallsPanel';
 // Modal components
 import ConfirmationDialog from './components/modals/ConfirmationDialog';
 import PaymentConfirmModal from './components/modals/PaymentConfirmModal';
@@ -125,7 +132,6 @@ import ZReportModal from './components/modals/ZReportModal';
 import SyncPanelModal from './components/modals/SyncPanelModal';
 import VoidReasonModal from './components/modals/VoidReasonModal';
 import BillActionModal from './components/modals/BillActionModal';
-import LayoutDiagnostic from './components/LayoutDiagnostic';
 
 export default function App() {
   // Toast/notifications
@@ -133,6 +139,8 @@ export default function App() {
 
   // Core POS state — everything comes from here
   const pos = usePOSState();
+  // Phase 3 — offline-capable menu catalog (config resolutions for the POS).
+  const configCatalog = useConfigCatalog();
   // Quick Sound Alerts: beep on new KOTs from ANY workspace (not just KDS).
   useKotAlertSound(pos.orders, pos.settings);
   // Live socket: refetch orders after an adjustment so this terminal's KDS
@@ -142,28 +150,10 @@ export default function App() {
     api.fetchOrders()
       .then((list: any) => {
         if (!Array.isArray(list) || list.length === 0) return;
-        pos.setOrders((prev: any[]) => {
-          const incoming = new Map(list.map((o: any) => [o._id || o.id, o]));
-          const next = prev.map((o: any) => {
-            const fresh = incoming.get(o._id || o.id);
-            if (!fresh) return o;
-            // List rows carry kotRecords but items/timeline are separate
-            // collections — keep the local copies when the fresh row is empty.
-            return {
-              ...o,
-              ...fresh,
-              items: fresh.items?.length ? fresh.items : o.items,
-              timeline: fresh.timeline?.length ? fresh.timeline : o.timeline,
-            };
-          });
-          // Append any orders missing locally (adjusted on another terminal
-          // while this one had never seen the order).
-          for (const fresh of list) {
-            const id = fresh._id || fresh.id;
-            if (id && !next.some((o: any) => (o._id || o.id) === id)) next.push(fresh);
-          }
-          return next;
-        });
+        // Monotonic merge: a snapshot fetched before an in-flight KOT status
+        // PUT commits must never regress a locally Served KOT back to
+        // Accepted (the KDS would re-show the order under New Orders).
+        pos.setOrders((prev: any[]) => mergeOrdersWithServer(prev, list));
       })
       .catch(() => undefined);
   }, [pos.setOrders]);
@@ -196,24 +186,8 @@ export default function App() {
             printKOT({ ...fresh, id } as any, kots[0] as any, pos.settings);
           }
         }
-        pos.setOrders((prev: any[]) => {
-          const incoming = new Map(list.map((o: any) => [o._id || o.id, o]));
-          const next = prev.map((o: any) => {
-            const fresh = incoming.get(o._id || o.id);
-            if (!fresh) return o;
-            return {
-              ...o,
-              ...fresh,
-              items: fresh.items?.length ? fresh.items : o.items,
-              timeline: fresh.timeline?.length ? fresh.timeline : o.timeline,
-            };
-          });
-          for (const fresh of list) {
-            const id = fresh._id || fresh.id;
-            if (id && !next.some((o: any) => (o._id || o.id) === id)) next.push(fresh);
-          }
-          return next;
-        });
+        // Monotonic merge — never regress a locally Served KOT (see above).
+        pos.setOrders((prev: any[]) => mergeOrdersWithServer(prev, list));
       })
       .catch(() => undefined);
     pos.refreshTables().catch(() => undefined);
@@ -234,6 +208,8 @@ export default function App() {
     createdAt: r.createdAt,
     // Lifecycle — kept on acknowledged calls so the panel can show timestamps.
     status: r.status || undefined,
+    seenAt: r.seenAt || undefined,
+    seenBy: r.seenBy || undefined,
     completedAt: r.completedAt || undefined,
     completedBy: r.completedBy || undefined,
     // ONLINE_ORDER rows carry the order so staff can open it straight away.
@@ -246,7 +222,7 @@ export default function App() {
   const [pendingCalls, setPendingCalls] = React.useState<PendingCall[]>([]);
   const [acknowledgedCalls, setAcknowledgedCalls] = React.useState<PendingCall[]>([]);
   const refreshPendingCalls = useCallback(() => {
-    if (!pos.currentEmployee || !navigator.onLine) return;
+    if (!pos.currentEmployee || !navigator.onLine) return Promise.resolve();
     // Branch isolation — pass the active branchId to the server (defense in
     // depth) AND re-filter locally; branchless calls are kept, other branches'
     // calls are hidden in multi-branch mode.
@@ -256,19 +232,36 @@ export default function App() {
       );
     const params: { status: string; branchId?: string } = { status: 'PENDING' };
     if (pos.shouldFilterByBranch && pos.currentBranchId) params.branchId = pos.currentBranchId;
-    api.fetchWaiterRequests(params)
-      .then((list: any) => {
-        if (Array.isArray(list)) setPendingCalls(scoped(list));
-      })
-      .catch(() => undefined);
+    // Silenced online-order notifications are SEEN but still live — the card
+    // stays visible (no sound) until the order's bill closes, when
+    // orderService auto-completes them. Only ONLINE_ORDER SEEN rows are
+    // merged back into the pending list (assigned SEEN bell rows stay hidden).
+    const seenParams: { status: string; branchId?: string } = { status: 'SEEN' };
+    if (pos.shouldFilterByBranch && pos.currentBranchId) seenParams.branchId = pos.currentBranchId;
     // Acknowledged calls stay on screen as a record (last 50, newest first).
     const doneParams: { status: string; branchId?: string; limit: number } = { status: 'COMPLETED', limit: 50 };
     if (pos.shouldFilterByBranch && pos.currentBranchId) doneParams.branchId = pos.currentBranchId;
-    api.fetchWaiterRequests(doneParams as any)
-      .then((list: any) => {
-        if (Array.isArray(list)) setAcknowledgedCalls(scoped(list));
-      })
-      .catch(() => undefined);
+    return Promise.all([
+      Promise.all([api.fetchWaiterRequests(params), api.fetchWaiterRequests(seenParams)])
+        .then(([ringing, silenced]) => {
+          // Pending list = PENDING calls + SEEN online-order cards (silenced
+          // reminders that stay live until their bill closes). Merge once to
+          // avoid the two fetches racing each other and dropping a card.
+          const merged = [
+            ...(Array.isArray(ringing) ? scoped(ringing) : []),
+            ...(Array.isArray(silenced) ? scoped(silenced).filter((c) => c.type === 'ONLINE_ORDER') : []),
+          ];
+          const byId = new Map<string, PendingCall>();
+          for (const c of merged) if (c.id) byId.set(c.id, c);
+          setPendingCalls([...byId.values()].sort((a, b) =>
+            String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
+          ));
+        })
+        .catch(() => undefined),
+      api.fetchWaiterRequests(doneParams as any)
+        .then((list: any) => { if (Array.isArray(list)) setAcknowledgedCalls(scoped(list)); })
+        .catch(() => undefined),
+    ]).then(() => undefined);
   }, [pos.currentEmployee, pos.shouldFilterByBranch, pos.currentBranchId, normalizeCall]);
   React.useEffect(() => {
     refreshPendingCalls();
@@ -288,9 +281,35 @@ export default function App() {
   // Acknowledged calls are NOT removed from the panel — they move to the
   // "Acknowledged" section (with completedAt + who did it) so the cashier
   // still has the record. Only PENDING calls ring reminders / bump the badge.
+  /** Order status map (orderId → status) — used to decide whether an online
+   *  order's notification should be silenced (bill open) or completed (bill
+   *  closed). Live via the polled/socket-pushed order list. */
+  const orderStatusById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const o of pos.orders) {
+      const id = String(o.id || '');
+      if (id) m.set(id, o.status || '');
+    }
+    return m;
+  }, [pos.orders]);
+
   const handleAcknowledgeCall = useCallback((id: string) => {
     const who = pos.currentEmployee?.name || '';
     const call = pendingCalls.find((c) => c.id === id);
+    // Online order with an open bill: Acknowledge silences the repeating
+    // sound reminder but the notification card STAYS live (SEEN) until the
+    // order's bill closes — then orderService auto-completes it.
+    if (call?.type === 'ONLINE_ORDER' && call.orderId && !isOrderResolvedStatus(orderStatusById.get(call.orderId))) {
+      setPendingCalls((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, status: 'SEEN', seenAt: new Date().toISOString(), seenBy: who } : c)),
+      );
+      api.markWaiterRequestSeen(id, who).catch(() => {
+        showToast('Could not silence — re-syncing', 'warning');
+        refreshPendingCalls();
+      });
+      return;
+    }
+    // Everything else (or online order whose bill already closed): complete.
     if (call) {
       setAcknowledgedCalls((prev) => [
         { ...call, status: 'COMPLETED', completedAt: new Date().toISOString(), completedBy: who },
@@ -303,20 +322,119 @@ export default function App() {
       if (call) setAcknowledgedCalls((prev) => prev.filter((c) => c.id !== id));
       refreshPendingCalls();
     });
-  }, [pendingCalls, refreshPendingCalls, showToast, pos.currentEmployee?.name]);
+  }, [pendingCalls, refreshPendingCalls, showToast, pos.currentEmployee?.name, orderStatusById]);
+
   const handleAcknowledgeAll = useCallback(() => {
-    const ids = pendingCalls.map((c) => c.id).filter(Boolean);
-    if (ids.length === 0) return;
+    // Bulk action: online orders with an open bill get their reminder silenced
+    // (SEEN — the card stays live until the bill closes); everything else is
+    // completed immediately.
     const who = pos.currentEmployee?.name || '';
     const now = new Date().toISOString();
+    const toSilence: PendingCall[] = [];
+    const toComplete: PendingCall[] = [];
+    for (const c of pendingCalls) {
+      if (c.type === 'ONLINE_ORDER' && c.orderId && !isOrderResolvedStatus(orderStatusById.get(c.orderId))) {
+        toSilence.push(c);
+      } else {
+        toComplete.push(c);
+      }
+    }
+    if (toSilence.length > 0) {
+      setPendingCalls((prev) => {
+        const silencedIds = new Set(toSilence.map((c) => c.id));
+        return prev.map((c) => (silencedIds.has(c.id) ? { ...c, status: 'SEEN', seenAt: now, seenBy: who } : c));
+      });
+      Promise.all(toSilence.map((c) => api.markWaiterRequestSeen(c.id, who).catch(() => null)));
+    }
+    if (toComplete.length > 0) {
+      setAcknowledgedCalls((prev) => [
+        ...toComplete.map((c) => ({ ...c, status: 'COMPLETED', completedAt: now, completedBy: who })),
+        ...prev,
+      ]);
+      setPendingCalls((prev) => prev.filter((c) => !toComplete.some((t) => t.id === c.id)));
+      Promise.all(toComplete.map((c) => api.completeWaiterRequest(c.id, who).catch(() => null)));
+    }
+    if (toSilence.length > 0 || toComplete.length > 0) refreshPendingCalls();
+  }, [pendingCalls, refreshPendingCalls, pos.currentEmployee?.name, orderStatusById]);
+
+  // Socket push: ANOTHER terminal silenced (SEEN) a call — mirror it here so
+  // this terminal's repeating reminder stops at the same instant. The card
+  // stays live (SEEN) until the bill closes, exactly like a local click.
+  const handleRemoteCallSeen = useCallback((payload: any) => {
+    const id = String(payload?.id || '');
+    if (!id) return;
+    if (pos.shouldFilterByBranch && pos.currentBranchId && payload?.branchId && String(payload.branchId) !== pos.currentBranchId) return;
+    const seenAt = payload?.seenAt || new Date().toISOString();
+    const seenBy = payload?.seenBy || '';
+    setPendingCalls((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, status: 'SEEN', seenAt, seenBy } : c)),
+    );
+  }, [pos.shouldFilterByBranch, pos.currentBranchId]);
+
+  // Socket push: ANOTHER terminal completed a call — remove it from this
+  // terminal's pending list and show it in Acknowledged (with the actor +
+  // timestamp from the remote terminal) without waiting for the 15s poll.
+  const handleRemoteCallCompleted = useCallback((payload: any) => {
+    const id = String(payload?.id || '');
+    if (!id) return;
+    if (pos.shouldFilterByBranch && pos.currentBranchId && payload?.branchId && String(payload.branchId) !== pos.currentBranchId) return;
+    const completedAt = payload?.completedAt || new Date().toISOString();
+    const completedBy = payload?.completedBy || '';
+    setPendingCalls((prev) => {
+      const call = prev.find((c) => c.id === id);
+      if (!call) return prev;
+      setAcknowledgedCalls((ackPrev) => [
+        { ...call, status: 'COMPLETED', completedAt, completedBy },
+        ...ackPrev.filter((c) => c.id !== id),
+      ]);
+      return prev.filter((c) => c.id !== id);
+    });
+  }, [pos.shouldFilterByBranch, pos.currentBranchId]);
+
+  // Socket push: a COMPLETED online-order call was re-activated because its
+  // order was reopened (the bill is open again). Move the card from this
+  // terminal's Acknowledged section back to Pending — the reminder re-rings
+  // and acknowledgment is re-gated (silence keeps it live until the bill
+  // closes again), mirroring the terminal that reopened the order.
+  const handleRemoteCallReactivated = useCallback((payload: any) => {
+    const id = String(payload?.id || '');
+    if (!id) return;
+    if (pos.shouldFilterByBranch && pos.currentBranchId && payload?.branchId && String(payload.branchId) !== pos.currentBranchId) return;
+    const call = normalizeCall(payload);
+    setAcknowledgedCalls((prev) => prev.filter((c) => c.id !== id));
+    setPendingCalls((prev) => {
+      const existing = prev.find((c) => c.id === id);
+      // Already live on this terminal — nothing to do (a local reopen or an
+      // earlier poll already restored it).
+      if (existing) {
+        return prev.map((c) => (c.id === id ? { ...c, status: 'PENDING' } : c));
+      }
+      // Card is in Acknowledged (or missing entirely) — restore it to Pending.
+      return [call, ...prev];
+    });
+  }, [pos.shouldFilterByBranch, pos.currentBranchId, normalizeCall]);
+
+  // Live resolution: the moment an online order's bill closes (Paid/Closed/
+  // Cancelled/Refunded), its silenced notification card clears immediately —
+  // move it to the Acknowledged section and complete it server-side (which
+  // orderService.update also does; this just makes the flip instant here).
+  React.useEffect(() => {
+    if (pendingCalls.length === 0) return;
+    const resolved = pendingCalls.filter(
+      (c) => c.type === 'ONLINE_ORDER' && c.orderId && isOrderResolvedStatus(orderStatusById.get(c.orderId)),
+    );
+    if (resolved.length === 0) return;
+    const who = pos.currentEmployee?.name || 'System';
+    const now = new Date().toISOString();
+    const ids = resolved.map((c) => c.id).filter(Boolean);
     setAcknowledgedCalls((prev) => [
-      ...pendingCalls.map((c) => ({ ...c, status: 'COMPLETED', completedAt: now, completedBy: who })),
+      ...resolved.map((c) => ({ ...c, status: 'COMPLETED', completedAt: now, completedBy: who })),
       ...prev,
     ]);
-    setPendingCalls([]);
-    Promise.all(ids.map((id) => api.completeWaiterRequest(id, who).catch(() => null)))
-      .finally(() => refreshPendingCalls());
-  }, [pendingCalls, refreshPendingCalls, pos.currentEmployee?.name]);
+    setPendingCalls((prev) => prev.filter((c) => !ids.includes(c.id)));
+    ids.forEach((id) => api.completeWaiterRequest(id, who).catch(() => null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCalls, orderStatusById]);
 
   // ─── Call reminder: re-notify unacknowledged calls ─────────────
   // A pending call (waiter bell / online order) that isn't acknowledged
@@ -328,6 +446,12 @@ export default function App() {
   // merged pos.moduleSettings record is boolean-only by design.)
   const callReminderIntervalSec = Number(pos.settings?.moduleSettings?.callReminderIntervalSec ?? 15);
   const lastCallRemindRef = React.useRef<Record<string, number>>({});
+  // Restaurant id of the last successful login — used to detect a restaurant
+  // SWITCH on this device so every cached collection can be dropped before the
+  // new tenant's data hydrates. Same-restaurant logins (incl. the offline PIN
+  // fallback, which keeps the previous token) must NOT wipe: offline login
+  // authenticates against the cached employee list.
+  const lastLoginRestaurantRef = React.useRef<string | null>(api.getCurrentRestaurantId());
   React.useEffect(() => {
     if (!(callReminderIntervalSec > 0) || pendingCalls.length === 0) return;
     const intervalMs = callReminderIntervalSec * 1000;
@@ -335,6 +459,9 @@ export default function App() {
       const now = Date.now();
       for (const c of pendingCalls) {
         if (!c.id) continue;
+        // Silenced (SEEN) online orders never ring again — the card stays
+        // live but the sound/toast reminder is muted until the bill closes.
+        if (c.status === 'SEEN') continue;
         const created = c.createdAt ? new Date(c.createdAt).getTime() : now;
         const last = lastCallRemindRef.current[c.id] || 0;
         // First reminder once the call is older than the interval; later
@@ -363,7 +490,22 @@ export default function App() {
 
   // Live QR-ordering events (new online orders, ready alerts, waiter calls).
   // Best-effort socket — falls back to existing polling when unavailable.
-  usePOSLiveEvents(showToast, handleOrderAdjusted, pos.currentBranchId, pos.shouldFilterByBranch, refreshOrdersAndTables, handleWaiterCall);
+  usePOSLiveEvents(
+    showToast,
+    handleOrderAdjusted,
+    pos.currentBranchId,
+    pos.shouldFilterByBranch,
+    refreshOrdersAndTables,
+    handleWaiterCall,
+    handleRemoteCallSeen,
+    handleRemoteCallCompleted,
+    handleRemoteCallReactivated,
+    // Live product/table/settings/bill updates from other terminals
+    pos.refreshProducts,
+    pos.refreshTables,
+    undefined, // settings refresh handled by useServerSettings
+    pos.refreshAllFromApi,
+  );
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = React.useState(false);
   // Position + PIN switch-user screen (opened from the Exit button)
   const [isPinSwitchOpen, setIsPinSwitchOpen] = React.useState(false);
@@ -391,20 +533,36 @@ export default function App() {
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!auth.isAuthenticated) {
-        if (!cancelled) setSetupState('ready');
-        return;
-      }
-      // If a current employee is stored in localStorage, skip the check
+      // The server is the source of truth for whether an Owner exists. A
+      // locally cached owner session is ONLY a fallback when we're offline —
+      // otherwise a device that previously logged in would skip the wizard
+      // forever after the DB is reset (stale cache).
       const storedEmployee = localStorage.getItem('pos_current_employee');
-      if (storedEmployee && JSON.parse(storedEmployee)?.role === 'Owner') {
-        if (!cancelled) setSetupState('ready');
-        return;
+      let exists: boolean | null = null;
+      try {
+        exists = await api.checkOwnerExists();
+      } catch { /* offline — fall back to the cached session below */ }
+
+      if (cancelled) return;
+
+      const decision = decideFirstRun({
+        storedEmployee,
+        ownerExists: exists,
+        isAuthenticated: auth.isAuthenticated,
+      });
+
+      if (decision.clearCache) {
+        // No owner on the server — the DB is empty (fresh install or reset).
+        // Clear any stale cached session/auth so the terminal reliably lands on
+        // first-time registration instead of a phantom login screen.
+        clearAllCache();
+        const staleKeys = ['pos_current_employee', 'pos_access_token', 'pos_auth_token', 'pos_refresh_token', 'pos_session_mode'];
+        for (const k of staleKeys) {
+          try { localStorage.removeItem(k); } catch { /* ignore */ }
+        }
       }
-      const exists = await api.checkOwnerExists();
-      if (!cancelled) {
-        setSetupState(exists ? 'ready' : 'setup');
-      }
+      setSetupState(decision.setupState);
+      if (decision.firstRunChoice) setFirstRunChoice(decision.firstRunChoice);
     })();
     return () => { cancelled = true; };
   }, [auth.isAuthenticated]);
@@ -476,47 +634,105 @@ export default function App() {
   // ─── Subscription / Plan selection check ─────────────────
   const [needsPlanSelection, setNeedsPlanSelection] = React.useState<'loading' | 'yes' | 'no'>('loading');
   const [trialInfo, setTrialInfo] = React.useState<{ trialEnd: string; daysRemaining: number } | null>(null);
+  const [graceInfo, setGraceInfo] = React.useState<{ graceEnd: string; daysRemaining: number } | null>(null);
+  const [isFreePlan, setIsFreePlan] = React.useState(false);
+
+  // Apply a subscription-status payload to the banner + plan-selection state.
+  // Shared by the mount effect and the plan-selection completion handler so a
+  // plan change is reflected immediately — no page reload needed.
+  const applySubscriptionStatus = useCallback((sub: any) => {
+    if (sub && sub.status === 'suspended') {
+      setNeedsPlanSelection('yes');
+      setTrialInfo(null);
+      setGraceInfo(null);
+      setIsFreePlan(false);
+      return;
+    }
+    setNeedsPlanSelection('no');
+    const now = new Date();
+    // Free trial countdown
+    if (sub && sub.status === 'trial' && sub.trialEnd) {
+      const trialEnd = new Date(sub.trialEnd);
+      const daysRemaining = Math.max(0, Math.ceil((trialEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      setTrialInfo({ trialEnd: sub.trialEnd, daysRemaining });
+      setGraceInfo(null);
+      setIsFreePlan(false);
+    } else if (sub && sub.status === 'grace' && sub.graceEnd) {
+      // Subscription expired — 2-day warning before auto-downgrade to Free.
+      const graceEnd = new Date(sub.graceEnd);
+      const daysRemaining = Math.max(0, Math.ceil((graceEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      setTrialInfo(null);
+      setGraceInfo({ graceEnd: sub.graceEnd, daysRemaining });
+      setIsFreePlan(false);
+    } else {
+      setTrialInfo(null);
+      setGraceInfo(null);
+      // Free tier fallback — core POS only.
+      setIsFreePlan(sub && sub.status === 'active' && sub.plan === 'free');
+    }
+  }, []);
+
+  // Re-fetch subscription status and refresh the banners / plan-selection gate.
+  // Used after plan selection so the UI reflects the new plan immediately.
+  const refreshSubscriptionStatus = useCallback(async () => {
+    try {
+      const sub = await api.fetchSubscriptionStatus();
+      applySubscriptionStatus(sub);
+    } catch {
+      setNeedsPlanSelection('no');
+    }
+  }, [applySubscriptionStatus]);
 
   // After login, check if subscription is active
   React.useEffect(() => {
     if (!pos.currentEmployee) {
       setNeedsPlanSelection('loading');
       setTrialInfo(null);
+      setGraceInfo(null);
+      setIsFreePlan(false);
       return;
     }
     let cancelled = false;
     (async () => {
-      try {
-        const sub = await api.fetchSubscriptionStatus();
-        if (!cancelled) {
-          if (sub && (sub as any).status === 'suspended') {
-            setNeedsPlanSelection('yes');
-            setTrialInfo(null);
-          } else {
-            setNeedsPlanSelection('no');
-            // Check if in trial mode
-            if (sub && (sub as any).status === 'trial' && (sub as any).trialEnd) {
-              const trialEnd = new Date((sub as any).trialEnd);
-              const now = new Date();
-              const daysRemaining = Math.max(0, Math.ceil((trialEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-              setTrialInfo({ trialEnd: (sub as any).trialEnd, daysRemaining });
-            } else {
-              setTrialInfo(null);
-            }
-          }
-        }
-      } catch {
-        if (!cancelled) setNeedsPlanSelection('no');
-      }
-    })();
+      const sub = await api.fetchSubscriptionStatus();
+      if (!cancelled) applySubscriptionStatus(sub);
+    })().catch(() => { if (!cancelled) setNeedsPlanSelection('no'); });
     return () => { cancelled = true; };
-  }, [pos.currentEmployee]);
+  }, [pos.currentEmployee, applySubscriptionStatus]);
+
+  // ─── Online/Offline transition toasts ────────────────────────
+  // Fires a toast when the POS loses or regains connectivity so the cashier
+  // knows immediately — not just from the title-bar pill change.
+  const wasOnlineRef = React.useRef(pos.isOnline);
+  React.useEffect(() => {
+    const prev = wasOnlineRef.current;
+    const next = pos.isOnline;
+    if (prev !== next) {
+      wasOnlineRef.current = next;
+      if (!next) {
+        showToast('⚠️ You are offline — changes will sync when connection is restored', 'warning');
+      } else if (prev === false) {
+        showToast('✅ Back online — syncing pending changes', 'success');
+      }
+    }
+  }, [pos.isOnline, showToast]);
 
   const [receiptAutoPrint, setReceiptAutoPrint] = React.useState(false);
 
-  // ─── Bill action (refund / void) modal state ─────────────────
-  // Refund/Void require an Owner/Manager PIN — verified server-side.
-  const [billAction, setBillAction] = React.useState<{ mode: 'refund' | 'void'; bill: Bill } | null>(null);
+  // ─── Phase 3 — configured-item modal state ────────────────────
+  // Opens for products with reusable configuration (variants/modifiers/add-ons).
+  // `existing` is the cart row being edited (reopens with its selections).
+  const [configModal, setConfigModal] = React.useState<{
+    product: any;
+    resolved: ResolvedProductConfig;
+    existing?: any | null;
+  } | null>(null);
+  /** Cart row id being edited through the config modal (null = new item). */
+  const [configModalEditingId, setConfigModalEditingId] = React.useState<string | null>(null);
+
+  // ─── Bill action (void) modal state ──────────────────────────
+  // Void requires an Owner/Manager PIN — verified server-side.
+  const [billAction, setBillAction] = React.useState<{ bill: Bill } | null>(null);
   const [isBillActionProcessing, setIsBillActionProcessing] = React.useState(false);
 
   // ============ ROUTING SYNC ============
@@ -552,8 +768,18 @@ export default function App() {
     const saved = pos.settings?.theme;
     root.style.setProperty('--brand-color', saved?.brandColor || '#004ac6');
     root.style.setProperty('--accent-color', saved?.accentColor || '#10b981');
-    if (saved?.mode === 'dark') root.classList.add('pos-dark');
-    else root.classList.remove('pos-dark');
+    // 'system' mode follows the OS color-scheme preference (and live changes).
+    const applyMode = () => {
+      const dark = saved?.mode === 'dark'
+        || (saved?.mode === 'system' && typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+      root.classList.toggle('pos-dark', dark);
+    };
+    applyMode();
+    if (saved?.mode === 'system' && typeof window !== 'undefined' && window.matchMedia) {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      mq.addEventListener?.('change', applyMode);
+      return () => mq.removeEventListener?.('change', applyMode);
+    }
   }, [pos.settings?.theme]);
 
   // ============ ROLE-BASED WORKSPACE GUARD ============
@@ -661,6 +887,7 @@ export default function App() {
     splitDetails: pos.splitDetails,
     setSplitDetails: pos.setSplitDetails,
     settings: pos.settings,
+    currentBranchId: pos.currentBranchId,
     currentEmployee: pos.currentEmployee,
     products: pos.products,
     heldOrders: pos.heldOrders,
@@ -695,6 +922,8 @@ export default function App() {
     setTakeawayOrders: pos.setTakeawayOrders,
     activeOrder: pos.activeOrder,
     setActiveOrder: pos.setActiveOrder,
+    pendingTableId: pos.pendingTableId,
+    setPendingTableId: pos.setPendingTableId,
     cartItems: pos.cartItems,
     setCartItems: pos.setCartItems,
     customerPhone: pos.customerPhone,
@@ -742,9 +971,80 @@ export default function App() {
     if (tableOrder) {
       orderMgmt.handleOpenOrder(tableOrder);
     } else {
-      orderMgmt.handleCreateOrder('Dine In', tableId);
+      // No order yet — open the table's billing workspace WITHOUT creating an
+      // order or occupying the table. The order is born on the first KOT.
+      pos.setPendingTableId(tableId);
+      pos.setCartItems([]);
+      pos.setActiveOrder(null);
+      pos.setActiveWorkspace('Billing');
     }
-  }, [pos.setActiveWorkspace, pos.orders, orderMgmt.handleOpenOrder, orderMgmt.handleCreateOrder]);
+  }, [pos.setActiveWorkspace, pos.orders, orderMgmt.handleOpenOrder, pos.setPendingTableId, pos.setCartItems, pos.setActiveOrder]);
+
+  // ─── Table card click (Orders floor plan / grid) ─────────────────────
+  // Tapping an AVAILABLE table opens its billing workspace with an empty cart
+  // but does NOT create an order — accidental taps must never occupy a table.
+  // The order (and the table's Occupied state) is created lazily when the
+  // first KOT with items is sent.
+  const handleOpenTableBilling = useCallback((tableId: string) => {
+    if (!tableId) return;
+    pos.setPendingTableId(tableId);
+    pos.setCartItems([]);
+    pos.setActiveOrder(null);
+    pos.setActiveWorkspace('Billing');
+  }, [pos.setPendingTableId, pos.setCartItems, pos.setActiveOrder, pos.setActiveWorkspace]);
+  // ─── End a customer's QR seat-session (table occupied by a scan) ────
+  // The guest scanned the table QR but hasn't ordered yet. The restaurant
+  // can end the SESSION (the QR code stays valid — the guest may re-scan).
+  // With a live order the table stays occupied regardless.
+  const handleExpireTableSession = useCallback((tableId: string) => {
+    if (!tableId) return;
+    const table = pos.tables.find((t) => t.id === tableId);
+    const label = table ? `#${table.number} ` : '';
+    // Check if there's an active order for this table (in KDS / kitchen)
+    const liveOrder = pos.orders.find(
+      (o: any) => String(o.tableId || '') === String(tableId) &&
+        !['Paid', 'Cancelled', 'Returned'].includes(o.status)
+    );
+    if (liveOrder) {
+      // Live order exists — show a stronger warning and ask for a reason
+      pos.setConfirmState({
+        isOpen: true,
+        title: `⚠️ Table ${label}has a live order!`,
+        message: `This table has an active order (#${liveOrder.orderNumber || liveOrder.id || '—'}) that is ${liveOrder.status || 'in progress'}. Ending the QR session will NOT cancel the order — it stays in the kitchen. Only the seat-session is released. Are you sure you want to proceed?`,
+        confirmLabel: 'End session anyway',
+        onConfirm: async () => {
+          // Close the dialog immediately so the user sees feedback
+          pos.setConfirmState(prev => ({ ...prev, isOpen: false }));
+          try {
+            await api.expireTableSession(tableId);
+            await pos.refreshTables();
+            showToast(`Table ${label}QR session ended — order #${liveOrder.orderNumber || liveOrder.id || '—'} is still active in kitchen`, 'warning');
+          } catch (err: any) {
+            showToast(err?.message || 'Could not end the session — try again.', 'warning');
+          }
+        },
+      });
+    } else {
+      // No live order — normal confirmation
+      pos.setConfirmState({
+        isOpen: true,
+        title: 'End this QR session?',
+        message: `Table ${label}is held by a customer who scanned its QR code but hasn't ordered yet. Ending the session frees the table for reuse. The QR code itself stays valid — the customer can re-scan it.`,
+        onConfirm: async () => {
+          // Close the dialog immediately so the user sees feedback
+          pos.setConfirmState(prev => ({ ...prev, isOpen: false }));
+          try {
+            await api.expireTableSession(tableId);
+            await pos.refreshTables();
+            showToast(`Table ${label}QR session ended — table is free`, 'success');
+          } catch (err: any) {
+            showToast(err?.message || 'Could not end the session — try again.', 'warning');
+          }
+        },
+      });
+    }
+  }, [pos.tables, pos.orders, pos.refreshTables, pos.setConfirmState, showToast]);
+
   // ─── Calls → online order deep-link ─────────────────────────────
   // 'View' on an ONLINE_ORDER call opens that customer order in Billing so
   // staff can see the bill, KOT status and take payment — nothing missed.
@@ -948,45 +1248,27 @@ export default function App() {
 
 
   // Calls the backend (manager PIN verified server-side), then updates the
-  // local bills ledger so the UI reflects the refunded/voided state.
-  // ─── Refund / Void submission handler ────────────────────────
-  const handleBillActionSubmit = useCallback(async (payload: { items?: any[]; reason: string; managerPin: string }) => {
+  // local bills ledger so the UI reflects the voided state.
+  // ─── Void submission handler ─────────────────────────────────
+  const handleBillActionSubmit = useCallback(async (payload: { reason: string; managerPin: string }) => {
     if (!billAction) return;
-    const { mode, bill } = billAction;
+    const { bill } = billAction;
     setIsBillActionProcessing(true);
     try {
-      let ok = false;
-      if (mode === 'refund') {
-        const res = await api.refundBill(bill.id, {
-          items: payload.items,
-          reason: payload.reason,
-          refundedBy: pos.currentEmployee?.name || 'System',
-          managerPin: payload.managerPin,
-        });
-        ok = !!res;
-      } else {
-        const res = await api.deleteBill(bill.id, {
-          reason: payload.reason,
-          voidedBy: pos.currentEmployee?.name || 'System',
-          managerPin: payload.managerPin,
-        });
-        ok = !!res;
-      }
-      if (ok) {
+      const res = await api.deleteBill(bill.id, {
+        reason: payload.reason,
+        voidedBy: pos.currentEmployee?.name || 'System',
+        managerPin: payload.managerPin,
+      });
+      if (res) {
         // Update the local ledger to reflect the correction.
-        if (mode === 'refund') {
-          pos.setBills((prev: Bill[]) => prev.map((b: Bill) =>
-            b.id === bill.id ? { ...b, isRefunded: true, refundReason: payload.reason, refundedBy: pos.currentEmployee?.name } : b
-          ));
-        } else {
-          pos.setBills((prev: Bill[]) => prev.map((b: Bill) =>
-            b.id === bill.id ? { ...b, isVoided: true, voidReason: payload.reason, voidedBy: pos.currentEmployee?.name } : b
-          ));
-        }
+        pos.setBills((prev: Bill[]) => prev.map((b: Bill) =>
+          b.id === bill.id ? { ...b, isVoided: true, voidReason: payload.reason, voidedBy: pos.currentEmployee?.name } : b
+        ));
         setBillAction(null);
-        showToast(mode === 'refund' ? 'Bill refunded successfully.' : 'Bill voided successfully.', 'success');
+        showToast('Bill voided successfully.', 'success');
       } else {
-        showToast(mode === 'refund' ? 'Refund failed — check PIN and try again.' : 'Void failed — check PIN and try again.', 'warning');
+        showToast('Void failed — check PIN and try again.', 'warning');
       }
     } catch (err: any) {
       debugWarn('App', 'bill action failed:', err);
@@ -996,16 +1278,107 @@ export default function App() {
     }
   }, [billAction, pos.currentEmployee, pos.setBills, showToast]);
 
-  // ============ ADD-ON MODAL HANDLERS ============
+  // ============ ADD-ON / CONFIGURED-ITEM MODAL HANDLERS ============
+  // Phase 3: products with REUSABLE configuration (menuConfig refs) open the
+  // dynamic ConfiguredItemModal (variants/customizations/add-ons from the
+  // resolved configuration). Legacy products keep the old fast path: instant
+  // add (simple) or the hardcoded AddOnModal (category add-ons).
   const handleOpenAddOnModal = useCallback((product: any, variant?: any) => {
-    if (!product.variants && !hasCustomizationOptions(product)) {
+    // Meal combos add their components directly — no modal, since the combo
+    // product itself never becomes a cart row.
+    if (product.isCombo || (!product.variants && !hasCustomizationOptions(product))) {
       billing.handleAddProductToCart(product, variant);
+      return;
+    }
+    // Reusable configuration wins over the legacy category add-on modal.
+    if (hasConfigSelection(product)) {
+      const productId = product.id;
+      const fromCatalog = configCatalog.resolveFromCatalog(productId);
+      if (fromCatalog) {
+        setConfigModal({ product, resolved: fromCatalog });
+        return;
+      }
+      // Not in the local catalog (e.g. configured after last snapshot) — fetch
+      // the per-product resolution; fall back to the legacy modal on failure.
+      api.resolveProductConfig(productId)
+        .then((resolved: any) => {
+          if (resolved) setConfigModal({ product, resolved });
+          else {
+            pos.setAddOnModalProduct(product);
+            pos.setAddOnModalVariant(variant);
+            pos.setIsAddOnModalOpen(true);
+          }
+        })
+        .catch(() => {
+          pos.setAddOnModalProduct(product);
+          pos.setAddOnModalVariant(variant);
+          pos.setIsAddOnModalOpen(true);
+        });
       return;
     }
     pos.setAddOnModalProduct(product);
     pos.setAddOnModalVariant(variant);
     pos.setIsAddOnModalOpen(true);
-  }, [billing.handleAddProductToCart, pos.setAddOnModalProduct, pos.setAddOnModalVariant, pos.setIsAddOnModalOpen]);
+  }, [billing.handleAddProductToCart, pos.setAddOnModalProduct, pos.setAddOnModalVariant, pos.setIsAddOnModalOpen, configCatalog]);
+
+  // Reopen the configuration modal for an existing cart row (edit mode).
+  const handleEditCartItem = useCallback((item: any) => {
+    if (!item?.configuration?.selections?.length) return;
+    const product = item.product;
+    const resolved = configCatalog.resolveFromCatalog(product.id)
+      || (item as any).resolvedSnapshot; // kept on the row for offline editing
+    if (resolved) {
+      setConfigModalEditingId(item.id);
+      setConfigModal({
+        product,
+        resolved,
+        existing: {
+          quantity: item.quantity,
+          notes: item.notes,
+          configuration: item.configuration,
+        },
+      });
+    }
+  }, [configCatalog]);
+
+  // Add a configured item to the cart (or replace the edited row).
+  const handleConfiguredItemConfirm = useCallback((item: any) => {
+    setConfigModal(null);
+    setConfigModalEditingId(null);
+    const editingId = configModalEditingId;
+    if (editingId) {
+      // Editing: the configuration may have changed (e.g. Large → Small), so
+      // the item's deterministic fingerprint id may differ from the edited
+      // row's. Drop the old row, then merge-or-insert under the new id so
+      // identical configured items never split into duplicate rows.
+      const rest = pos.cartItems.filter((i: any) => i.id !== editingId);
+      const idx = rest.findIndex((i: any) => i.id === item.id);
+      if (idx > -1) {
+        const updated = [...rest];
+        updated[idx] = {
+          ...updated[idx],
+          quantity: updated[idx].quantity + item.quantity,
+          notes: item.notes || updated[idx].notes,
+        };
+        pos.setCartItems(updated);
+      } else {
+        pos.setCartItems([...rest, item]);
+      }
+      showToast(`${item.product?.name || 'Item'} updated.`, 'success');
+      return;
+    }
+    const rowId = item.id;
+    const existingIdx = pos.cartItems.findIndex((i: any) => i.id === rowId);
+    if (existingIdx > -1) {
+      const updated = [...pos.cartItems];
+      updated[existingIdx].quantity += item.quantity;
+      if (item.notes) updated[existingIdx].notes = item.notes;
+      pos.setCartItems(updated);
+    } else {
+      pos.setCartItems([...pos.cartItems, item]);
+    }
+    showToast(`${item.product?.name || 'Item'} added to current bill.`, 'success');
+  }, [pos.cartItems, pos.setCartItems, showToast, configModalEditingId]);
 
   const handleAddOnModalConfirm = useCallback((product: any, variant: any, quantity: number, notes: string, addOns: string[]) => {
     pos.setIsAddOnModalOpen(false);
@@ -1036,26 +1409,37 @@ export default function App() {
 
   // ============ KOT PREVIEW ============
   const showKOTPreview = useCallback(() => {
-    if (!pos.activeOrder) { showToast('No active order', 'warning'); return; }
-    const hasPrev = (pos.activeOrder.kotRecords || []).length > 0;
-    const delta = computeKOTDelta(pos.cartItems, pos.activeOrder.lastKotSnapshot);
+    const activeOrder = pos.activeOrder;
+    // No active order is allowed here — tapping an available table opens an
+    // empty billing workspace without creating an order, so the FIRST KOT is
+    // what births the order. handleConfirmKOT creates it at confirm time.
+    if (!activeOrder && pos.cartItems.length === 0) {
+      showToast('No items in this order to send to kitchen', 'warning');
+      return;
+    }
+    const hasPrev = (activeOrder?.kotRecords || []).length > 0;
+    const delta = computeKOTDelta(pos.cartItems, activeOrder?.lastKotSnapshot);
     if (delta.toPrint.length === 0) {
       if (hasPrev) {
         showToast('All items already sent to kitchen. Use Reprint to print again.', 'info');
-        pos.setKotOrder(pos.activeOrder);
+        pos.setKotOrder(activeOrder);
         pos.setIsKOTOpen(true);
       } else {
         showToast('No items in this order to send to kitchen', 'warning');
       }
       return;
     }
+    // Keep the configured selections so the FIRST KOT shows the full line
+    // ("Large • Cheese Burst") — previously only the additional-KOT path
+    // preserved configuration/configSummary.
     const pendingItems: any[] = delta.toPrint.map(d => ({
       id: d.id, product: d.product, selectedVariant: d.selectedVariant,
       quantity: d.printQty, notes: d.notes, price: d.price,
+      configuration: d.configuration, configSummary: d.configSummary,
     }));
     pos.setKotPreviewData({
       items: pendingItems,
-      allItems: hasPrev ? (pos.activeOrder.kotRecords || []).flatMap((kot: any) => kot.items) : undefined,
+      allItems: hasPrev ? (activeOrder?.kotRecords || []).flatMap((kot: any) => kot.items) : undefined,
       kotType: hasPrev ? 'Additional' as const : 'Original' as const,
       onConfirm: () => orderMgmt.handleConfirmKOT(pendingItems, hasPrev ? 'Additional' : 'Original'),
       onConfirmMerge: undefined,
@@ -1412,11 +1796,36 @@ export default function App() {
     return record;
   }, [pos]);
 
+  // Drop EVERY cached collection when a DIFFERENT restaurant logs in on this
+  // device: localStorage rows + TTL stamps (clearAllCache), the offline sync
+  // queue (a previous tenant's pending writes must never replay into a new
+  // tenant), in-memory POS state (persist effects would otherwise re-write the
+  // old tenant's data right back), and the config catalog. The employee-change
+  // effect then fires hydrateFromApi(true) to re-pull the new tenant's data.
+  const wipeForRestaurantSwitch = useCallback(() => {
+    const rid = api.getCurrentRestaurantId();
+    if (!rid) return; // offline login (no token) — keep employee cache for auth
+    const prev = lastLoginRestaurantRef.current;
+    if (rid === prev) return; // same restaurant — keep offline employee cache
+    lastLoginRestaurantRef.current = rid;
+    clearAllCache();
+    syncEngine.clearQueue();
+    pos.resetSessionData();
+    configCatalog.clear();
+    // Fetch the NEW restaurant's catalog immediately (the mount/reconnect
+    // subscription may not fire on a same-session login).
+    void configCatalog.refresh();
+  }, [pos, configCatalog]);
+
   // First-time / main login (User ID + Password). The entered credential is
   // cached as the employee's local PIN so Position + PIN switching verifies
   // offline from the saved list; new employees added in Staff sync in too.
   const handleFirstLogin = useCallback((employee: any, pin?: string) => {
     if (!employee) return;
+    // Restaurant switch on this device → wipe all cached collections BEFORE
+    // upsertLocalEmployee reads pos_employees (it must start from an empty
+    // list, not the previous tenant's staff).
+    wipeForRestaurantSwitch();
     upsertLocalEmployee(employee, pin);
     // Sync the JWT to the AI client synchronously BEFORE the Dashboard mounts.
     // Child effects (WeatherWidget, AI summary) run before App's
@@ -1429,12 +1838,15 @@ export default function App() {
     // even when the backend returns lowercase roles.
     pos.setCurrentEmployee({ ...employee, role: normalizeRole(employee.role) });
     pos.setActiveWorkspace('Dashboard');
-  }, [upsertLocalEmployee, pos]);
+  }, [upsertLocalEmployee, pos, wipeForRestaurantSwitch]);
 
   // Handle first-time setup owner creation — persist the owner record locally.
   // Note: the setup password (>=6 chars) is NOT cached as a 4-digit PIN, so the
   // Owner must set a 4-digit PIN in Staff before Position + PIN switching works.
   const handleSetupComplete = useCallback((employee: any, pin?: string) => {
+    // A newly registered restaurant is a different tenant than whatever may be
+    // cached on this device — drop stale caches before persisting the owner.
+    wipeForRestaurantSwitch();
     const emp = {
       id: employee.id,
       name: employee.name,
@@ -1451,7 +1863,7 @@ export default function App() {
     if (token) setAiToken(token);
     pos.setCurrentEmployee(emp as any);
     pos.setActiveWorkspace('Dashboard');
-  }, [upsertLocalEmployee, pos.setCurrentEmployee, pos.setActiveWorkspace]);
+  }, [upsertLocalEmployee, pos.setCurrentEmployee, pos.setActiveWorkspace, wipeForRestaurantSwitch]);
 
   // Position + PIN switch success — keep the terminal session, swap the
   // active employee and end the previous shift (clear cart/order). Full
@@ -1477,6 +1889,9 @@ export default function App() {
     pos.setAppliedReward(null);
     pos.setActiveOrder(null);
     setIsPinSwitchOpen(false);
+    // Drop every cached collection — a logout must never leak the previous
+    // restaurant's bills/orders/menu from localStorage into the next login.
+    clearAllCache();
     showToast('Logged out successfully.', 'info');
   }, [auth, pos, showToast]);
 
@@ -1484,7 +1899,7 @@ export default function App() {
   const isFirstRun = setupState === 'setup';
   if (auth.isLoading || setupState === 'loading') {
     return (
-      <div className="h-full flex items-center justify-center bg-[#faf8ff]">
+      <div className="h-full flex items-center justify-center bg-[var(--color-bg-page)]">
         <ReceiptLoader label="Initializing POS Terminal…" />
       </div>
     );
@@ -1499,6 +1914,7 @@ export default function App() {
             setFirstRunChoice('login');
             handleSetupComplete(emp, pin);
           }}
+          onAlreadyHaveAccount={() => setFirstRunChoice('login')}
         />
       );
     }
@@ -1516,7 +1932,10 @@ export default function App() {
   // Show first-time setup if no Owner exists
   if (setupState === 'setup') {
     return (
-      <FirstTimeSetup onSetupComplete={handleSetupComplete} />
+      <FirstTimeSetup
+        onSetupComplete={handleSetupComplete}
+        onAlreadyHaveAccount={() => { setFirstRunChoice('login'); setSetupState('ready'); }}
+      />
     );
   }
 
@@ -1538,18 +1957,18 @@ export default function App() {
   // If subscription is suspended, show plan selection page instead of POS
   if (needsPlanSelection === 'loading') {
     return (
-      <div className="h-full flex items-center justify-center bg-[#faf8ff]">
+      <div className="h-full flex items-center justify-center bg-[var(--color-bg-page)]">
         <ReceiptLoader label="Checking plan status…" />
       </div>
     );
   }
 
   if (needsPlanSelection === 'yes') {
-    return <PlanSelectionPage onPlanSelected={() => { setNeedsPlanSelection('no'); window.location.reload(); }} />;
+    return <PlanSelectionPage onPlanSelected={() => { refreshSubscriptionStatus(); }} />;
   }
 
   return (
-    <div className="h-full overflow-hidden bg-[#faf8ff] text-[#191b23] flex flex-col font-sans">
+    <div className="h-full overflow-hidden bg-[var(--color-bg-page)] text-[var(--color-text-primary)] flex flex-col font-sans">
       {!pos.currentEmployee ? (
         <LoginScreen onLoginSuccess={handleFirstLogin} settings={pos.settings} employees={pos.employees} isFirstRun={isFirstRun} onRegister={() => setFirstRunChoice('register')} />
       ) : (
@@ -1576,7 +1995,7 @@ export default function App() {
                 <div className="w-20 h-1.5 bg-white/60 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
-                      trialInfo.daysRemaining <= 3 ? 'bg-red-500' : trialInfo.daysRemaining <= 7 ? 'bg-amber-500' : 'bg-blue-500'
+                      trialInfo.daysRemaining <= 3 ? 'bg-[var(--color-red-500-solid)]' : trialInfo.daysRemaining <= 7 ? 'bg-[var(--color-amber-500-solid)]' : 'bg-[var(--color-blue-500-solid)]'
                     }`}
                     style={{ width: `${Math.max(5, Math.min(100, (trialInfo.daysRemaining / 7) * 100))}%` }}
                   />
@@ -1585,7 +2004,43 @@ export default function App() {
               </div>
             </div>
           )}
-          <AppTitleBar restaurantName={pos.settings.restaurantName} isOnline={pos.isOnline} branches={pos.branches} currentBranchId={pos.currentBranchId} onSetCurrentBranch={pos.setCurrentBranchId} showBranchSelector={pos.isMultiBranchEnabled && (pos.currentEmployee?.role === 'Owner' || pos.currentEmployee?.role === 'Manager')} />
+          {/* Subscription expired — 2-day warning before auto-downgrade to Free */}
+          {graceInfo && (
+            <div className="shrink-0 px-4 py-2 flex items-center justify-between gap-3 text-xs font-medium bg-red-50 text-red-700 border-b border-red-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-base shrink-0">⚠️</span>
+                <span className="truncate">
+                  <strong>Subscription expired:</strong> moving to the <strong>Free plan</strong> (core POS only) in {graceInfo.daysRemaining} day{graceInfo.daysRemaining !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNeedsPlanSelection('yes')}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white font-semibold transition-colors cursor-pointer"
+              >
+                Choose a Plan
+              </button>
+            </div>
+          )}
+          {/* Free tier notice — core POS only, upgrade to unlock more */}
+          {isFreePlan && (
+            <div className="shrink-0 px-4 py-2 flex items-center justify-between gap-3 text-xs font-medium bg-blue-50 text-blue-700 border-b border-blue-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-base shrink-0">🎯</span>
+                <span className="truncate">
+                  You're on the <strong>Free plan</strong> — core POS only. Upgrade to unlock AI, inventory, reports &amp; more.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNeedsPlanSelection('yes')}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white font-semibold transition-colors cursor-pointer"
+              >
+                Upgrade
+              </button>
+            </div>
+          )}
+          <AppTitleBar restaurantName={pos.settings.restaurantName} isOnline={pos.isOnline} pendingSyncCount={pos.syncState?.pendingChanges ?? 0} branches={pos.branches} currentBranchId={pos.currentBranchId} onSetCurrentBranch={pos.setCurrentBranchId} showBranchSelector={pos.isMultiBranchEnabled && (pos.currentEmployee?.role === 'Owner' || pos.currentEmployee?.role === 'Manager')} />
           <div className="flex flex-1 min-h-0 overflow-hidden w-full" style={{ direction: 'ltr' }}>
             {pos.activeWorkspace !== 'Billing' && (
               <AppSidebar
@@ -1601,7 +2056,7 @@ export default function App() {
                 showCalls={pos.moduleSettings.enableQROrdering !== false}
               />
             )}
-            <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#faf8ff]">
+            <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[var(--color-bg-page)]">
               <React.Suspense fallback={
                 <div className="flex items-center justify-center h-full">
                   <ReceiptLoader label="Loading…" />
@@ -1615,16 +2070,17 @@ export default function App() {
                   orders={pos.orders}
                   tables={pos.tables}
                   employees={pos.employees}
+                  reservations={pos.reservations}
                   products={pos.products}
                   currentEmployee={pos.currentEmployee!}
                   settings={pos.settings}
                   currencySymbol={pos.settings.currencySymbol}
                   totalExpensesToday={(() => {
-                    const todayStr = new Date().toISOString().slice(0, 10);
+                    const todayStr = localDateKey();
                     return pos.expenses.filter((e: any) => e.date === todayStr).reduce((s: number, e: any) => s + e.amount, 0);
                   })()}
                   totalExpensesThisMonth={(() => {
-                    const thisMonth = new Date().toISOString().slice(0, 7);
+                    const thisMonth = localDateKey().slice(0, 7);
                     return pos.expenses.filter((e: any) => e.date.startsWith(thisMonth)).reduce((s: number, e: any) => s + e.amount, 0);
                   })()}
                   currentBranchName={pos.currentBranch?.name}
@@ -1644,6 +2100,8 @@ export default function App() {
                   takeawayOrders={pos.takeawayOrders}
                   onOpenOrder={orderMgmt.handleOpenOrder}
                   onCreateOrder={orderMgmt.handleCreateOrder}
+                  onOpenTableBilling={handleOpenTableBilling}
+                  onExpireSession={handleExpireTableSession}
                   onCreateTakeawayOrder={orderMgmt.handleCreateTakeawayOrder}
                   onUpdateTakeawayOrder={orderMgmt.handleUpdateTakeawayOrder}
                   onClearCompletedTakeaways={orderMgmt.handleClearCompletedTakeaways}
@@ -1665,6 +2123,7 @@ export default function App() {
                   viewMode={pos.ordersViewMode}
                   onViewModeChange={pos.setOrdersViewMode}
                   onOrderUpdated={handleOrderUpdated}
+                  onRefresh={() => { refreshOrdersAndTables(); showToast('Orders refreshed', 'info'); }}
                 />
               )}
               {pos.activeWorkspace === 'Calls' && pos.moduleSettings.enableQROrdering !== false && (
@@ -1672,6 +2131,7 @@ export default function App() {
                   calls={pendingCalls}
                   acknowledgedCalls={acknowledgedCalls}
                   tables={pos.tables}
+                  orders={pos.orders}
                   onBack={() => pos.setActiveWorkspace('Dashboard')}
                   onRefresh={refreshPendingCalls}
                   onAcknowledge={handleAcknowledgeCall}
@@ -1717,8 +2177,7 @@ export default function App() {
                     calculateCartGrandTotal={billing.calculateCartGrandTotal}
                     onAdjustQuantity={billing.handleAdjustQuantity}
                     onDeleteItem={billing.handleDeleteCartItem}
-                    onClearCart={() => pos.setCartItems([])}
-                    onCloseOrder={orderMgmt.handleCloseOrder}
+                    onClearCart={() => { if (billing.handleClearCart()) pos.setPendingTableId(null); }}
                     onShowKOT={showKOTPreview}
                     onShowPayment={() => pos.setIsPaymentConfirmOpen(true)}
                     onHoldOrder={handleHoldCurrentOrder}
@@ -1780,22 +2239,25 @@ export default function App() {
                     moduleSettings={pos.moduleSettings}
                     currencySymbol={pos.settings.currencySymbol}
                     onOpenAddOnModal={handleOpenAddOnModal}
+                    onEditConfiguredItem={handleEditCartItem}
                     showToast={showToast}
                     manualDiscount={billing.manualDiscount}
                     onManualDiscountChange={billing.setManualDiscount}
                     canApplyDiscount={canApplyDiscount}
+                    unservedKotSummary={billing.getUnservedKotSummary(pos.activeOrder)}
+                    onForceCloseBill={() => billing.handleCheckoutPayment(true)}
                   />
                 </div>
               )}
               {pos.activeWorkspace === 'Products' && (
                  <div className="flex flex-col flex-1 min-h-0">
-                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                   <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                      <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                     <span className="text-sm font-bold text-[#191b23]">Products</span>
+                     <span className="text-sm font-bold text-[var(--color-text-primary)]">Products</span>
                      <span className="text-[10px] text-gray-400 ml-auto">Catalog Management</span>
                    </div>
                    <div className="flex-1 min-h-0 overflow-hidden">
-                    <ProductManager products={pos.products} onUpdateProducts={pos.setProducts} currencySymbol={pos.settings.currencySymbol} categories={pos.categories} onUpdateCategories={pos.setCategories} categoryColors={pos.categoryColors} onUpdateCategoryColors={pos.setCategoryColors} branches={pos.branches} branchProductPrices={pos.branchProductPrices} onSetBranchProductPrices={pos.setBranchProductPrices} branchVariantPrices={pos.branchVariantPrices} onSetBranchVariantPrices={pos.setBranchVariantPrices} />
+                    <ProductManager products={pos.products} onUpdateProducts={pos.setProducts} currencySymbol={pos.settings.currencySymbol} categories={pos.categories} onUpdateCategories={pos.setCategories} categoryColors={pos.categoryColors} onUpdateCategoryColors={pos.setCategoryColors} branches={pos.branches} branchProductPrices={pos.branchProductPrices} onSetBranchProductPrices={pos.setBranchProductPrices} branchVariantPrices={pos.branchVariantPrices} onSetBranchVariantPrices={pos.setBranchVariantPrices} defaultTaxRate={pos.settings.defaultTaxRate} taxRules={pos.settings.taxRules} />
                   </div>
                 </div>
               )}
@@ -1818,24 +2280,26 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Customers' && (
                  <div className="flex flex-col flex-1 min-h-0">
-                   <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                   <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                      <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
-                     <span className="text-sm font-bold text-[#191b23]">Customers</span>
+                     <span className="text-sm font-bold text-[var(--color-text-primary)]">Customers</span>
                      <span className="text-[10px] text-gray-400 ml-auto">Loyalty Management</span>
+                     <button onClick={() => { pos.refreshAllFromApi(); showToast('Refreshing customers…'); }} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Refresh customer data">
+                       <RefreshCw className="w-4 h-4" />
+                     </button>
                    </div>
                    <div className="flex-1 min-h-0 overflow-hidden"><CustomerManager customers={pos.customers} onUpdateCustomers={pos.setCustomers} currencySymbol={pos.settings.currencySymbol} showToast={showToast} /></div>
                  </div>
                )}
                {pos.activeWorkspace === 'Offers' && (
-                 <div className="flex flex-col flex-1 min-h-0">
-                   <OffersManager onBack={() => pos.setActiveWorkspace('More')} rewards={pos.rewards} onUpdateRewards={pos.setRewards} currencySymbol={pos.settings.currencySymbol} settings={pos.settings} onUpdateSettings={pos.setSettings} products={pos.products} />
+                 <div className="flex flex-col flex-1 min-h-0">                    <OffersManager onBack={() => pos.setActiveWorkspace('More')} rewards={pos.rewards} onUpdateRewards={pos.setRewards} currencySymbol={pos.settings.currencySymbol} settings={pos.settings} onUpdateSettings={pos.setSettings} products={pos.products} branches={pos.branches} />
                  </div>
               )}
               {pos.activeWorkspace === 'Reports' && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('Dashboard')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to Dashboard"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Reports & Analytics</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Reports & Analytics</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Sales analytics & intelligence</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1848,9 +2312,9 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Staff' && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Staff</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Staff</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Employee Management</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden"><StaffManager employees={pos.employees} onUpdateEmployees={pos.setEmployees} currentEmployee={pos.currentEmployee!} branches={pos.branches} /></div>
@@ -1858,9 +2322,9 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Branches' && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Branch Management</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Branch Management</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Multi-location management</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1896,15 +2360,14 @@ export default function App() {
                   onReprint={(bill) => pos.setActiveReceipt(bill)}
                   onBack={() => pos.setActiveWorkspace('More')}
                   canManageBills={pos.currentEmployee?.role === 'Owner' || pos.currentEmployee?.role === 'Manager'}
-                  onRefund={(bill) => setBillAction({ mode: 'refund', bill })}
-                  onVoid={(bill) => setBillAction({ mode: 'void', bill })}
+                  onVoid={(bill) => setBillAction({ bill })}
                 />
               )}
               {pos.activeWorkspace === 'Expenses' && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Expenses</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Expenses</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Expense tracking & management</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1919,9 +2382,9 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Reservations' && pos.moduleSettings.enableReservations !== false && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Reservations</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Reservations</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Table booking & guest queue</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1943,9 +2406,9 @@ export default function App() {
 
               {pos.activeWorkspace === 'Analytics' && pos.hasAnalytics && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Analytics</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Analytics</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Business intelligence & trends</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1959,9 +2422,9 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Finance' && pos.hasAnalytics && (
                 <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#e1e2ed] shrink-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
                     <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[#191b23]">Finance</span>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Finance</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Profit & Loss statement</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1976,6 +2439,18 @@ export default function App() {
               {pos.activeWorkspace === 'Inventory' && pos.hasInventory && (
                 <div className="flex flex-col flex-1 min-h-0"><InventoryManager onBack={() => pos.setActiveWorkspace('More')} moduleSettings={pos.moduleSettings} /></div>
               )}
+              {pos.activeWorkspace === 'Feedback' && (
+                <div className="flex flex-col flex-1 min-h-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
+                    <button onClick={() => pos.setActiveWorkspace('Dashboard')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Customer Feedback</span>
+                    <span className="text-[10px] text-gray-400 ml-auto">Reviews from receipt QR scans</span>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+                    <FeedbackPanel />
+                  </div>
+                </div>
+              )}
               {pos.activeWorkspace === 'Kitchen' && pos.moduleSettings.enableKitchenDisplay !== false && (pos.settings.kotOutputMode ?? 'both') !== 'print' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1985,6 +2460,7 @@ export default function App() {
                       onCancelOrderItem={handleCancelOrderItem}
                       showToast={showToast}
                       settings={pos.settings}
+                      onRefreshOrders={pos.refreshOrders}
                     />
                   </div>
                 </div>
@@ -2171,12 +2647,12 @@ export default function App() {
         }}
       />
 
-      <SyncPanelModal isOpen={pos.isSyncPanelOpen} syncState={pos.syncState} onClose={() => pos.setIsSyncPanelOpen(false)} onSync={() => {
+      <SyncPanelModal isOpen={pos.isSyncPanelOpen} syncState={pos.syncState} operations={pos.syncOperations} onClose={() => pos.setIsSyncPanelOpen(false)} onSync={() => {
         pos.runPullSync().then((ok: boolean) => {
           syncEngine.sync();
           showToast(ok ? 'Data synced successfully' : 'Sync failed — check connection and try again', ok ? 'success' : 'warning');
         });
-      }} />
+      }} onRetry={(id) => pos.retrySyncOperation(id)} onClear={(id) => pos.clearSyncOperation(id)} />
 
       <ZReportModal isOpen={pos.isZReportOpen} zReportData={pos.zReportData} settings={pos.settings} moduleSettings={pos.moduleSettings} products={pos.products} onClose={() => pos.setIsZReportOpen(false)} />
 
@@ -2208,7 +2684,6 @@ export default function App() {
 
       <BillActionModal
         isOpen={!!billAction}
-        mode={billAction?.mode || 'refund'}
         bill={billAction?.bill || null}
         currencySymbol={pos.settings.currencySymbol}
         onClose={() => setBillAction(null)}
@@ -2243,6 +2718,18 @@ export default function App() {
         />
       )}
 
+      {configModal && (
+        <ConfiguredItemModal
+          product={configModal.product}
+          resolved={configModal.resolved}
+          currencySymbol={pos.settings.currencySymbol}
+          origin={pos.syncState?.online === false ? 'offline' : 'online'}
+          existing={configModal.existing}
+          onConfirm={handleConfiguredItemConfirm}
+          onCancel={() => { setConfigModal(null); setConfigModalEditingId(null); }}
+        />
+      )}
+
       {pos.isTimelineOpen && pos.currentEmployee && (
         <OrderTimeline events={pos.timelineEvents} isOpen={pos.isTimelineOpen} onClose={() => pos.setIsTimelineOpen(false)} />
       )}
@@ -2253,9 +2740,9 @@ export default function App() {
       <div className="fixed top-14 right-4 z-[200] space-y-2">
         {toasts.map((t) => (
           <div key={t.id} className={`px-4 py-2 rounded-lg shadow-xl text-xs font-bold flex items-center gap-2 animate-[popIn_0.3s_ease-out] ${
-            t.type === 'success' ? 'bg-green-600 text-white' :
-            t.type === 'warning' ? 'bg-amber-500 text-white' :
-            'bg-[#191b23] text-white'
+            t.type === 'success' ? 'bg-[var(--color-green-600-solid)] text-white' :
+            t.type === 'warning' ? 'bg-[var(--color-amber-500-solid)] text-white' :
+            'bg-[var(--color-sidebar-bg)] text-white'
           }`}>
             {t.type === 'success' && <CheckCircle className="w-4 h-4" />}
             {t.type === 'warning' && <AlertCircle className="w-4 h-4" />}
@@ -2264,8 +2751,6 @@ export default function App() {
         ))}
       </div>
 
-      {/* Layout diagnostic overlay — Ctrl+Shift+D */}
-      <LayoutDiagnostic />
     </div>
   );
 }

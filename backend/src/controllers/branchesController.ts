@@ -9,6 +9,9 @@
 
 import { Request, Response } from 'express';
 import { branchService } from '../services';
+import { restaurantRepo, userRepo } from '../repositories';
+import { verifyPin } from '../utils/bcrypt';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { AppError } from '../utils/AppError';
 
 /** GET /api/branches — List branches for the authenticated restaurant */
@@ -45,7 +48,21 @@ export async function createBranch(req: Request, res: Response): Promise<void> {
     // body (prevents cross-restaurant branch creation).
     const restaurantId = (req as any).user?.restaurantId;
     const data = { ...req.body, restaurantId };
-    const branch = await branchService.create(data);
+    const branch: any = await branchService.create(data);
+
+    // New branches come with auto-generated manager credentials (User ID +
+    // password + PIN) minted server-side. They are returned inside `data` so
+    // the POS can show them once; only the hashes persist.
+    const credentials = branch?.credentials;
+    const cloneSummary = (branch as any)?._cloneSummary;
+    if (credentials || cloneSummary) {
+      const plain = branch.toObject ? branch.toObject() : branch;
+      const response: any = { ...plain };
+      if (credentials) response.credentials = credentials;
+      if (cloneSummary) response.cloneSummary = cloneSummary;
+      res.status(201).json({ data: response });
+      return;
+    }
     res.status(201).json({ data: branch });
   } catch (error) {
     if (error instanceof AppError && error.statusCode === 403) {
@@ -57,25 +74,74 @@ export async function createBranch(req: Request, res: Response): Promise<void> {
   }
 }
 
+/** POST /api/branches/:id/reset-credentials — regenerate a branch manager's
+ *  password + PIN (User ID stays the same). Owner only. Returns the new
+ *  plaintext credentials exactly once. */
+export async function resetBranchCredentials(req: Request, res: Response): Promise<void> {
+  try {
+    const result = await branchService.resetCredentials(req.params.id, (req as any).user?.restaurantId);
+    res.json({ data: result });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('[BranchesController] resetCredentials error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 /** PUT /api/branches/:id — Update branch settings */
 export async function updateBranch(req: Request, res: Response): Promise<void> {
   try {
-    const branch = await branchService.update(req.params.id, req.body);
+    const restaurantId = (req as AuthenticatedRequest).user?.restaurantId;
+    const branch = await branchService.update(req.params.id, req.body, restaurantId);
     if (!branch) {
       res.status(404).json({ error: 'Branch not found' });
       return;
     }
     res.json({ data: branch });
   } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('[BranchesController] update error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
 
-/** DELETE /api/branches/:id — Delete a branch */
+/** DELETE /api/branches/:id — Delete a branch (requires owner password) */
 export async function deleteBranch(req: Request, res: Response): Promise<void> {
   try {
-    const deleted = await branchService.delete(req.params.id);
+    const user = (req as AuthenticatedRequest).user;
+    const restaurantId = user?.restaurantId;
+    const { password } = req.body || {};
+
+    // Owner-password gate — deleting a branch is destructive and irreversible
+    // (soft delete, but it removes the location from the operating view), so
+    // require the owner's PIN/password before proceeding. Verified against the
+    // restaurant ownerPin (the credential the owner uses to sign into the POS)
+    // with a fallback to the owner User doc's password hash.
+    let passwordOk = false;
+    if (restaurantId) {
+      const restaurant = await restaurantRepo.findById(restaurantId);
+      if (restaurant?.ownerPin) {
+        passwordOk = await verifyPin(password, restaurant.ownerPin);
+      }
+      if (!passwordOk) {
+        const ownerUser = await userRepo.findOne({ restaurantId, role: 'owner', isDeleted: { $ne: true } } as any);
+        if (ownerUser?.password) {
+          passwordOk = await verifyPin(password, ownerUser.password);
+        }
+      }
+    }
+    if (!passwordOk) {
+      res.status(403).json({ error: 'Invalid owner password' });
+      return;
+    }
+
+    const deleted = await branchService.delete(req.params.id, restaurantId);
     if (!deleted) {
       res.status(404).json({ error: 'Branch not found' });
       return;

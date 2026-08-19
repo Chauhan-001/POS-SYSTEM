@@ -16,6 +16,7 @@
 import { tableRepo, orderRepo, auditLogRepo } from '../repositories';
 import { tableStateService, type ReconcileCtx } from './tableStateService';
 import { upsertTableSticker, retireTableSticker } from '../modules/qr-ordering/services/qrTokenService';
+import QROrderingSession from '../modules/qr-ordering/models/QROrderingSession';
 import { AppError } from '../utils/AppError';
 
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];
@@ -54,7 +55,9 @@ export class TableService {
 
   /**
    * Create a new table.
-   * Unique constraint on (branchId, number) is handled at the DB level.
+   * Unique constraint on (restaurantId, branchId, number) is handled at the
+   * DB level — scoped per restaurant so branchless table numbers never
+   * collide across tenants.
    */
   async create(data: {
     number: number;
@@ -114,6 +117,31 @@ export class TableService {
     // Reconcile lifecycle status from authoritative sources after any update.
     await tableStateService.reconcileTable(id, ctx).catch(() => undefined);
     await this.audit('TABLE_UPDATED', id, ctx, { number: table.number, fields: Object.keys(data) });
+    return table;
+  }
+
+  /**
+   * End a customer's QR seat-session on this table (the table QR stays
+   * valid forever — only the SESSION is expired). Marks every ACTIVE claim
+   * CANCELLED so the guest cannot silently re-claim on their next heartbeat,
+   * then lets the authoritative state machine free the table (Available)
+   * when no live order/reservation holds it. If the guest already placed an
+   * order, the order owns the occupancy and the table stays occupied.
+   */
+  async expireTableSession(id: string, ctx: TableCtx = {}) {
+    const existing = await tableRepo.findById(id);
+    if (!existing) return null;
+
+    await QROrderingSession.updateMany(
+      { tableId: id, status: 'ACTIVE' },
+      { $set: { status: 'CANCELLED', cancelledAt: new Date() } }
+    ).exec();
+
+    const table = await tableStateService.reconcileTable(id, ctx);
+    await this.audit('TABLE_SESSION_EXPIRED', id, ctx, {
+      tableNumber: existing.number,
+      previousStatus: String(existing.status),
+    });
     return table;
   }
 

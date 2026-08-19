@@ -5,8 +5,8 @@ import type { PlanLimitKey } from '../constants/planFeatures';
 export interface IPlanLimits {
   maxRestaurants: number; // 0 = unlimited
   maxBranches: number; // 0 = unlimited
-  maxDevices: number;
-  maxEmployees: number;
+  /** Max POS devices allowed at EACH individual branch (0 = unlimited). */
+  maxDevicesPerBranch: number;
   maxProducts: number; // 0 = unlimited
   maxCustomers: number; // 0 = unlimited
   maxMonthlyOrders: number; // 0 = unlimited
@@ -24,6 +24,7 @@ export interface IPlanVersion {
   name: string;
   description: string;
   price: number;
+  yearlyPrice: number;
   maxUsers: number;
   maxDevices: number;
   features: string[];
@@ -44,7 +45,10 @@ export interface ISubscriptionPlan extends Document {
   planId: string;
   name: string;
   description: string;
+  /** Monthly price in currency units (legacy `price` — kept for billing compat). */
   price: number;
+  /** Yearly price in currency units (billed once per year). 0 = not offered. */
+  yearlyPrice: number;
   maxUsers: number;
   maxDevices: number;
   features: string[];
@@ -75,8 +79,7 @@ const PlanLimitsSchema = new Schema<IPlanLimits>(
   {
     maxRestaurants: { type: Number, default: 1, min: 0 },
     maxBranches: { type: Number, default: 1, min: 0 },
-    maxDevices: { type: Number, default: 3, min: 0 },
-    maxEmployees: { type: Number, default: 10, min: 0 },
+    maxDevicesPerBranch: { type: Number, default: 3, min: 0 },
     maxProducts: { type: Number, default: 0, min: 0 },
     maxCustomers: { type: Number, default: 0, min: 0 },
     maxMonthlyOrders: { type: Number, default: 0, min: 0 },
@@ -95,6 +98,7 @@ const PlanVersionSchema = new Schema<IPlanVersion>(
     name: { type: String, required: true },
     description: { type: String, default: '' },
     price: { type: Number, default: 0 },
+    yearlyPrice: { type: Number, default: 0, min: 0 },
     maxUsers: { type: Number, default: 5 },
     maxDevices: { type: Number, default: 6 },
     features: [{ type: String }],
@@ -119,6 +123,7 @@ const SubscriptionPlanSchema = new Schema<ISubscriptionPlan>(
     name: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
     price: { type: Number, default: 0, min: 0 },
+    yearlyPrice: { type: Number, default: 0, min: 0 },
     maxUsers: { type: Number, default: 5, min: 0 },
     maxDevices: { type: Number, default: 6, min: 0 },
     features: [{ type: String }],
@@ -133,7 +138,7 @@ const SubscriptionPlanSchema = new Schema<ISubscriptionPlan>(
     limits: {
       type: PlanLimitsSchema,
       default: () => ({
-        maxRestaurants: 1, maxBranches: 1, maxDevices: 3, maxEmployees: 10,
+        maxRestaurants: 1, maxBranches: 1, maxDevicesPerBranch: 3,
         maxProducts: 0, maxCustomers: 0, maxMonthlyOrders: 0, maxStorageMB: 500,
         maxAIRequests: 0, maxVoiceRequests: 0, maxImages: 0, maxExports: 0,
       }),

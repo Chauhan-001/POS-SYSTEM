@@ -356,7 +356,7 @@ export default function ReservationWorkspace({
   }, [reservations]);
 
   return (
-    <div className="h-full overflow-y-auto bg-[#faf8ff]">
+    <div className="h-full overflow-y-auto bg-[var(--color-bg-page)]">
       <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
 
         {/* ===== HEADER ===== */}
@@ -371,7 +371,7 @@ export default function ReservationWorkspace({
             </div>
           </div>
           {/* Tab toggle */}
-          <div className="flex bg-white rounded-xl border border-[#e1e2ed] p-1 shadow-xs">
+          <div className="flex bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-1 shadow-xs">
             <button onClick={() => setTab('reservations')}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                 tab === 'reservations' ? 'bg-rose-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
@@ -382,7 +382,7 @@ export default function ReservationWorkspace({
             </button>
             <button onClick={() => setTab('waiting')}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                tab === 'waiting' ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                tab === 'waiting' ? 'bg-[var(--color-amber-600-solid)] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}>
               <Timer className="w-3.5 h-3.5" />
               Waiting List
@@ -395,7 +395,7 @@ export default function ReservationWorkspace({
         {tab === 'reservations' && (
           <>
             {/* Date Calendar Bar */}
-            <div className="bg-white rounded-2xl border border-[#e1e2ed] p-3 shadow-xs overflow-x-auto">
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-3 shadow-xs overflow-x-auto">
               <div className="flex items-center gap-1.5 min-w-max">
                 {dates.map(date => {
                   const isToday = date === getTodayString();
@@ -436,7 +436,7 @@ export default function ReservationWorkspace({
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <input type="text" placeholder="Search by name or phone..."
                   value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#e1e2ed] text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-200 bg-white" />
+                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-200 bg-[var(--color-bg-white)]" />
               </div>
               <button onClick={() => { setResForm(f => ({ ...f, date: selectedDate })); setShowNewRes(true); }}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 text-white rounded-lg text-[10px] font-bold hover:bg-rose-700 transition-all cursor-pointer shadow-xs">
@@ -488,7 +488,7 @@ export default function ReservationWorkspace({
                       {res.status === 'Confirmed' && (
                         <div className="flex gap-1.5 mt-2 pt-2 border-t border-white/50">
                           <button onClick={() => handleSeatReservation(res)}
-                            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-green-500 text-white rounded-lg text-[9px] font-bold hover:bg-green-600 transition-all cursor-pointer"
+                            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-[var(--color-green-500-solid)] text-white rounded-lg text-[9px] font-bold hover:bg-[var(--color-green-600-solid)] transition-all cursor-pointer"
                             title={avail ? `Seat at Table ${avail.number}` : 'Find available table'}>
                             <UserCheck className="w-3 h-3" /> Seat
                           </button>
@@ -524,11 +524,11 @@ export default function ReservationWorkspace({
           <>
             {/* Stats bar */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Waiting</p>
                 <p className="text-2xl font-black text-amber-600 mt-1">{waitingWithWait.length}</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Avg Wait</p>
                 <p className="text-2xl font-black text-gray-900 mt-1">
                   {waitingWithWait.length > 0
@@ -536,11 +536,11 @@ export default function ReservationWorkspace({
                     : '—'}
                 </p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Available Tables</p>
                 <p className="text-2xl font-black text-green-600 mt-1">{tables.filter(t => t.status === 'Available').length}</p>
               </div>
-              <div className="bg-white rounded-xl border border-[#e1e2ed] p-4 shadow-xs">
+              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-4 shadow-xs">
                 <p className="text-[9px] font-bold uppercase text-gray-400 tracking-wider">Seated Today</p>
                 <p className="text-2xl font-black text-blue-600 mt-1">
                   {waitingList.filter(w => w.status === 'Seated').length}
@@ -551,7 +551,7 @@ export default function ReservationWorkspace({
             {/* Add to Waiting List */}
             <div className="flex justify-end">
               <button onClick={() => setShowAddWait(true)}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-bold hover:bg-amber-700 transition-all cursor-pointer shadow-xs">
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[var(--color-amber-600-solid)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-amber-700-solid)] transition-all cursor-pointer shadow-xs">
                 <UserPlus className="w-3.5 h-3.5" />
                 Add to Waiting List
               </button>
@@ -571,8 +571,8 @@ export default function ReservationWorkspace({
                   const isLong = entry.waitedMinutes > 20;
                   return (
                     <div key={entry.id}
-                      className={`bg-white rounded-xl border p-4 shadow-xs transition-all hover:shadow-md ${
-                        isUrgent ? 'border-amber-300 bg-amber-50/30' : 'border-[#e1e2ed]'
+                      className={`bg-[var(--color-bg-white)] rounded-xl border p-4 shadow-xs transition-all hover:shadow-md ${
+                        isUrgent ? 'border-amber-300 bg-amber-50/30' : 'border-[var(--color-border-default)]'
                       }`}>
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
@@ -614,7 +614,7 @@ export default function ReservationWorkspace({
                       </div>
                       <div className="flex gap-1.5 mt-3 pt-2 border-t border-gray-100">
                         <button onClick={() => handleSeatFromWaiting(entry)}
-                          className="flex items-center justify-center gap-1 px-3 py-1.5 bg-green-500 text-white rounded-lg text-[9px] font-bold hover:bg-green-600 transition-all cursor-pointer flex-1">
+                          className="flex items-center justify-center gap-1 px-3 py-1.5 bg-[var(--color-green-500-solid)] text-white rounded-lg text-[9px] font-bold hover:bg-[var(--color-green-600-solid)] transition-all cursor-pointer flex-1">
                           <UserCheck className="w-3 h-3" /> Seat Now
                         </button>
                         <button onClick={() => handleRemoveWaiting(entry.id)}
@@ -633,7 +633,7 @@ export default function ReservationWorkspace({
         {/* ===== NEW RESERVATION / EDIT RESERVATION MODAL ===== */}
         {showNewRes && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => { setShowNewRes(false); setEditingReservationId(null); }}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+            <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-black text-gray-900">{editingReservationId ? 'Edit Reservation' : 'New Reservation'}</h3>
                 <button onClick={() => { setShowNewRes(false); setEditingReservationId(null); }} className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all cursor-pointer">
@@ -645,37 +645,37 @@ export default function ReservationWorkspace({
                   <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Customer Name</label>
                   <input type="text" value={resForm.customerName} onChange={e => setResForm(f => ({ ...f, customerName: e.target.value }))}
                     placeholder="e.g. Aarav Mehta"
-                    className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Phone</label>
                     <input type="text" value={resForm.customerPhone} onChange={e => setResForm(f => ({ ...f, customerPhone: e.target.value }))}
                       placeholder="10-digit phone"
-                      className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
                   </div>
                   <div>
                     <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Guests</label>
                     <input type="number" min={1} max={20} value={resForm.guestCount} onChange={e => setResForm(f => ({ ...f, guestCount: parseInt(e.target.value) || 1 }))}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Date</label>
                     <input type="date" value={resForm.date} onChange={e => setResForm(f => ({ ...f, date: e.target.value }))}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200 cursor-pointer" />
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200 cursor-pointer" />
                   </div>
                   <div>
                     <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Time</label>
                     <input type="time" value={resForm.time} onChange={e => setResForm(f => ({ ...f, time: e.target.value }))}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200 cursor-pointer" />
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200 cursor-pointer" />
                   </div>
                 </div>
                 <div>
                   <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Occasion (optional)</label>
                   <select value={resForm.occasion} onChange={e => setResForm(f => ({ ...f, occasion: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200 bg-white cursor-pointer">
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200 bg-[var(--color-bg-white)] cursor-pointer">
                     <option value="">None</option>
                     <option value="Birthday">Birthday</option>
                     <option value="Anniversary">Anniversary</option>
@@ -688,12 +688,12 @@ export default function ReservationWorkspace({
                   <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Notes (optional)</label>
                   <input type="text" value={resForm.notes} onChange={e => setResForm(f => ({ ...f, notes: e.target.value }))}
                     placeholder="Special requests..."
-                    className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-200" />
                 </div>
               </div>
               <div className="flex gap-2 mt-5">
                 <button onClick={() => { setShowNewRes(false); setEditingReservationId(null); }}
-                  className="flex-1 px-4 py-2 border border-[#e1e2ed] text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all cursor-pointer">
+                  className="flex-1 px-4 py-2 border border-[var(--color-border-default)] text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all cursor-pointer">
                   Cancel
                 </button>
                 <button onClick={handleSaveReservation}
@@ -708,7 +708,7 @@ export default function ReservationWorkspace({
         {/* ===== ADD TO WAITING LIST MODAL ===== */}
         {showAddWait && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowAddWait(false)}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+            <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-black text-gray-900">Add to Waiting List</h3>
                 <button onClick={() => setShowAddWait(false)} className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all cursor-pointer">
@@ -720,25 +720,25 @@ export default function ReservationWorkspace({
                   <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Customer Name</label>
                   <input type="text" value={waitForm.customerName} onChange={e => setWaitForm(f => ({ ...f, customerName: e.target.value }))}
                     placeholder="e.g. Arjun Nair"
-                    className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Phone</label>
                     <input type="text" value={waitForm.customerPhone} onChange={e => setWaitForm(f => ({ ...f, customerPhone: e.target.value }))}
                       placeholder="10-digit phone"
-                      className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
                   </div>
                   <div>
                     <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Guests</label>
                     <input type="number" min={1} max={20} value={waitForm.guestCount} onChange={e => setWaitForm(f => ({ ...f, guestCount: parseInt(e.target.value) || 1 }))}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
                   </div>
                 </div>
                 <div>
                   <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Party Type</label>
                   <select value={waitForm.partyType} onChange={e => setWaitForm(f => ({ ...f, partyType: e.target.value as any }))}
-                    className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200 bg-white cursor-pointer">
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200 bg-[var(--color-bg-white)] cursor-pointer">
                     <option value="adult">Adults</option>
                     <option value="family">Family</option>
                     <option value="business">Business</option>
@@ -748,16 +748,16 @@ export default function ReservationWorkspace({
                   <label className="text-[9px] font-bold uppercase text-gray-400 tracking-wider block mb-1">Notes (optional)</label>
                   <input type="text" value={waitForm.notes} onChange={e => setWaitForm(f => ({ ...f, notes: e.target.value }))}
                     placeholder="e.g. Needs high chair"
-                    className="w-full px-3 py-2 rounded-lg border border-[#e1e2ed] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200" />
                 </div>
               </div>
               <div className="flex gap-2 mt-5">
                 <button onClick={() => setShowAddWait(false)}
-                  className="flex-1 px-4 py-2 border border-[#e1e2ed] text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all cursor-pointer">
+                  className="flex-1 px-4 py-2 border border-[var(--color-border-default)] text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-50 transition-all cursor-pointer">
                   Cancel
                 </button>
                 <button onClick={handleAddWaiting}
-                  className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 transition-all cursor-pointer shadow-xs">
+                  className="flex-1 px-4 py-2 bg-[var(--color-amber-600-solid)] text-white rounded-lg text-xs font-bold hover:bg-[var(--color-amber-700-solid)] transition-all cursor-pointer shadow-xs">
                   Add to Queue
                 </button>
               </div>
@@ -765,7 +765,7 @@ export default function ReservationWorkspace({
           </div>
         )}
 
-        <div className="text-[9px] text-gray-400 text-center py-2 border-t border-[#e1e2ed]">
+        <div className="text-[9px] text-gray-400 text-center py-2 border-t border-[var(--color-border-default)]">
           Enable/disable reservations in Settings → Modules & Features
         </div>
       </div>

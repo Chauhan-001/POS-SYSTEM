@@ -15,13 +15,14 @@ import {
   createBranch,
   updateBranch,
   deleteBranch,
+  resetBranchCredentials,
   getBranchSettings,
   updateBranchSettings,
 } from '../controllers/branchesController';
 import { requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';
-import { createBranchSchema, updateBranchSchema, branchParamsSchema, updateBranchSettingsSchema } from '../validation';
+import { createBranchSchema, updateBranchSchema, branchParamsSchema, updateBranchSettingsSchema, branchDeleteSchema } from '../validation';
 
 const router = Router();
 
@@ -29,10 +30,11 @@ const router = Router();
 router.get('/', requireRole('Owner', 'Manager'), requireFeature('multi_branch'), listBranches);
 router.get('/:id', requireRole('Owner', 'Manager'), requireFeature('multi_branch'), validate({ params: branchParamsSchema }), getBranch);
 
-// Only Owner can create, update, or delete branches
+// Only Owner can create, update, delete, or reset branch credentials
 router.post('/', requireRole('Owner'), requireFeature('multi_branch'), validate({ body: createBranchSchema }), createBranch);
 router.put('/:id', requireRole('Owner'), requireFeature('multi_branch'), validate({ body: updateBranchSchema, params: branchParamsSchema }), updateBranch);
-router.delete('/:id', requireRole('Owner'), requireFeature('multi_branch'), validate({ params: branchParamsSchema }), deleteBranch);
+router.delete('/:id', requireRole('Owner'), requireFeature('multi_branch'), validate({ params: branchParamsSchema, body: branchDeleteSchema }), deleteBranch);
+router.post('/:id/reset-credentials', requireRole('Owner'), requireFeature('multi_branch'), validate({ params: branchParamsSchema }), resetBranchCredentials);
 
 // Branch settings (read by Manager, write by Owner)
 router.get('/:id/settings', requireRole('Owner', 'Manager'), requireFeature('multi_branch'), validate({ params: branchParamsSchema }), getBranchSettings);

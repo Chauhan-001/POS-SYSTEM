@@ -71,6 +71,17 @@ describe('securityHeaders middleware', () => {
     expect(csp).not.toContain('upgrade-insecure-requests');
   });
 
+  it('allows the Razorpay checkout (script, frame and connect) so Settings → Upgrade Plan works in the built app', async () => {
+    const { headers } = await get('/test');
+    const csp = headers.get('content-security-policy') || '';
+    // checkout.js must load as a script…
+    expect(csp).toContain("script-src 'self' https://checkout.razorpay.com");
+    // …the payment modal iframe must be allowed…
+    expect(csp).toContain("frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com");
+    // …and the checkout page + telemetry must be reachable.
+    expect(csp).toContain("connect-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://lumberjack.razorpay.com");
+  });
+
   it('sets Referrer-Policy and HSTS', async () => {
     const { headers } = await get('/test');
     expect(headers.get('referrer-policy')).toBe('no-referrer');

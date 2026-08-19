@@ -30,10 +30,10 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
   }, [customers, search]);
 
   return (
-    <div className="fixed inset-0 bg-[#191b23]/75 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[80vh] flex flex-col border border-[#e1e2ed] overflow-hidden">
+    <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
+      <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl max-w-md w-full max-h-[80vh] flex flex-col border border-[var(--color-border-default)] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#e1e2ed]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border-default)]">
           <h3 className="text-sm font-black text-gray-900">Select Customer</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-all cursor-pointer">
             <X className="w-4 h-4" />
@@ -41,7 +41,7 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
         </div>
 
         {/* Search */}
-        <div className="px-5 py-3 border-b border-[#e1e2ed]">
+        <div className="px-5 py-3 border-b border-[var(--color-border-default)]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
@@ -49,17 +49,17 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
               placeholder="Search by name or phone..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[#c3c6d7] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+              className="w-full pl-9 pr-4 py-2 rounded-lg border border-[var(--color-border-input)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
               autoFocus
             />
           </div>
         </div>
 
         {/* Customer list */}
-        <div className="flex-1 overflow-y-auto divide-y divide-[#e7e7f3]">
+        <div className="flex-1 overflow-y-auto divide-y divide-[var(--color-surface-muted)]">
           {filtered.length === 0 ? (
             <div className="p-8 text-center">
-              <User className="w-10 h-10 text-gray-200 mx-auto mb-2" />
+              <User className="w-10 h-10 text-gray-500 mx-auto mb-2" />
               <p className="text-xs font-semibold text-gray-400">No customers found</p>
               <p className="text-[10px] text-gray-300 mt-1">Try a different search term</p>
             </div>
@@ -68,10 +68,10 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
               <button
                 key={cust.phone}
                 onClick={() => { onSelect(cust); onClose(); }}
-                className="w-full p-3 flex items-center justify-between hover:bg-[#f3f3fe] transition-all text-left cursor-pointer"
+                className="w-full p-3 flex items-center justify-between hover:bg-[var(--color-primary-light)] transition-all text-left cursor-pointer"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-[#f3f3fe] flex items-center justify-center shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
                     <User className="w-4 h-4 text-[var(--brand-color)]" />
                   </div>
                   <div>
@@ -95,7 +95,7 @@ export default function CustomerSearchPopup({ customers, onSelect, onClose, curr
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-[#e1e2ed] text-[10px] text-gray-400 flex justify-between items-center">
+        <div className="px-5 py-3 border-t border-[var(--color-border-default)] text-[10px] text-gray-400 flex justify-between items-center">
           <span>{customers.length} total members</span>
           <span className="font-mono">{filtered.length} shown</span>
         </div>

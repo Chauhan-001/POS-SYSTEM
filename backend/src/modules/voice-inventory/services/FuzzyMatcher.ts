@@ -35,14 +35,51 @@
  *   - Collapse repeated whitespace
  *   - Trim
  */
+
+/**
+ * Safe singular/plural normalization — only trims common English suffixes
+ * that are unambiguous. Multi-word product phrases are preserved.
+ *
+ * Examples:
+ *   mushroom  → mushroom
+ *   mushrooms → mushroom
+ *   cashew    → cashew
+ *   cashews   → cashew
+ *   tomato    → tomato
+ *   tomatoes  → tomato
+ *   potato    → potato
+ *   potatoes  → potato
+ *
+ * Conservative: only handles -s, -es, -ies patterns that are safe.
+ */
+export function normalizePlural(input: string): string {
+  if (!input) return '';
+  const lower = input.toLowerCase().trim();
+  if (lower.length <= 3) return lower;
+  // -ies → -y  (potatoes → potato — wait, potatoes ends in -oes not -ies)
+  if (lower.endsWith('ies') && lower.length > 4) return lower.slice(0, -3) + 'y';
+  // -oes → -o  (tomatoes → tomato, potatoes → potato)
+  if (lower.endsWith('oes') && lower.length > 4) return lower.slice(0, -2);
+  // -ches / -shes → remove -es  (dishes → dish)
+  if (lower.endsWith('ches') || lower.endsWith('shes')) return lower.slice(0, -2);
+  // -ses / -xes / -zes → remove -s  (glasses → glass)
+  if (lower.endsWith('ses') || lower.endsWith('xes') || lower.endsWith('zes')) return lower.slice(0, -1);
+  // Simple -s removal (mushrooms → mushroom, cashews → cashew, knives → knife)
+  // Exclude: -ss, -us, -is, and words ≤ 4 chars
+  if (lower.endsWith('s') && !lower.endsWith('ss') && !lower.endsWith('us') && !lower.endsWith('is') && lower.length > 4) return lower.slice(0, -1);
+  return lower;
+}
+
 export function normalizeForFuzzy(input: string): string {
   if (!input) return '';
-  return input
-    .toLowerCase()
-    .replace(/[\u0900-\u0903\u093B-\u093C\u093E-\u094F\u0951-\u0957]/g, '') // strip Devanagari matras
-    .replace(/['’`".,!?;:()\[\]{}_-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return normalizePlural(
+    input
+      .toLowerCase()
+      .replace(/[\u0900-\u0903\u093B-\u093C\u093E-\u094F\u0951-\u0957]/g, '') // strip Devanagari matras
+      .replace(/[''`".,!?;:()\[\]{}_-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 /** Filler words that carry no matching signal in spoken product names. */
