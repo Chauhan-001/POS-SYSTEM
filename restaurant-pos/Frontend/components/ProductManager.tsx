@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Trash2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Settings2, CheckCheck, ChefHat } from 'lucide-react';
+import { Search, Plus, Trash2, Edit2, CheckCircle, XCircle, Star, Sparkles, X, ArrowUpDown, GripVertical, Tag, Layers, Globe, Globe2, Loader2, SlidersHorizontal, Settings2, CheckCheck, ChefHat } from 'lucide-react';
 import { Product, ProductVariant, Branch, ProductMenuConfig, ProductConfigRef } from '../src/types';
 import * as api from '../src/api/client';
 import { debugWarn } from '../src/utils/debugLog';
@@ -121,6 +121,11 @@ export default function ProductManager({
   const [pIsCombo, setPIsCombo] = useState(false);
   const [pComboComponentIds, setPComboComponentIds] = useState<string[]>([]);
   const [pComboPrice, setPComboPrice] = useState(0);
+
+  // ── Quick edit state (pen button — name + image only) ──
+  const [quickEditProduct, setQuickEditProduct] = useState<Product | null>(null);
+  const [quickEditName, setQuickEditName] = useState('');
+  const [quickEditImage, setQuickEditImage] = useState('');
 
   // ── Recipe editor state ──
   const [recipeProduct, setRecipeProduct] = useState<any | null>(null);
@@ -1042,6 +1047,14 @@ export default function ProductManager({
                     <ChefHat className="w-3.5 h-3.5" />
                   </button>
 
+                  <button
+                    onClick={() => { setQuickEditProduct(product); setQuickEditName(product.name); setQuickEditImage(product.image || ''); }}
+                    className="p-1.5 text-gray-500 hover:text-[var(--brand-color)] bg-[var(--color-bg-page)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
+                    title="Edit name & image"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+
                   {/* Branch Prices button (visible when multi-branch is enabled) */}
                   {branches.length > 1 && (
                     <button
@@ -1676,6 +1689,64 @@ export default function ProductManager({
                   Save Prices
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Edit Modal (name + image only) */}
+      {quickEditProduct && (
+        <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setQuickEditProduct(null)}>
+          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--color-border-default)]" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[var(--color-primary-light)] px-5 py-3 border-b border-[var(--color-border-default)] flex justify-between items-center">
+              <h3 className="font-bold text-[var(--color-text-primary)] text-sm flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-[var(--brand-color)]" /> Edit Item
+              </h3>
+              <button onClick={() => setQuickEditProduct(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Name</label>
+                <input
+                  type="text"
+                  value={quickEditName}
+                  onChange={(e) => setQuickEditName(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-gray-50 border border-[var(--color-border-default)] rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Image</label>
+                <input
+                  type="text"
+                  value={quickEditImage}
+                  onChange={(e) => setQuickEditImage(e.target.value)}
+                  placeholder="Paste image URL..."
+                  className="w-full px-3 py-2.5 bg-gray-50 border border-[var(--color-border-default)] rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Or upload below</p>
+                <div className="mt-2">
+                  <ImageInput value={quickEditImage} onChange={setQuickEditImage} previewClass="w-16 h-16 rounded-xl" hint="Upload a photo" />
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-[var(--color-border-default)] flex justify-end gap-2">
+              <button onClick={() => setQuickEditProduct(null)} className="px-4 py-2 rounded-lg border border-[var(--color-border-default)] text-gray-600 text-xs font-bold hover:bg-gray-50 cursor-pointer">Cancel</button>
+              <button
+                onClick={() => {
+                  if (!quickEditProduct || !quickEditName.trim()) return;
+                  const updated = products.map((p) => p.id === quickEditProduct.id ? { ...p, name: quickEditName.trim(), image: quickEditImage } : p);
+                  onUpdateProducts(updated);
+                  if (/^[a-fA-F0-9]{24}$/.test(quickEditProduct.id)) {
+                    api.updateProduct(quickEditProduct.id, { name: quickEditName.trim(), image: quickEditImage }).catch((err: any) => debugWarn('ProductManager', 'quick edit failed:', err));
+                  }
+                  setQuickEditProduct(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-[var(--brand-color)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-bold cursor-pointer transition-colors"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
