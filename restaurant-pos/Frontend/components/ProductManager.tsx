@@ -722,7 +722,7 @@ export default function ProductManager({
     <div id="product_manager_workspace" className="p-6 h-full flex flex-col font-sans">
       
       {/* Search and Category Nav Row */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm shrink-0">
         <div className="flex flex-col gap-1">
           <h2 className="text-xl font-bold tracking-tight text-[var(--color-text-primary)]">Product & Catalog Management</h2>
           <p className="text-xs text-gray-500">Configure item tags, pricing models, specific GST tax rates, and online availability.</p>
@@ -769,7 +769,7 @@ export default function ProductManager({
 
       {/* “Added — configure more?” prompt */}
       {lastCreatedProduct && (
-        <div className="mb-4 flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 animate-fade-in">
+        <div className="mb-4 flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 animate-fade-in shrink-0">
           <p className="text-xs font-semibold text-emerald-800 flex items-center gap-2 min-w-0">
             <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
             <span className="truncate">“{lastCreatedProduct.name}” was added{lastCreatedProduct.menuConfig ? ' with its configuration' : ''}.</span>
@@ -787,7 +787,7 @@ export default function ProductManager({
       )}
 
       {/* Category Tabs & Quick Add */}
-      <div className="flex flex-wrap items-center gap-2 pb-3 mb-4 select-none border-b border-gray-100">
+      <div className="flex flex-wrap items-center gap-2 pb-3 mb-4 select-none border-b border-gray-100 shrink-0">
         {['All', ...categories].map((cat) => (
           <button
             key={cat}
