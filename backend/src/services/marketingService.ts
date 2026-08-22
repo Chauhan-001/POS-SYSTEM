@@ -116,7 +116,7 @@ export async function buildMarketingContext(restaurantId: string): Promise<Marke
         $or: [{ lastVisit: { $lt: cutoff30 } }, { lastVisit: null }, { lastVisit: { $exists: false } }],
       }),
       Customer.countDocuments({ restaurantId: oid, isDeleted: { $ne: true }, visits: { $gte: 20 }, points: { $gte: 500 } }),
-      Product.find({ restaurantId: oid, isDeleted: { $ne: true } })
+      Product.find({ type: 'inventory', restaurantId: oid, isDeleted: { $ne: true } })
         .select('name category currentStock minStock maxStock unit expiryDate')
         .lean()
         .exec(),

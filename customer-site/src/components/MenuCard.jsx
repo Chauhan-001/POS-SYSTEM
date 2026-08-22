@@ -1,7 +1,9 @@
 import { motion } from 'framer-motion';
 
-/** Menu item card — flat item, image or emoji, price, SOLD OUT state. */
+/** Menu item card — image on the left, name/desc/price/add-btn stacked on the right. */
 export default function MenuCard({ item, index, onAdd }) {
+  const hasVariant = item.hasConfiguration;
+
   return (
     <motion.div
       className={`menu-card${item.available ? '' : ' is-unavailable'}`}
@@ -15,16 +17,29 @@ export default function MenuCard({ item, index, onAdd }) {
       ) : (
         <div className="menu-emoji">🍽️</div>
       )}
-      <div className="menu-name">{item.name}</div>
-      <div className="price">₹{Number(item.price || 0).toFixed(2)}</div>
-
-      {item.available ? (
-        <motion.button className="add-btn" whileTap={{ scale: 0.85 }} onClick={() => onAdd(item)}>
-          Add +
-        </motion.button>
-      ) : (
-        <span className="sold-out-tag">SOLD OUT</span>
-      )}
+      <div className="menu-info">
+        <div className="menu-name">
+          {item.name}
+          {hasVariant && <span className="menu-customize-tag">Customize</span>}
+        </div>
+        {item.description && (
+          <div className="menu-desc">{item.description}</div>
+        )}
+        <div className="menu-foot">
+          <span className="price">₹{Number(item.price || 0).toFixed(2)}</span>
+          {item.available ? (
+            <motion.button
+              className={`add-btn${hasVariant ? ' custom' : ''}`}
+              whileTap={{ scale: 0.85 }}
+              onClick={() => onAdd(item)}
+            >
+              {hasVariant ? 'Pick Options' : 'Add +'}
+            </motion.button>
+          ) : (
+            <span className="sold-out-tag">SOLD OUT</span>
+          )}
+        </div>
+      </div>
     </motion.div>
   );
 }

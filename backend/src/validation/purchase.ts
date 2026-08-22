@@ -21,6 +21,8 @@ export const createPurchaseSchema = z.object({
   date: dateString.optional(),
   status: purchaseStatus.optional(),
   notes: optString,
+  /** Optional batch expiry (YYYY-MM-DD) recorded on the stock-in. */
+  expiryDate: dateString.optional(),
 }).strict();
 
 /**

@@ -34,12 +34,17 @@ function userOf(req: Request): { restaurantId: string } {
  */
 export const quickCreateDraft = wrap(async (req, res) => {
   const { restaurantId } = userOf(req);
-  const { productId, text } = req.body as { productId?: string; text?: string };
+  const { productId, text, variantName } = req.body as { productId?: string; text?: string; variantName?: string };
   if (!productId) {
     res.status(400).json({ error: 'productId is required' });
     return;
   }
-  const draft = await recipeAiService.quickCreate(restaurantId, String(text || ''), String(productId));
+  const draft = await recipeAiService.quickCreate(
+    restaurantId,
+    String(text || ''),
+    String(productId),
+    variantName ? String(variantName) : undefined
+  );
   res.json({ data: draft });
 });
 

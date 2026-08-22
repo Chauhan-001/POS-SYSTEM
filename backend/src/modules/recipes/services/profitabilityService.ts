@@ -16,7 +16,7 @@
  */
 
 import mongoose from 'mongoose';
-import { Recipe, Product, BillItem } from '../../../models';
+import { Recipe, Product, BillItem, ProductVariant } from '../../../models';
 import Offer from '../../../models/Offer';
 import { AppError } from '../../../utils/AppError';
 import { recipeCostEngine, RecipeCostResult } from './recipeCostEngine';
@@ -53,6 +53,12 @@ export class ProfitabilityService {
     }).lean().exec();
     const productById = new Map(products.map((p: any) => [String(p._id), p]));
 
+    // Products that have REAL variants (ProductVariant rows or menuConfig
+    // variant groups) NEVER have a Default/base recipe. Any recipe stored with
+    // variantName 'Default'/empty on such a product is legacy — it must be
+    // excluded so it can't appear as a ₹0-priced phantom row.
+    const variantProductIds = await this.productsWithVariants(restaurantId, products);
+
     // Actual units sold per menu item (server-side aggregation over BillItem).
     const sold: any[] = await BillItem.aggregate([
       {
@@ -69,21 +75,26 @@ export class ProfitabilityService {
     for (const recipe of recipes) {
       const product = productById.get(String(recipe.productId));
       if (!product) continue;
-      const price = this.effectivePrice(product, opts.branchId);
+      const variantName = String(recipe.variantName || '').trim();
+      if (variantProductIds.has(String(product._id)) && (variantName === '' || variantName === 'Default')) continue;
+      // Cost + selling price are resolved by the engine — it handles branch
+      // overrides AND variant prices (ProductVariant rows + menuConfig variant
+      // template options). Never pass a base-price override here, or variant
+      // products (whose base price is 0) would report ₹0 selling prices.
       const cost: RecipeCostResult = await recipeCostEngine.costRecipe(recipe, {
         restaurantId,
         branchId: opts.branchId,
-        priceOverrides: new Map([[String(product._id), price]]),
       });
+      const sellingPrice = money(cost.sellingPrice);
       const unitsSold = Number(soldById.get(String(product._id))?.unitsSold) || 0;
       const revenue = money(Number(soldById.get(String(product._id))?.revenue) || 0);
-      const contribution = money(cost.sellingPrice - cost.recipeCost);
+      const contribution = money(sellingPrice - cost.recipeCost);
       rows.push({
         productId: String(product._id),
         productName: product.name,
         variantName: recipe.variantName || undefined,
         recipeId: String(recipe._id),
-        sellingPrice: price,
+        sellingPrice,
         recipeCost: cost.recipeCost,
         foodCostPercent: cost.foodCostPercent,
         contribution,
@@ -130,7 +141,7 @@ export class ProfitabilityService {
   async offerEconomics(restaurantId: string, offer: any) {
 
     // Applicable products: explicit product ids, or category match.
-    const query: any = { restaurantId, isDeleted: { $ne: true }, availability: true };
+    const query: any = { restaurantId, isDeleted: { $ne: true }, type: 'menu' };
     const explicitIds = (offer.applicableProductIds || []).filter((id: any) => mongoose.Types.ObjectId.isValid(id));
     if (explicitIds.length > 0) {
       query._id = { $in: explicitIds };
@@ -142,14 +153,21 @@ export class ProfitabilityService {
       return { rows: [], warnings: [], offer: { title: offer.title, type: offer.type, value: offer.value } };
     }
 
-    // Recipe costs for the applicable products (active recipes only).
+    // Recipe costs for the applicable products (active recipes only). Products
+    // with REAL variants never use a Default/base recipe — drop legacy ones.
     const recipes: any[] = await Recipe.find({
       restaurantId,
       status: 'active',
       isDeleted: { $ne: true },
       productId: { $in: products.map((p: any) => p._id) },
     }).lean().exec();
-    const recipeByProduct = new Map(recipes.map((r: any) => [String(r.productId), r]));
+    const variantProductIds = await this.productsWithVariants(restaurantId, products);
+    const recipeByProduct = new Map();
+    for (const r of recipes) {
+      const vName = String(r.variantName || '').trim();
+      if (variantProductIds.has(String(r.productId)) && (vName === '' || vName === 'Default')) continue;
+      recipeByProduct.set(String(r.productId), r);
+    }
 
     const rows: any[] = [];
     const warnings: string[] = [];
@@ -315,14 +333,16 @@ export class ProfitabilityService {
       const lineSubtotal = money(price * qty);
       subtotal = money(subtotal + lineSubtotal);
 
-      // Variant resolution mirrors consumptionService.resolveRecipeVersion:
-      // a variant line matches ONLY a recipe with the exact variant; a plain
-      // line matches the no-variant recipe. We never attribute a generic
-      // recipe to a variant line that the consumption engine would skip.
+      // Variant resolution mirrors consumptionService (variant-only model, no
+      // inheritance). A variant line matches its own recipe; a plain line
+      // matches the product's 'Default' recipe (products with variants have no
+      // Default, so plain lines get no cost). Legacy base recipes still resolve
+      // as Default until the migration archives them.
       const variant = item.variantName || item.variant || (item.selectedVariant?.name);
       const recipe = variant
-        ? recipeByKey.get(`${String(product._id)}::${variant}`)
-        : (recipeByKey.get(`${String(product._id)}::`) || recipeByKey.get(`${String(product._id)}::undefined`));
+        ? (recipeByKey.get(`${String(product._id)}::${variant}`) || null)
+        : (recipeByKey.get(`${String(product._id)}::Default`) || recipeByKey.get(`${String(product._id)}::`) || null);
+      const resolvedMode = recipe ? 'exact' : undefined;
       let recipeCost = 0;
       if (recipe) {
         const cost = await recipeCostEngine.costRecipe(recipe, { restaurantId });
@@ -337,6 +357,7 @@ export class ProfitabilityService {
         quantity: qty,
         sellingPrice: price,
         recipeCost,
+        resolvedMode,
         hasRecipe: !!recipe,
         lineCost: money(recipeCost * qty),
       });
@@ -399,6 +420,25 @@ export class ProfitabilityService {
       if (typeof override === 'number') price = override;
     }
     return money(price);
+  }
+
+  /** Set of product ids that have REAL variants (ProductVariant rows or
+   *  menuConfig variant template refs). Variant-less products only use the
+   *  virtual 'Default' recipe. */
+  private async productsWithVariants(restaurantId: string, products: any[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    if (products.length === 0) return out;
+    const ids = products.map((p: any) => p._id);
+    const rows = await ProductVariant.find({
+      productId: { $in: ids },
+      isDeleted: { $ne: true },
+    }).select('productId').lean().exec();
+    for (const v of rows) out.add(String(v.productId));
+    for (const p of products) {
+      if (out.has(String(p._id))) continue;
+      if ((p.menuConfig as any)?.variantConfigurations?.length) out.add(String(p._id));
+    }
+    return out;
   }
 
   private discountedPrice(offer: any, price: number): number {

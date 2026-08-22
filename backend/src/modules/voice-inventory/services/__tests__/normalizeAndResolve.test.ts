@@ -120,20 +120,20 @@ describe('Resolution priority — exact > alias > fuzzy > semantic', () => {
   // They use mock data to simulate the priority ordering.
 
   const mockProducts = [
-    { id: 'p1', name: 'Paneer', availability: false },
-    { id: 'p2', name: 'Kadhai Paneer', availability: true },
-    { id: 'p3', name: 'Paneer Tikka', availability: true },
-    { id: 'p4', name: 'Cashew', availability: false },
-    { id: 'p5', name: 'Mushroom', availability: false },
-    { id: 'p6', name: 'Mushroom Soup', availability: true },
+    { id: 'p1', name: 'Paneer', type: 'inventory', availability: false },
+    { id: 'p2', name: 'Kadhai Paneer', type: 'menu', availability: true },
+    { id: 'p3', name: 'Paneer Tikka', type: 'menu', availability: true },
+    { id: 'p4', name: 'Cashew', type: 'inventory', availability: false },
+    { id: 'p5', name: 'Mushroom', type: 'inventory', availability: false },
+    { id: 'p6', name: 'Mushroom Soup', type: 'menu', availability: true },
   ];
 
   // Simulate: when input = "paneer" and inventory-only filter is applied,
-  // only availability=false products should be candidates
+  // only type='inventory' products should be candidates
   it('TEST 1: "paneer" with Paneer (inventory) + Kadhai Paneer (menu) → Paneer', () => {
     const inventoryOnly = true;
     const candidates = mockProducts.filter(p =>
-      inventoryOnly ? p.availability === false : true
+      inventoryOnly ? p.type === 'inventory' : true
     );
     const exactMatch = candidates.find(p => p.name.toLowerCase() === 'paneer');
     expect(exactMatch).toBeDefined();
@@ -149,21 +149,21 @@ describe('Resolution priority — exact > alias > fuzzy > semantic', () => {
   });
 
   it('TEST 3: "cashew" → Cashew (exact match)', () => {
-    const candidates = mockProducts.filter(p => p.availability === false);
+    const candidates = mockProducts.filter(p => p.type === 'inventory');
     const exactMatch = candidates.find(p => p.name.toLowerCase() === 'cashew');
     expect(exactMatch).toBeDefined();
     expect(exactMatch!.id).toBe('p4');
   });
 
   it('TEST 6: "mushroom" → Mushroom (exact match, not Mushroom Soup)', () => {
-    const candidates = mockProducts.filter(p => p.availability === false);
+    const candidates = mockProducts.filter(p => p.type === 'inventory');
     const exactMatch = candidates.find(p => p.name.toLowerCase() === 'mushroom');
     expect(exactMatch).toBeDefined();
     expect(exactMatch!.id).toBe('p5');
   });
 
   it('TEST 8: "mushroom" inventory-only → Mushroom, not Mushroom Soup', () => {
-    const candidates = mockProducts.filter(p => p.availability === false);
+    const candidates = mockProducts.filter(p => p.type === 'inventory');
     const exactMatch = candidates.find(p => p.name.toLowerCase() === 'mushroom');
     expect(exactMatch).toBeDefined();
     expect(exactMatch!.name).toBe('Mushroom');
@@ -180,7 +180,7 @@ describe('Resolution priority — exact > alias > fuzzy > semantic', () => {
     ];
     const inventoryOnly = true;
     const candidates = inventoryOnly
-      ? menuOnlyProducts.filter(p => p.availability === false)
+      ? menuOnlyProducts.filter(p => p.type === 'inventory')
       : menuOnlyProducts;
     // No inventory items → empty candidates → should be ambiguous/unresolved
     expect(candidates.length).toBe(0);

@@ -2,7 +2,13 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Campaign Controller — CRM campaign builder endpoints (Phase 1.6).
+ * Campaign Controller — CRM campaign builder endpoints (Phase 1.6) plus Phase 6
+ * Promotion Orchestration: CampaignProposal validation, conflict detection,
+ * frequency check, economics, quiet periods, consent/opt-out, natural language
+ * commands, automation modes, stop conditions, and monitoring.
+ *
+ * Lifecycle: DRAFT → VALIDATING → READY_FOR_APPROVAL → APPROVED → SCHEDULED → ACTIVE → COMPLETED → MEASURED
+ * Failure states: REJECTED | CANCELLED | FAILED | EXPIRED
  */
 
 import { Request, Response } from 'express';
@@ -14,6 +20,7 @@ function userOf(req: Request): AuthenticatedRequest['user'] {
   return (req as AuthenticatedRequest).user;
 }
 
+/** List campaigns - unchanged */
 export async function listCampaigns(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -30,6 +37,7 @@ export async function listCampaigns(req: Request, res: Response): Promise<void> 
   }
 }
 
+/** Get campaign - unchanged */
 export async function getCampaign(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -45,7 +53,7 @@ export async function getCampaign(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** POST /api/campaigns/preview — Estimate audience size for the builder. */
+/** POST /api/campaigns/preview - unchanged */
 export async function previewCampaign(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -57,6 +65,7 @@ export async function previewCampaign(req: Request, res: Response): Promise<void
   }
 }
 
+/** POST /api/campaigns - unchanged */
 export async function createCampaign(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -68,6 +77,7 @@ export async function createCampaign(req: Request, res: Response): Promise<void>
   }
 }
 
+/** PUT /api/campaigns/:id - unchanged */
 export async function updateCampaign(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -83,6 +93,7 @@ export async function updateCampaign(req: Request, res: Response): Promise<void>
   }
 }
 
+/** DELETE /api/campaigns/:id - unchanged */
 export async function deleteCampaign(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -98,6 +109,7 @@ export async function deleteCampaign(req: Request, res: Response): Promise<void>
   }
 }
 
+/** PATCH /api/campaigns/:id/status - unchanged */
 export async function setCampaignStatus(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -109,7 +121,7 @@ export async function setCampaignStatus(req: Request, res: Response): Promise<vo
   }
 }
 
-/** POST /api/campaigns/:id/send — Send the campaign now. */
+/** POST /api/campaigns/:id/send - unchanged */
 export async function sendCampaign(req: Request, res: Response): Promise<void> {
   try {
     const auth = userOf(req);
@@ -121,6 +133,97 @@ export async function sendCampaign(req: Request, res: Response): Promise<void> {
       return;
     }
     console.error('[CampaignController] send error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Validate a campaign proposal */
+export async function validateCampaignProposal(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const proposalData = req.body;
+    const result = await campaignService.validateCampaignProposal(auth?.restaurantId || '', proposalData, { operator: auth?.name });
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] validate proposal error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Detect conflicts with existing campaigns */
+export async function detectConflicts(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const proposalData = req.body;
+    const result = await campaignService.detectConflicts(auth?.restaurantId || '', proposalData, { operator: auth?.name });
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] detect conflicts error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Check customer contact frequency */
+export async function checkCustomerFrequency(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const proposalData = req.body;
+    const result = await campaignService.checkCustomerFrequency(auth?.restaurantId || '', proposalData.audience || {}, { operator: auth?.name });
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] check frequency error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Calculate campaign economics */
+export async function calculateCampaignEconomics(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const proposalData = req.body;
+    const result = await campaignService.calculateCampaignEconomics(auth?.restaurantId || '', proposalData, { operator: auth?.name });
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] calculate economics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Check if current time is within quiet period */
+export async function isQuietPeriod(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const schedule = req.body.schedule;
+    const result = await campaignService.isQuietPeriod(schedule);
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] check quiet period error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Check consent/opt-out status */
+export async function checkConsent(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const audience = req.body.audience;
+    const result = await campaignService.checkConsent(auth?.restaurantId || '', audience || {}, { operator: auth?.name });
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] check consent error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Phase 6: Create proposal from natural language command */
+export async function createProposalFromCommand(req: Request, res: Response): Promise<void> {
+  try {
+    const auth = userOf(req);
+    const command = req.body.command;
+    const result = await campaignService.createProposalFromCommand(auth?.restaurantId || '', command, { operator: auth?.name });
+    res.json({ data: result });
+  } catch (error) {
+    console.error('[CampaignController] create proposal from command error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

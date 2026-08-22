@@ -233,7 +233,26 @@ export class SubscriptionService {
     }
 
     if (sub.status === 'trial' && sub.trialEnd && now > sub.trialEnd) {
-      if (sub.graceEnd && now < sub.graceEnd) {
+      // A cash-paid onboarding (gateway 'cash', status 'success') already
+      // collected the plan payment — its trial converts to the paid plan
+      // (active) with a fresh billing period instead of the grace/free fallback.
+      const hasCashPayment = await Payment.exists({
+        subscriptionId: sub._id,
+        gateway: 'cash',
+        status: 'success',
+      }).exec();
+      if (hasCashPayment) {
+        const period = isBillingPeriod(sub.billingPeriod) ? sub.billingPeriod : 'monthly';
+        const expiry = new Date(now.getTime() + billingDurationDays(period) * 24 * 60 * 60 * 1000);
+        sub.status = 'active';
+        sub.trialEnd = undefined;
+        sub.subscriptionStart = now;
+        sub.expiryDate = expiry;
+        sub.renewalDate = expiry;
+        sub.graceEnd = new Date(expiry.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+        changed = true;
+        console.log(`[SubscriptionService] Cash trial ended for ${restaurantId} → active (paid plan)`);
+      } else if (sub.graceEnd && now < sub.graceEnd) {
         sub.status = 'grace';
         changed = true;
       } else if (sub.graceEnd && now > sub.graceEnd) {

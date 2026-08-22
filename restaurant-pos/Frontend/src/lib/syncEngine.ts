@@ -274,6 +274,18 @@ export class SyncEngine {
     if (online && wasOffline) {
       this._pendingReplay = true;
       this.sync();
+      // Mark all critical data as stale to force re-fetch on reconnect
+      this.staleKeys.add('products');
+      this.staleKeys.add('customers');
+      this.staleKeys.add('employees');
+      this.staleKeys.add('bills');
+      this.staleKeys.add('orders');
+      this.staleKeys.add('tables');
+      this.staleKeys.add('takeaway');
+      this.staleKeys.add('purchases');
+      this.staleKeys.add('expenses');
+      this.staleKeys.add('branches');
+      this.staleKeys.add('reservations');
     } else {
       this.notify();
     }

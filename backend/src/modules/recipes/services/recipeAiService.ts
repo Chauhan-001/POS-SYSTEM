@@ -62,6 +62,12 @@ export interface MatchedComponent {
 export interface QuickCreateDraft {
   productId: string;
   productName: string;
+  /** Variant the draft targets (override recipe). Empty for the base recipe. */
+  variantName?: string;
+  /** Known variant names for the product (ProductVariant + recipe overrides). */
+  variants: string[];
+  /** Current effective recipe mode for the target: 'exact' | 'inherit' | 'none'. */
+  resolution?: { mode: string; inherited?: boolean; sourceRecipeId?: string };
   matched: MatchedComponent[];
   /** Items with no confident inventory match (LOW) — require manual selection. */
   needsAttention: MatchedComponent[];
@@ -112,13 +118,25 @@ export class RecipeAiService {
   async quickCreate(
     restaurantId: string,
     text: string,
-    productId: string
+    productId: string,
+    variantName?: string
   ): Promise<QuickCreateDraft> {
     const cleaned = String(text || '').trim();
     if (cleaned.length < 3) throw new AppError(400, 'Describe the dish ingredients first — e.g. "200g paneer, 150g tomato".');
 
     const product = await Product.findOne({ _id: productId, restaurantId, isDeleted: { $ne: true } }).lean().exec();
     if (!product) throw new AppError(404, 'Product not found in your restaurant');
+
+    // Variant context: known variants for the product + how this target resolves.
+    const { recipeResolutionService } = await import('./recipeResolutionService');
+    const variants = await recipeResolutionService.getVariantsForProduct(restaurantId, String(product._id));
+    const variant = (variantName || '').trim() || undefined;
+    const resolved = variant
+      ? await recipeResolutionService.resolveEffectiveRecipe(restaurantId, String(product._id), variant)
+      : undefined;
+    const resolution = variant
+      ? { mode: resolved?.resolution.mode || 'none', inherited: resolved?.resolution.inherited, sourceRecipeId: resolved?.resolution.sourceRecipeId }
+      : undefined;
 
     // ── 1. LLM structured extraction (output is untrusted) ─────────
     let parsed: AiParsedIngredient[];
@@ -136,6 +154,9 @@ export class RecipeAiService {
       return {
         productId: String(product._id),
         productName: product.name,
+        variantName: variant,
+        variants,
+        resolution,
         matched: [],
         needsAttention: [],
         warnings: ['AI ingredient extraction unavailable right now — add ingredients manually instead.'],
@@ -146,9 +167,9 @@ export class RecipeAiService {
     // ── 2. Tenant-scoped inventory matching with confidence ────────
     const inventory = await Product.find({
       restaurantId,
+      type: 'inventory',
       isDeleted: { $ne: true },
-      // Both ingredients (availability:false) and full products are matchable.
-    }).select('_id name unit averageCost availability voiceAliases searchAliases').lean().exec();
+    }).select('_id name unit averageCost voiceAliases searchAliases').lean().exec();
 
     const matched: MatchedComponent[] = [];
     const needsAttention: MatchedComponent[] = [];
@@ -248,6 +269,9 @@ export class RecipeAiService {
     return {
       productId: String(product._id),
       productName: product.name,
+      variantName: variant,
+      variants,
+      resolution,
       matched,
       needsAttention,
       warnings,
@@ -269,9 +293,10 @@ export class RecipeAiService {
     }
     return Product.find({
       restaurantId,
+      type: 'inventory',
       isDeleted: { $ne: true },
       $or: or,
-    }).select('_id name unit averageCost availability currentStock image').limit(10).lean().exec();
+    }).select('_id name unit averageCost currentStock image').limit(10).lean().exec();
   }
 }
 

@@ -94,7 +94,7 @@ describe('restaurantService.create', () => {
     const out = await createRestaurant('cash');
 
     expect(out.id).toBeTruthy();
-    expect(out.status).toBe('active');
+    expect(out.status).toBe('trial');
     expect(out.ownerPin).toBeTruthy();
     expect(out.invoice).toBeTruthy();
     expect(out.invoice?.number).toMatch(/^SUB-/);
@@ -104,7 +104,7 @@ describe('restaurantService.create', () => {
     expect(restaurant!.ownerPin).not.toBe(out.ownerPin); // stored hashed
 
     const sub = await Subscription.findOne({ restaurantId: restaurant!._id }).lean().exec();
-    expect(sub!.status).toBe('active');
+    expect(sub!.status).toBe('trial');
     expect(sub!.plan).toBe('basic_phase2');
 
     const branch = await Branch.findOne({ restaurantId: restaurant!._id }).lean().exec();
@@ -430,7 +430,7 @@ describe('restaurantService.statistics', () => {
     const stats = await restaurantService.statistics(id);
     expect(stats.id).toBe(id);
     expect(stats.plan).toBe('basic_phase2');
-    expect(stats.subscriptionStatus).toBe('active');
+    expect(stats.subscriptionStatus).toBe('trial');
     expect(typeof stats.branches).toBe('number');
     expect(stats.branchStats.total).toBe(1);
     expect(stats.branchStats.headBranches).toBe(1);

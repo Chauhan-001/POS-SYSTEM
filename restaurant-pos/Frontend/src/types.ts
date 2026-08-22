@@ -23,6 +23,8 @@ export interface Product {
   taxClassification?: 'prepared_food' | 'beverage' | 'packaged' | 'other' | '';
   /** How gstPercent was assigned: automatic recommendation or manual override. */
   taxSource?: 'automatic' | 'manual';
+  /** Authoritative product type: 'menu' (sellable) or 'inventory' (raw material). */
+  type?: 'menu' | 'inventory';
   availability: boolean;
   variants?: ProductVariant[];
   favorite?: boolean;

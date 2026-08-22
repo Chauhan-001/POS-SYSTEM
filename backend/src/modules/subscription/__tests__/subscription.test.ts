@@ -42,6 +42,7 @@ vi.mock('../../../models/SubscriptionPlan', () => {
 vi.mock('../../../models/Payment', () => {
   const Payment: Record<string, any> = vi.fn();
   Payment.findOne = vi.fn(() => ({ exec: mockExec }));
+  Payment.exists = vi.fn(() => ({ exec: mockExec }));
   Payment.create = vi.fn().mockResolvedValue({ _id: 'pay_mock_id', invoiceNumber: 'SUB-2026-000001' });
   Payment.find = vi.fn(() => ({
     sort: vi.fn(() => ({
@@ -205,6 +206,7 @@ describe('SubscriptionService', () => {
         graceEnd: new Date(Date.now() + 9 * 24 * 60 * 60 * 1000), // 9 days from now
       });
       mockExec.mockResolvedValueOnce(sub);
+      mockExec.mockResolvedValueOnce(null); // no cash payment — normal trial
       mockExec.mockResolvedValueOnce({ name: 'Test' });
 
       const result = await service.getSubscriptionStatus('rest_id_123');
@@ -219,6 +221,7 @@ describe('SubscriptionService', () => {
         graceEnd: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),  // 1 day ago
       });
       mockExec.mockResolvedValueOnce(sub);
+      mockExec.mockResolvedValueOnce(null); // no cash payment — normal trial
       mockExec.mockResolvedValueOnce(mockPlan({ planId: 'free', name: 'Free Plan', price: 0, yearlyPrice: 0, features: ['core_pos'] })); // Free plan lookup
       mockExec.mockResolvedValueOnce({ name: 'Test' });
 
@@ -237,6 +240,7 @@ describe('SubscriptionService', () => {
         graceEnd: undefined,
       });
       mockExec.mockResolvedValueOnce(sub);
+      mockExec.mockResolvedValueOnce(null); // no cash payment — normal trial
       mockExec.mockResolvedValueOnce({ name: 'Test' });
 
       const result = await service.getSubscriptionStatus('rest_id_123');

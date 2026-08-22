@@ -226,7 +226,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setRefreshToken(null);
               localStorage.removeItem('pos_access_token');
               localStorage.removeItem('pos_refresh_token');
-              localStorage.removeItem('pos_current_employee');
               localStorage.removeItem('pos_session_mode');
               setState(prev => ({
                 ...prev,

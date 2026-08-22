@@ -134,11 +134,9 @@ export default function MenuAvailabilityPage({
   const isMongoObjectId = (id?: string) => /^[a-fA-F0-9]{24}$/.test(String(id || ''));
   const effectiveRows = useMemo<MenuAvailabilityState[]>(() => {
     if (menu.length > 0) return menu;
-    // Offline fallback — menu items only (availability !== false), so
-    // inventory-only raw materials never surface on this screen, matching
-    // the billing menu's menu-item definition.
+    // Offline fallback — products are already menu-only (type=menu).
     return products
-      .filter((p) => isMongoObjectId(p.id) && p.availability !== false)
+      .filter((p) => isMongoObjectId(p.id))
       .map((p) => ({
         productId: p.id,
         name: p.name,

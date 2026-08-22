@@ -326,7 +326,7 @@ export default function Restaurants() {
                   className="mt-0.5 text-primary-600" />
                 <div>
                   <p className="text-sm font-semibold text-surface-900 dark:text-surface-100">Paid (Cash)</p>
-                  <p className="text-xs text-surface-500 mt-0.5">Collect payment on the spot. Restaurant is fully activated immediately.</p>
+                  <p className="text-xs text-surface-500 mt-0.5">Collect payment on the spot. Runs the plan's trial period first, then activates fully.</p>
                 </div>
               </label>
               <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
@@ -358,7 +358,7 @@ export default function Restaurants() {
             </div>
             {formData.onboardingMode === 'cash' && (
               <p className="text-xs text-success flex items-center gap-1">
-                <CheckCircle size={12} /> Restaurant will be fully active — mark payment as received in cash.
+                <CheckCircle size={12} /> Payment collected in cash. Trial follows the selected plan's trial days, then converts to the paid plan.
               </p>
             )}
             {formData.onboardingMode === 'create_only' && (
@@ -368,7 +368,7 @@ export default function Restaurants() {
             )}
             {formData.onboardingMode === 'trial' && (
               <p className="text-xs text-info flex items-center gap-1">
-                <CheckCircle size={12} /> Full access for 7 days. A reminder will be shown before trial ends.
+                <CheckCircle size={12} /> All features unlocked for 7 days. A reminder will be shown before trial ends.
               </p>
             )}
           </div>

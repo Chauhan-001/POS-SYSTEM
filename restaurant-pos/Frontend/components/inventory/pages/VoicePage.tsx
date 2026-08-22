@@ -8,6 +8,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import Modal from '../components/Modal';
 import { useNotify, useInventory } from '../InventoryManager';
+import { fetchSuppliers, createSupplier } from '../../../src/api/client';
 import apiClient from '../../../src/api/axios';
 
 // ====================================================================
@@ -214,6 +215,28 @@ export default function VoicePage() {
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmDone, setConfirmDone] = useState(false);
 
+  // Best-effort: a supplier named (or edited) in the confirm panel that isn't
+  // yet in the Supplier module gets created there. Never fails the confirm.
+  const ensureSupplierCreated = useCallback(async (name: string, itemName: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const existing = await fetchSuppliers({ limit: 200 });
+      const list = Array.isArray(existing) ? existing : [];
+      if (list.some((s: any) => String(s.name || '').trim().toLowerCase() === trimmed.toLowerCase())) return;
+      await createSupplier({
+        name: trimmed,
+        phone: '',
+        email: '',
+        address: '',
+        items: itemName ? [itemName] : [],
+        status: 'active',
+      });
+    } catch {
+      // offline / conflict — the purchase still stands; Suppliers refreshes later.
+    }
+  }, []);
+
   // Error + diagnostics (friendly banner, collapsible technical details)
   const [error, setError] = useState<string | null>(null);
   const [diag, setDiag] = useState<DiagState>({ open: false, info: [] });
@@ -403,6 +426,9 @@ export default function VoicePage() {
           auditLogId: result.data?.operation ? logId || undefined : undefined,
           appliedItems: result.data?.updatedItems,
         }, ...prev]);
+
+        // New supplier detected → add to the Supplier module.
+        if (editableSupplier.trim()) void ensureSupplierCreated(editableSupplier.trim(), editedItems[0]?.name || '');
 
         // Server is authoritative — re-pull the catalog so auto-created
         // items and updated stock appear immediately.

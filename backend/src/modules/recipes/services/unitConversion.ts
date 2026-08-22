@@ -72,7 +72,7 @@ export function normalizeUnit(unit: string | undefined | null): string | null {
   const def = UNIT_DEFS[key];
   if (!def) return null;
   // Return a canonical short form.
-  if (def.family === 'mass') return def.factor === 1000 ? 'kg' : def.factor === 0.001 ? 'g' : 'g';
+  if (def.family === 'mass') return def.factor === 1000 ? 'kg' : def.factor === 0.001 ? 'mg' : 'g';
   if (def.family === 'volume') return def.factor === 1000 ? 'L' : 'ml';
   return 'pcs';
 }

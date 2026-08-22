@@ -19,6 +19,9 @@
 import mongoose from 'mongoose';
 import { productRepo, inventoryEventRepo, auditLogRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
+import { round4 } from '../modules/recipes/services/unitConversion';
+import type { IStockBatch } from '../models/Product';
+import Product from '../models/Product';
 
 /** Every supported stock movement type. */
 export type StockMovementType =
@@ -46,6 +49,47 @@ const EVENT_TYPE_MAP: Record<StockMovementType, string> = {
 /** Escape a name for safe RegExp construction (exact-name lookup). */
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Consume `outQty` from batches FIRST-IN-FIRST-OUT: the batch with the
+ * earliest expiryDate is consumed first, batches with no expiryDate ('')
+ * are treated as "longest shelf life" and consumed last, and receivedDate
+ * breaks ties. Fully-consumed batches are dropped; the rest are returned.
+ */
+function consumeFifoTillEmpty(batches: IStockBatch[], outQty: number): IStockBatch[] {
+  let remaining = Math.max(0, outQty);
+  const sorted = [...batches].sort((a, b) => {
+    const ea = a.expiryDate || '9999-12-31';
+    const eb = b.expiryDate || '9999-12-31';
+    if (ea !== eb) return ea < eb ? -1 : 1;
+    const ra = a.receivedDate || '0000-01-01';
+    const rb = b.receivedDate || '0000-01-01';
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    return 0;
+  });
+  const next: IStockBatch[] = [];
+  for (const b of sorted) {
+    const qty = Number(b.quantity) || 0;
+    if (qty <= 0) continue;
+    if (remaining <= 0) { next.push(b); continue; }
+    if (qty <= remaining) {
+      remaining -= qty; // fully consumed → dropped
+    } else {
+      next.push({ ...b, quantity: round4(qty - remaining) });
+      remaining = 0;
+    }
+  }
+  return next;
+}
+
+/** Earliest expiry date across remaining batches ('' when none has one). */
+function earliestBatchExpiry(batches: IStockBatch[]): string {
+  const expiries = batches
+    .filter((b) => b.expiryDate && Number(b.quantity) > 0)
+    .map((b) => String(b.expiryDate))
+    .sort();
+  return expiries.length > 0 ? expiries[0] : '';
 }
 
 export interface StockMovementInput {
@@ -78,9 +122,34 @@ export interface StockMovementInput {
    * purchase flow so "stock-in" always lands on a real product.
    */
   autoCreateProduct?: boolean;
+  /** Optional expiry date for the incoming batch (stock-in) or the batch that
+   *  was consumed (stock-out, informational). For stock-in this drives FIFO
+   *  batch tracking; the quantity is merged into or added as a new batch. */
+  expiryDate?: string;
+  /** Optional batch number for tracking. Paired with expiryDate. */
+  batchNumber?: string;
 }
 
 export class StockMovementService {
+  /** Per-product async mutex so concurrent movements on the same product
+   *  never race on the FIFO batch array. Key = `${restaurantId}:${productId}`. */
+  private locks = new Map<string, Promise<unknown>>();
+
+  private async runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const tail = this.locks.get(key) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const chained = tail.then(() => gate);
+    this.locks.set(key, chained);
+    await tail.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.locks.get(key) === chained) this.locks.delete(key);
+    }
+  }
+
   /**
    * Apply a single stock movement. Returns the updated product + before/after.
    */
@@ -121,6 +190,7 @@ export class StockMovementService {
           category: 'Inventory',
           image: '',
           gstPercent: 0,
+          type: 'inventory',
           availability: false,
           restaurantId: new mongoose.Types.ObjectId(input.restaurantId),
           branchPrice: {},
@@ -143,6 +213,7 @@ export class StockMovementService {
           aliasUsageCount: 0,
           isDeleted: false,
           deletedAt: null,
+          batches: [],
         } as any);
         console.warn(`[StockMovement] Auto-created hidden inventory product "${input.itemName}"`);
       } catch (autoErr: any) {
@@ -157,42 +228,107 @@ export class StockMovementService {
       throw new AppError(403, 'Product not found in your restaurant');
     }
 
-    const before = Number(product.currentStock) || 0;
-    let effectiveDelta = input.delta;
-    let after = before + effectiveDelta;
+    // ── Serialize per-product so FIFO batches never race ────────────
+    const productKey = `${input.restaurantId}:${String(product._id)}`;
+    return this.runExclusive(productKey, async () => {
+      // Re-fetch inside the lock so we always have the latest batches. Use
+      // .lean() so batches is a PLAIN array of plain objects — a Mongoose
+      // DocumentArray with subdocuments breaks `Array.isArray`/`{...b}` and
+      // the FIFO math would silently start from an empty batch set.
+      const fresh = await Product.findById(product._id.toString()).lean().exec() as any;
+      if (!fresh) throw new AppError(404, 'Product not found for stock movement');
+      product = fresh;
 
-    // ── Negative-stock guard ────────────────────────────────────────
-    if (after < 0) {
-      if (input.allowNegative) {
-        effectiveDelta = -before; // clamp to zero
-        after = 0;
-      } else {
-        throw new AppError(
-          400,
-          `Insufficient stock for "${product.name}" (have ${before} ${product.unit || ''}, need ${Math.abs(input.delta)})`
-        );
+      const before = Number(product.currentStock) || 0;
+      let effectiveDelta = input.delta;
+      let after = before + effectiveDelta;
+
+      // ── Negative-stock guard ──────────────────────────────────────
+      if (after < 0) {
+        if (input.allowNegative) {
+          effectiveDelta = -before; // clamp to zero
+          after = 0;
+        } else {
+          throw new AppError(
+            400,
+            `Insufficient stock for "${product.name}" (have ${before} ${product.unit || ''}, need ${Math.abs(input.delta)})`
+          );
+        }
       }
-    }
 
-    // ── Atomic stock update ──────────────────────────────────────────
-    const updated = await productRepo.findOneAndUpdate(
-      {
-        _id: product._id,
-        currentStock: { $gte: -effectiveDelta },
-      } as any,
-      { $inc: { currentStock: effectiveDelta } } as any,
-      { upsert: false }
-    );
-    if (!updated) {
-      throw new AppError(409, 'Stock changed concurrently — please retry');
-    }
+      // ── FIFO batch management ─────────────────────────────────────
+      let batches: IStockBatch[] = Array.isArray(product.batches)
+        ? product.batches.map((b: any) => ({ ...b }))
+        : [];
+      const today = new Date().toISOString().slice(0, 10);
 
-    // ── Weighted average cost on purchase ────────────────────────────
+      if (effectiveDelta > 0) {
+        // Stock-in: merge into a matching batch (same expiry + batchNumber)
+        // or create a new one.
+        const expiry = input.expiryDate || '';
+        const batchNo = input.batchNumber || '';
+        const existing = batches.find(
+          (b) => (b.expiryDate || '') === expiry && (b.batchNumber || '') === batchNo
+        );
+        if (existing) {
+          existing.quantity = (existing.quantity || 0) + effectiveDelta;
+          if (input.purchasePrice != null) existing.cost = input.purchasePrice;
+        } else {
+          batches.push({
+            batchNumber: batchNo,
+            expiryDate: expiry,
+            quantity: effectiveDelta,
+            receivedDate: today,
+            cost: input.purchasePrice ?? undefined,
+          });
+        }
+      } else if (effectiveDelta < 0) {
+        // Stock-out: consume FIFO — earliest expiry first ('' last).
+        batches = consumeFifoTillEmpty(batches, -effectiveDelta);
+      }
+
+      // Derived expiry = earliest remaining batch expiry (drives warnings).
+      // Legacy products without batches keep their stored expiryDate while
+      // they still hold stock; a fully-depleted item clears it.
+      const expiryDate = batches.length > 0
+        ? earliestBatchExpiry(batches)
+        : (after > 0 ? (product.expiryDate || '') : '');
+      // currentStock = sum of batches (consistency). If no batches, currentStock
+      // is the delta-computed value (backward compat for legacy products).
+      if (batches.length > 0) {
+        after = round4(batches.reduce((s, b) => s + (Number(b.quantity) || 0), 0));
+      }
+
+      // ── Atomic stock update ───────────────────────────────────────
+      const updated = await productRepo.findOneAndUpdate(
+        {
+          _id: product._id,
+          currentStock: { $gte: -effectiveDelta },
+        } as any,
+        {
+          $inc: { currentStock: effectiveDelta } as any,
+          $set: { batches, expiryDate } as any,
+        },
+        { upsert: false }
+      );
+      if (!updated) {
+        throw new AppError(409, 'Stock changed concurrently — please retry');
+      }
+
+    // ── Rolling purchase-price average (last 10 purchases) ───────────
+    // The old all-time weighted average could never shake off a single old
+    // price and made stock value swing with every purchase. Now the item's
+    // averageCost is the mean of its LAST 10 purchase prices (per unit), so it
+    // tracks recent market prices without distorting the stock value.
     if (input.type === 'purchase' && input.purchasePrice != null && effectiveDelta > 0) {
-      const oldCost = Number(product.averageCost) || 0;
-      const newAvg = (oldCost * before + input.purchasePrice * effectiveDelta) / after;
+      const prev = Array.isArray((product as any).lastPurchasePrices)
+        ? (product as any).lastPurchasePrices.map((n: any) => Number(n) || 0).filter((n: number) => n > 0)
+        : [];
+      const next = [...prev, Number(input.purchasePrice) || 0].slice(-10);
+      const avg = next.length > 0 ? Math.round((next.reduce((s: number, n: number) => s + n, 0) / next.length) * 100) / 100 : 0;
       await productRepo.update(product._id.toString(), {
-        averageCost: Math.round(newAvg * 100) / 100,
+        averageCost: avg,
+        lastPurchasePrices: next,
       } as any);
     }
 
@@ -241,6 +377,7 @@ export class StockMovementService {
     }
 
     return { product: updated, before, after, effectiveDelta };
+    });
   }
 }
 

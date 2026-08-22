@@ -66,6 +66,10 @@ const DailySummarySchema = new Schema<IDailySummary>(
   { timestamps: true }
 );
 
-DailySummarySchema.index({ date: -1, branchId: 1 }, { unique: true });
+// Restaurant-scoped unique index: one summary row per restaurant per date per
+// branch. The restaurantId scope is required because branchless restaurants
+// write branchId: null — without it, a second restaurant on the same date would
+// collide with the first (E11000) and silently lose its daily summary.
+DailySummarySchema.index({ restaurantId: 1, date: -1, branchId: 1 }, { unique: true });
 
 export default mongoose.model<IDailySummary>('DailySummary', DailySummarySchema);

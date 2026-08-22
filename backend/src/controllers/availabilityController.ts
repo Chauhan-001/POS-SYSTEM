@@ -49,12 +49,9 @@ export async function listAvailability(req: Request, res: Response): Promise<voi
     // products saved under the logged-in restaurant's id in MongoDB; hardcoded
     // shared-catalog items that belong to no restaurant are excluded outright.
     const scope = await resolveMenuProductScope(String(restaurantId), { includeGlobalFallback: false });
-    const products = await productService.list({ $or: scope });
-    // ONLY menu items belong in the availability screen — inventory-only
-    // products (availability: false, e.g. raw materials / pre-manufactured
-    // stock hidden from the billing menu) must never appear here, matching
-    // the billing menu's menu-item definition.
-    const menuItems = products.data.filter((p: any) => p.availability !== false);
+    // Server-side type filter: only menu items belong in the availability screen.
+    const products = await productService.list({ $or: scope, type: 'menu' });
+    const menuItems = products.data;
     const productIds = menuItems.map((p: any) => String(p._id));
     const map = await availabilityService.getMap(restaurantId, branchId, productIds);
 

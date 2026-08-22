@@ -164,6 +164,9 @@ export async function inventoryFastSlow(req: Request, res: Response): Promise<vo
 export async function inventoryWaste(req: Request, res: Response): Promise<void> {
   ok(res, await inventoryReportService.waste(scopeOf(req)));
 }
+export async function inventorySummary(req: Request, res: Response): Promise<void> {
+  ok(res, await inventoryReportService.summary(scopeOf(req)));
+}
 export async function inventoryExpiry(req: Request, res: Response): Promise<void> {
   const days = Number(req.query.days) || 30;
   ok(res, await inventoryReportService.expiry(scopeOf(req), days));

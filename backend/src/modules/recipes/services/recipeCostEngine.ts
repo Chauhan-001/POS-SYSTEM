@@ -28,10 +28,11 @@
  */
 
 import mongoose from 'mongoose';
-import { Recipe, CostSettings } from '../../../models';
+import { Recipe, CostSettings, ProductVariant } from '../../../models';
 import { productRepo } from '../../../repositories';
 import { AppError } from '../../../utils/AppError';
 import { convertQuantity, round4, round2, normalizeUnit, familyOf } from './unitConversion';
+import { resolveProductConfiguration } from '../../menu-config/services/configurationResolver';
 
 export interface CostLine {
   inventoryItemId?: string;
@@ -175,9 +176,12 @@ export class RecipeCostEngine {
     );
 
     // Selling price: product base price, or branch override when provided.
+    // For a variant override recipe the VARIANT's price is used — the product's
+    // base price would misstate food-cost % / margin when variants are priced
+    // differently (Half ₹120 vs Full ₹179.98).
     let sellingPrice = 0;
     if (doc.productId) {
-      sellingPrice = await this.sellingPrice(doc.productId, restaurantId, opts.branchId, ctx);
+      sellingPrice = await this.sellingPrice(doc, restaurantId, opts.branchId, ctx);
     }
 
     const yieldQuantity = Number(doc.yieldQuantity) || 0;
@@ -406,9 +410,37 @@ export class RecipeCostEngine {
     return product;
   }
 
-  private async sellingPrice(productId: string, restaurantId: string, branchId: string | undefined, ctx: Ctx): Promise<number> {
+  private async sellingPrice(doc: any, restaurantId: string, branchId: string | undefined, ctx: Ctx): Promise<number> {
+    const productId = String(doc.productId);
     if (ctx.priceOverrides?.has(productId)) return Number(ctx.priceOverrides.get(productId)) || 0;
     if (!mongoose.Types.ObjectId.isValid(productId)) return 0;
+
+    // Variant override recipe → the variant's own price (branch override wins).
+    const variantName = doc.variantName ? String(doc.variantName).trim() : '';
+    if (variantName) {
+      // 1. Legacy ProductVariant collection (product-manager-created variants).
+      try {
+        const variant = await ProductVariant.findOne({
+          productId,
+          name: variantName,
+          isDeleted: { $ne: true },
+        }).lean().exec();
+        if (variant) {
+          let price = Number(variant.price) || 0;
+          if (branchId && variant.branchPrice?.get) {
+            const override = variant.branchPrice.get(String(branchId));
+            if (typeof override === 'number') price = override;
+          }
+          return price;
+        }
+      } catch { /* no variant row → try menuConfig options below */ }
+
+      // 2. menuConfig variant template options (the ProductRegistrationWizard
+      // writes these, not ProductVariant rows). Price = base + option delta.
+      const mcPrice = await this.menuConfigVariantPrice(productId, variantName, restaurantId);
+      if (mcPrice !== null) return mcPrice;
+    }
+
     const product = await productRepo.findOne({
       _id: productId,
       restaurantId,
@@ -421,6 +453,29 @@ export class RecipeCostEngine {
       if (typeof override === 'number') price = override;
     }
     return price;
+  }
+
+  /** Resolve a variant option's price from the product's menuConfig variant
+   *  templates. Returns null when the product has no variant config (or the
+   *  variant name is unknown) so the caller falls back to the base price. */
+  private async menuConfigVariantPrice(productId: string, variantName: string, restaurantId: string): Promise<number | null> {
+    try {
+      const resolved = await resolveProductConfiguration(restaurantId, productId);
+      if (!resolved?.variantGroups?.length) return null;
+      const needle = variantName.trim().toLowerCase();
+      for (const group of resolved.variantGroups) {
+        const opt = (group.options || []).find(
+          (o) => o.active !== false && String(o.name).trim().toLowerCase() === needle
+        );
+        if (opt) {
+          return round2((Number(resolved.product.baseProductPrice) || 0) + (Number(opt.priceDelta) || 0));
+        }
+      }
+      return null;
+    } catch {
+      // Resolution failure (archived/missing template) — fall back to base price.
+      return null;
+    }
   }
 }
 

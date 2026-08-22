@@ -82,7 +82,7 @@ export async function buildCatalog(restaurantId: string): Promise<CatalogPayload
   const rid = new mongoose.Types.ObjectId(restaurantId);
 
   const [products, templates] = await Promise.all([
-    Product.find({ restaurantId: rid, isDeleted: false })
+    Product.find({ restaurantId: rid, type: 'menu', isDeleted: false })
       .select('name code category price gstPercent availability isCombo comboPrice comboComponentIds image menuConfig')
       .lean()
       .exec(),

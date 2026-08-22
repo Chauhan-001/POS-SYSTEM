@@ -40,6 +40,7 @@ async function makeIngredient(name: string, unit: string, averageCost: number, c
     code: `INV-${name.toUpperCase().replace(/\s+/g, '')}`,
     price: 0,
     category: 'Inventory',
+    type: 'inventory',
     availability: false,
     restaurantId,
     currentStock,
@@ -97,6 +98,7 @@ async function makeMenuProduct(name: string, price: number, currentStock = 10, r
 async function activateRecipe(restaurantId: string, productId: string | mongoose.Types.ObjectId, components: any[], name = 'Recipe') {
   return recipeService.create(restaurantId, {
     productId: String(productId),
+    variantName: 'Default',
     name,
     status: 'active',
     yieldQuantity: 1,

@@ -75,7 +75,7 @@ export class OfferAssistantService {
     }
 
     // ── 2. Deterministic target resolution ─────────────────────────
-    const query: any = { restaurantId, isDeleted: { $ne: true }, availability: true };
+    const query: any = { restaurantId, isDeleted: { $ne: true }, type: 'menu' };
     if (intent.target === 'category' && intent.targetName) {
       query.category = intent.targetName;
     } else if (intent.target === 'products' && intent.targetName) {

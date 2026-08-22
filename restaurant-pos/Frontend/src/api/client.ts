@@ -151,15 +151,20 @@ async function request(
   method: string,
   path: string,
   body?: unknown,
+  timeoutMs: number = 15000,
 ): Promise<{ ok: boolean; status: number; json: any } | null> {
   let retried = false;
   for (;;) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${BASE}${path}`, {
         method,
         headers: buildHeaders(),
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (res.status === 401 && !retried) {
         retried = true;
         const refreshed = await refreshAccessToken();
@@ -168,6 +173,7 @@ async function request(
       const json = res.status === 204 ? null : await res.json().catch(() => null);
       return { ok: res.ok, status: res.status, json };
     } catch (err) {
+      clearTimeout(timeoutId);
       apiLog(method, path, null, err);
       return null;
     }
@@ -220,6 +226,9 @@ function enqueueOffline(method: WriteMethod, path: string, body?: unknown): void
  */
 const WRITE_CACHE_MAP: Array<[prefix: string, cacheKey: string]> = [
   ['/products', 'pos_products'],
+  // The lightweight inventory summary is derived from products — invalidate it
+  // alongside the catalog on any product/stock write so the Overview refreshes.
+  ['/products', 'pos_inventory_summary'],
   ['/customers', 'pos_customers'],
   ['/employees', 'pos_employees'],
   ['/bills', 'pos_bills'],
@@ -255,6 +264,14 @@ function invalidateWriteCache(path: string): void {
   // purchase instead of waiting out the 5-min poll.
   if (/^\/products\/[^/]+\/stock$/.test(path) || path.startsWith('/purchases')) {
     touched.add('pos_inventory_events');
+  }
+  // CRITICAL — inventory quantity/batch state can change WITHOUT a Product
+  // document write. Sales consume ingredients, voids/cancellations restore
+  // them, and purchases add stock — all through the server-side stock engine.
+  // The lightweight summary cache must be invalidated on every one of these or
+  // Inventory would show pre-sale/pre-purchase stock for up to the full TTL.
+  if (path.startsWith('/bills') || path.startsWith('/purchases')) {
+    touched.add('pos_inventory_summary');
   }
   for (const cacheKey of touched) {
     invalidateCache(cacheKey);
@@ -451,14 +468,60 @@ export async function login(username: string, password: string) {
 
 // ─── Products ──────────────────────────────────────────────────────
 
-/** GET /api/products — Fetch all menu products (optional category/availability filters) */
-export async function fetchProducts(params?: { category?: string; availability?: string }) {
-  // BACKEND CALLED — load menu items from cloud
+/** GET /api/products — Fetch menu products (type=menu by default). */
+export async function fetchProducts(params?: { category?: string; availability?: string; type?: string }) {
+  // BACKEND CALLED — load menu items from cloud. Server defaults to type=menu.
   const qs = new URLSearchParams();
   if (params?.category) qs.set('category', params.category);
   if (params?.availability) qs.set('availability', params.availability);
+  if (params?.type) qs.set('type', params.type);
   const query = qs.toString();
   return get<any[]>(`/products${query ? '?' + query : ''}`);
+}
+
+/** GET /api/products?type=inventory — Fetch inventory items only. */
+export async function fetchInventoryItems() {
+  // BACKEND CALLED — load inventory items (raw materials) from cloud
+  return get<any[]>(`/products?type=inventory`);
+}
+
+/**
+ * GET /api/reports/inventory/summary — lightweight inventory overview.
+ * Lean/projected server response (no full product docs, no batches[], no
+ * variants). TTL-cached client-side and invalidated on every product/stock
+ * write (see WRITE_CACHE_MAP), so the Inventory Overview renders instantly
+ * from the last snapshot and refreshes in the background.
+ */
+export async function fetchInventorySummary(): Promise<InventorySummaryItem[] | null> {
+  return cachedFetch('pos_inventory_summary', CACHE_TTL.MEDIUM, true, async () => {
+    const res = await get<any[]>(`/reports/inventory/summary`);
+    // null on failure so cachedFetch keeps serving the last good snapshot
+    // offline instead of caching an empty array over real data.
+    return Array.isArray(res) ? res : null;
+  });
+}
+
+export interface InventorySummaryItem {
+  _id: string;
+  id: string;
+  name: string;
+  code?: string;
+  category: string;
+  image?: string;
+  unit: string;
+  currentStock: number;
+  minStock: number;
+  maxStock: number;
+  averageCost: number;
+  /** Stock value = Σ(batch qty × batch purchase cost); legacy falls back to
+   *  currentStock × averageCost. Independent of the rolling average. */
+  stockValue: number;
+  supplier?: string;
+  availability: boolean;
+  expiryDate?: string;
+  batchNumber?: string;
+  batchCount: number;
+  lastUpdated?: string;
 }
 
 /**
@@ -2924,13 +2987,43 @@ export async function deleteRecipe(id: string) {
 }
 
 /** POST /api/recipes/ai/quick-create — AI parses "how is this dish made" into a reviewable draft. Saves nothing. */
-export async function recipeAiQuickCreate(productId: string, text: string) {
-  return post<any>('/recipes/ai/quick-create', { productId, text });
+export async function recipeAiQuickCreate(productId: string, text: string, variantName?: string) {
+  return post<any>('/recipes/ai/quick-create', { productId, text, variantName });
 }
 
 /** POST /api/recipes/ai/search — Tenant-scoped inventory search for ingredient matching. */
 export async function recipeAiSearchInventory(query: string) {
   return post<any>('/recipes/ai/search', { query });
+}
+
+// ─── Variant recipes (base/override resolution) ───────────────────
+
+/** GET /api/recipes/status — Recipe Manager coverage: base + per-variant status per product. */
+export async function fetchRecipeStatus(params?: { limit?: number }) {
+  const qs = params?.limit ? `?limit=${params.limit}` : '';
+  return get<any>(`/recipes/status${qs}`);
+}
+
+/** GET /api/recipes/effective?productId=&variantName= — effective active recipe + cost. */
+export async function fetchEffectiveRecipe(productId: string, variantName?: string) {
+  const qs = new URLSearchParams({ productId });
+  if (variantName) qs.set('variantName', variantName);
+  return get<any>(`/recipes/effective?${qs.toString()}`);
+}
+
+/** GET /api/recipes/variants/:productId — known variant names for a product. */
+export async function fetchRecipeVariants(productId: string) {
+  return get<string[]>(`/recipes/variants/${productId}`);
+}
+
+/** POST /api/recipes/:id/copy-variant — create an override recipe from a base recipe. */
+export async function copyRecipeToVariant(baseRecipeId: string, variantName: string, status?: 'draft' | 'active') {
+  return post<any>(`/recipes/${baseRecipeId}/copy-variant`, { variantName, status });
+}
+
+/** POST /api/recipes/:id/reset-to-base — archive an override so its variant inherits the base again. */
+export async function resetRecipeToBase(overrideRecipeId: string) {
+  return post<any>(`/recipes/${overrideRecipeId}/reset-to-base`, {});
 }
 
 // ─── Cost settings + intelligence ─────────────────────────────────
@@ -3478,6 +3571,39 @@ export async function advisorHistory(params?: { goal?: string; limit?: number })
   const query = qs.toString();
   const res = await get<any>(`/advisor/history${query ? '?' + query : ''}`);
   return res?.recommendations ?? res ?? null;
+}
+
+// ─── Forecast Intelligence ─────────────────────────────────────────
+
+/**
+ * GET /api/forecast/restaurant - restaurant-level demand forecast
+ * Returns 7-day forecast with data sufficiency assessment.
+ */
+export async function getRestaurantForecast() {
+  return get<any>('/forecast/restaurant');
+}
+
+/**
+ * GET /api/forecast/product/:productId - product-level demand forecast
+ * Returns 7-day forecast with multiple time-slot breakdowns.
+ */
+export async function getProductForecast(productId: string) {
+  return get<any>(`/forecast/product/${productId}`);
+}
+
+/**
+ * GET /api/forecast/category/:categoryId - category-level demand forecast
+ */
+export async function getCategoryForecast(categoryId: string) {
+  return get<any>(`/forecast/category/${categoryId}`);
+}
+
+/**
+ * GET /api/forecast/explain/:forecastId - forecast explainability details
+ * Returns what, why, based on what history, confidence, and what could change.
+ */
+export async function getForecastExplain(forecastId: string) {
+  return get<any>(`/forecast/explain/${forecastId}`);
 }
 
 // ─── Marketing Studio ─────────────────────────────────────────────

@@ -77,24 +77,25 @@ describe('decideFirstRun — boot first-run gate', () => {
     expect(decision.clearCache).toBeUndefined();
   });
 
-  it('REGISTER when offline, no cached owner, and unauthenticated', () => {
+  it('LOGIN (not registration) when offline, no cached owner, and unauthenticated — the wizard needs the server to create an owner', () => {
     const decision = decide(null, null, false);
 
     expect(decision.setupState).toBe('ready');
-    expect(decision.firstRunChoice).toBe('register');
+    expect(decision.firstRunChoice).toBe('login');
+    expect(decision.clearCache).toBeUndefined();
   });
 
-  it('SETUP (wizard) when offline, no cached owner, but a session token exists', () => {
+  it('opens straight in (offline) when authenticated, no cached owner, and the server is unreachable', () => {
     const decision = decide(null, null, true);
 
-    expect(decision.setupState).toBe('setup');
+    expect(decision.setupState).toBe('ready');
     expect(decision.firstRunChoice).toBeUndefined();
   });
 
-  it('offline + cached non-owner does NOT count as a cached Owner session', () => {
+  it('offline + cached non-owner shows LOGIN (never the registration wizard)', () => {
     const decision = decide(CACHED_CASHIER, null, false);
 
     expect(decision.setupState).toBe('ready');
-    expect(decision.firstRunChoice).toBe('register');
+    expect(decision.firstRunChoice).toBe('login');
   });
 });

@@ -91,14 +91,14 @@ export interface ResolveOptions {
  * PLUS the shared/global catalog (restaurantId null/missing). This matches the
  * existing productsController behavior.
  *
- * When `inventoryOnly` is true, only inventory items (availability=false) are
+ * When `inventoryOnly` is true, only inventory items (type='inventory') are
  * included — menu items are excluded so voice inventory commands never resolve
  * to prepared dishes.
  */
 function tenantFilter(restaurantId?: string, inventoryOnly = false) {
   const base: any = { isDeleted: { $ne: true } };
   if (inventoryOnly) {
-    base.availability = false;
+    base.type = 'inventory';
   }
   if (restaurantId && mongoose.Types.ObjectId.isValid(restaurantId)) {
     base.$or = [

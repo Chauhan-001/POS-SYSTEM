@@ -7,6 +7,7 @@ import type { InventoryPage, InventoryAlert } from '../types';
 import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction, AiSource } from '../../../src/ai/aiData';
 import { useInventory } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
+import { usePageRefresh } from '../usePageRefresh';
 import AICard from '../../../src/ai/AICard';
 import { computeHealthScore, generatePurchaseRecs, predictLowStock, computeInventoryCardsLocal } from '../../../src/ai/aiData';
 import { fetchInventoryWaste } from '../../../src/api/client';
@@ -15,7 +16,10 @@ import WeatherWidget from '../../../src/ai/WeatherWidget';
 export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: (page: InventoryPage) => void; moduleSettings?: Record<string, boolean> }) {
   const { items, synced: itemsSynced } = useInventory();
   const { purchases, synced } = usePurchases();
-  const totalValue = items.reduce((s, i) => s + i.currentStock * i.averageCost, 0);
+  // Stock VALUE = Σ(batch qty × batch purchase cost) — never currentStock ×
+  // the rolling average. This keeps the Overview stable even when a purchase
+  // price changes the average.
+  const totalValue = items.reduce((s, i) => s + (Number(i.stockValue) || 0), 0);
   const lowItems = items.filter(i => i.status === 'low' || i.status === 'critical');
 
   // Real alerts computed from the MongoDB product catalog (stock thresholds +
@@ -78,26 +82,33 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
   // report (last 30 days), never a fabricated proxy. Hoisted so both the
   // card fetch and the local delta reuse it.
   const [wasteCost, setWasteCost] = useState(0);
+  // The waste REPORT is fetched once, in PARALLEL with the catalog — it does
+  // not depend on products. Only the cheap cost derivation waits for items.
+  const [wasteRows, setWasteRows] = useState<Array<{ item?: string; quantity?: number }> | null>(null);
+  const [wasteKey, setWasteKey] = useState(0);
   useEffect(() => {
-    if (!itemsSynced) return;
     let cancelled = false;
     const day = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const end = new Date();
     const start = new Date(Date.now() - 30 * 86_400_000);
     fetchInventoryWaste(day(start), day(end))
-      .then(({ data }) => {
-        if (cancelled || !Array.isArray(data)) return;
-        const byName = new Map(items.map(i => [i.name.toLowerCase(), i]));
-        const cost = (data as Array<{ item?: string; quantity?: number }>).reduce((sum, row) => {
-          const item = row?.item ? byName.get(String(row.item).toLowerCase()) : undefined;
-          return sum + (Number(row?.quantity) || 0) * (item?.averageCost || 0);
-        }, 0);
-        setWasteCost(cost);
-      })
-      .catch(() => { if (!cancelled) setWasteCost(0); });
+      .then(({ data }) => { if (!cancelled && Array.isArray(data)) setWasteRows(data); })
+      .catch(() => {});
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsSynced]);
+  }, [wasteKey]);
+
+  useEffect(() => {
+    if (!itemsSynced || !wasteRows) return;
+    const byName = new Map(items.map(i => [i.name.toLowerCase(), i]));
+    // Waste events are stored as NEGATIVE stock deltas — report the
+    // absolute cost so the health engine sees real waste (never a negative
+    // figure that flips the Waste Control score above 100).
+    const cost = wasteRows.reduce((sum, row) => {
+      const item = row?.item ? byName.get(String(row.item).toLowerCase()) : undefined;
+      return sum + Math.abs(Number(row?.quantity) || 0) * (item?.averageCost || 0);
+    }, 0);
+    setWasteCost(cost);
+  }, [itemsSynced, wasteRows, items]);
 
   // AI cards fetch ONCE when the catalog is ready (fresh login / page open)
   // and on the explicit refresh button — never on every `items` change.
@@ -107,6 +118,8 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
   // button below bumps aiRefreshKey. Catalog changes instead recompute the
   // cards with the deterministic local engine (see the delta effect below).
   const [aiRefreshKey, setAiRefreshKey] = useState(0);
+  // Header refresh button re-fetches the waste report + re-runs the AI cards.
+  usePageRefresh(() => { setWasteKey(k => k + 1); setAiRefreshKey(k => k + 1); });
 
   // Signature of the catalog this render is showing. `catalogSigRef` tracks
   // the CURRENT catalog (updated every render) so an in-flight live fetch can
@@ -355,7 +368,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => onNavigate('purchase')}
+            <button onClick={() => onNavigate('items')}
               className="flex-1 py-3.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
             >
               <ShoppingCart className="w-5 h-5" />
@@ -402,14 +415,14 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
                     <p className="text-[9px] text-gray-400 truncate">{rec.reason}</p>
                   </div>
                 </div>
-                <button onClick={() => onNavigate('purchase')}
+                <button onClick={() => onNavigate('items')}
                   className="px-3 py-1.5 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shrink-0 ml-2"
                 >
                   Order
                 </button>
               </div>
             ))}
-            <button onClick={() => onNavigate('purchase')} className="w-full py-2 mt-auto text-center text-[10px] text-[var(--brand-color)] font-semibold hover:underline cursor-pointer">
+            <button onClick={() => onNavigate('items')} className="w-full py-2 mt-auto text-center text-[10px] text-[var(--brand-color)] font-semibold hover:underline cursor-pointer">
               View all recommendations
             </button>
           </div>

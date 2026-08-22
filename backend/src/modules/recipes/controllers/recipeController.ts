@@ -10,6 +10,8 @@
 import { NextFunction, Request, Response } from 'express';
 import { recipeService } from '../services/recipeService';
 import { recalculateService } from '../services/recalculateService';
+import { recipeResolutionService } from '../services/recipeResolutionService';
+import { recipeCostEngine } from '../services/recipeCostEngine';
 
 /**
  * Forward async handler errors to the global errorHandler (which maps
@@ -91,6 +93,69 @@ export const calculateCost = wrap(async (req, res) => {
   const { restaurantId, branchId } = userOf(req);
   const q = req.query as Record<string, string | undefined>;
   ok(res, await recipeService.calculateCost(restaurantId, req.params.id, q.branchId || branchId));
+});
+
+// ─── Variant recipes (base/override resolution) ──────────────────
+
+export const listRecipeStatus = wrap(async (req, res) => {
+  const { restaurantId } = userOf(req);
+  const q = req.query as Record<string, string | undefined>;
+  ok(res, await recipeResolutionService.listProductRecipeStatus(restaurantId, {
+    limit: q.limit ? Number(q.limit) : undefined,
+  }));
+});
+
+export const listProductVariants = wrap(async (req, res) => {
+  const { restaurantId } = userOf(req);
+  ok(res, await recipeResolutionService.getVariantsForProduct(restaurantId, req.params.productId));
+});
+
+export const getEffectiveRecipe = wrap(async (req, res) => {
+  const { restaurantId, branchId } = userOf(req);
+  const q = req.query as Record<string, string | undefined>;
+  const result = await recipeResolutionService.resolveEffectiveRecipe(
+    restaurantId,
+    String(q.productId),
+    q.variantName,
+    {}
+  );
+  if (!result.recipe) {
+    ok(res, {
+      recipe: null,
+      version: result.version,
+      resolution: result.resolution,
+    });
+    return;
+  }
+  const cost = await recipeCostEngine.costRecipe(result.recipe, { restaurantId, branchId });
+  ok(res, {
+    recipe: result.recipe,
+    version: result.version,
+    recipeName: result.recipeName,
+    resolution: result.resolution,
+    cost,
+  });
+});
+
+export const copyRecipeToVariant = wrap(async (req, res) => {
+  const { restaurantId, name } = userOf(req);
+  const recipe = await recipeResolutionService.copyVariantRecipe(
+    restaurantId,
+    req.params.id,
+    req.body.variantName,
+    { operator: name, status: req.body.status }
+  );
+  res.status(201).json({ data: recipe });
+});
+
+export const resetRecipeToBase = wrap(async (req, res) => {
+  const { restaurantId, name } = userOf(req);
+  ok(res, await recipeResolutionService.resetVariantToBase(restaurantId, req.params.id, { operator: name }));
+});
+
+export const recipeSweep = wrap(async (req, res) => {
+  const { restaurantId } = userOf(req);
+  ok(res, await recipeResolutionService.sweep(restaurantId));
 });
 
 // ─── Recalculation (dependency-aware) ────────────────────────────

@@ -620,6 +620,11 @@ export function useBilling(config: BillingConfig) {
     asyncOps.push(
       api.createBill(newBill).then((created: any) => {
         if (!created) return;
+        // Tell open inventory screens to decrement stock for the EXACT
+        // ingredients this bill consumed — no full-catalog reload needed.
+        if (Array.isArray(created?.consumption) && created.consumption.length > 0) {
+          window.dispatchEvent(new CustomEvent('pos:stock-deducted', { detail: { items: created.consumption } }));
+        }
         serverBillMerge = {
           id: created?._id || created?.id,
           receiptToken: created?.receiptToken,

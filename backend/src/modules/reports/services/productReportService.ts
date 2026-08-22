@@ -262,7 +262,7 @@ export class ProductReportService {
     const products = await Product.find({
       restaurantId: { $in: [objectId(scope.restaurantId), null] },
       isDeleted: { $ne: true },
-      availability: true,
+      type: 'menu',
     })
       .select('name category currentStock')
       .lean()

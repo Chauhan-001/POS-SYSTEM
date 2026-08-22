@@ -12,7 +12,6 @@ import ImageInput from './common/ImageInput';
 import AddItemModal from './menu/AddItemModal';
 import ProductConfigEditor from './menu/ProductConfigEditor';
 import ProductRegistrationWizard from './menu/ProductRegistrationWizard';
-import EasyRecipeMaker from './inventory/pages/EasyRecipeMaker';
 import { useProductConfigSummary } from './menu/useProductConfig';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -40,6 +39,8 @@ interface ProductManagerProps {
   onSetBranchProductPrices?: (prices: Record<string, Record<string, number>>) => void;
   branchVariantPrices?: Record<string, Record<string, Record<string, number>>>;
   onSetBranchVariantPrices?: (prices: Record<string, Record<string, Record<string, number>>>) => void;
+  /** Navigate to Inventory → Recipe Manager when the chef-hat icon is clicked. */
+  onOpenRecipes?: () => void;
 }
 
 function SortableCategory({ id, onRemove, onEdit, color, onColorChange }: { id: string, onRemove: () => void, onEdit: (val: string) => void, color: string, onColorChange: (color: string) => void }) {
@@ -92,6 +93,7 @@ export default function ProductManager({
   onSetBranchProductPrices,
   branchVariantPrices = {},
   onSetBranchVariantPrices,
+  onOpenRecipes,
 }: ProductManagerProps) {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -126,10 +128,6 @@ export default function ProductManager({
   const [quickEditProduct, setQuickEditProduct] = useState<Product | null>(null);
   const [quickEditName, setQuickEditName] = useState('');
   const [quickEditImage, setQuickEditImage] = useState('');
-
-  // ── Recipe editor state ──
-  const [recipeProduct, setRecipeProduct] = useState<any | null>(null);
-  const [showRecipeMaker, setShowRecipeMaker] = useState(false);
 
   // DND setup
   const sensors = useSensors(
@@ -855,7 +853,10 @@ export default function ProductManager({
       </div>
 
       {/* Grid Layout of products */}
-      <div className="flex-1 overflow-y-auto min-h-[400px]">
+      {/* min-h-0 (not min-h-[400px]) so the grid compresses on short screens and
+          its own overflow-y-auto provides the scrollbar instead of overflowing
+          the page wrapper (which is overflow-hidden). */}
+      <div className="flex-1 overflow-y-auto min-h-0">
         {filtered.length === 0 ? (
           <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-12 text-center text-gray-500 flex flex-col items-center justify-center">
             <XCircle className="w-12 h-12 text-gray-300 mb-3" />
@@ -1044,9 +1045,9 @@ export default function ProductManager({
                   </button>
 
                   <button
-                    onClick={() => { setRecipeProduct(product); setShowRecipeMaker(true); }}
+                    onClick={() => onOpenRecipes?.()}
                     className="p-1.5 text-gray-500 hover:text-orange-600 bg-[var(--color-bg-page)] hover:bg-orange-50 border border-[var(--color-border-default)] rounded-lg transition-all cursor-pointer"
-                    title="Create or edit recipe"
+                    title="Open recipe manager"
                   >
                     <ChefHat className="w-3.5 h-3.5" />
                   </button>
@@ -1193,12 +1194,13 @@ export default function ProductManager({
           }}
           onConfigChanged={refreshConfigSummary}
           onClose={() => setConfigEditorProduct(null)}
+          onOpenRecipe={onOpenRecipes}
         />
       )}
 
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-[var(--color-sidebar-bg)]/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-[var(--color-border-default)]">
+          <div className="bg-[var(--color-bg-white)] rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-[var(--color-border-default)] max-h-[92vh] flex flex-col">
             
             {/* Header */}
             <div className="bg-[var(--color-primary-light)] px-6 py-4 border-b border-[var(--color-border-default)] flex justify-between items-center">
@@ -1215,7 +1217,7 @@ export default function ProductManager({
             </div>
 
             {/* Form */}
-            <form onSubmit={handleSaveProduct} className="p-6 space-y-4">
+            <form onSubmit={handleSaveProduct} className="p-6 space-y-4 flex-1 overflow-y-auto min-h-0">
               <div className="grid grid-cols-2 gap-4">
                 {/* SKU Code */}
                 <div>
@@ -1744,15 +1746,6 @@ export default function ProductManager({
             </div>
           </div>
         </div>
-      )}
-
-      {/* Easy Recipe Maker overlay */}
-      {showRecipeMaker && (
-        <EasyRecipeMaker
-          initialProduct={recipeProduct}
-          onClose={() => { setShowRecipeMaker(false); setRecipeProduct(null); }}
-          onSaved={() => { setShowRecipeMaker(false); setRecipeProduct(null); }}
-        />
       )}
 
     </div>

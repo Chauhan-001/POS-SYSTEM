@@ -436,10 +436,10 @@ export default function ProductRegistrationWizard({
   const [customBuilderOpen, setCustomBuilderOpen] = useState(false);
 
   // ── STEP 4: Recipe ──
-  const [recipeMode, setRecipeMode] = useState<'skip' | 'manual' | 'voice'>('skip');
+  const [recipeVariant, setRecipeVariant] = useState('Default');
+  const [rowsByVariant, setRowsByVariant] = useState<Record<string, RecipeRow[]>>({});
+  const [modeByVariant, setModeByVariant] = useState<Record<string, 'skip' | 'manual' | 'voice'>>({});
   const [recipeText, setRecipeText] = useState('');
-  const [voiceRows, setVoiceRows] = useState<RecipeRow[]>([]);
-  const [manualRows, setManualRows] = useState<RecipeRow[]>([]);
   const [recipeSearch, setRecipeSearch] = useState('');
   const [recipeResults, setRecipeResults] = useState<any[] | null>(null);
   const [recipeLoading, setRecipeLoading] = useState(false);
@@ -466,8 +466,20 @@ export default function ProductRegistrationWizard({
   });
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
 
-  const rows = useMemo(() => [...manualRows, ...voiceRows], [manualRows, voiceRows]);
+  const recipeVariants = useMemo(() => {
+    const names = (variantGroup?.options || []).map((o) => o.name).filter(Boolean) as string[];
+    return names.length > 0 ? names : ['Default'];
+  }, [variantGroup]);
+
+  const rows = useMemo(() => rowsByVariant[recipeVariant] || [], [rowsByVariant, recipeVariant]);
+  const recipeMode = modeByVariant[recipeVariant] || 'skip';
   const recipeCost = useMemo(() => money(rows.reduce((s, r) => s + (r.costPreview ?? 0), 0)), [rows]);
+
+  const setRecipeMode = (mode: 'skip' | 'manual' | 'voice') =>
+    setModeByVariant((prev) => ({ ...prev, [recipeVariant]: mode }));
+
+  const updateCurrentRows = (updater: (current: RecipeRow[]) => RecipeRow[]) =>
+    setRowsByVariant((prev) => ({ ...prev, [recipeVariant]: updater(prev[recipeVariant] || []) }));
 
   // ── Effective tax treatment ──
   // Deterministic: recommended = the restaurant's CONFIGURED rule for the
@@ -485,6 +497,22 @@ export default function ProductRegistrationWizard({
     }
     return Number(sellingPrice) || 0;
   }, [pricingMode, variantGroup, sellingPrice]);
+
+  // Selected variant's price for the recipe-step margin display.
+  const recipeVariantPrice = useMemo(() => {
+    if (pricingMode === 'variants' && variantGroup?.options.length) {
+      const opt = variantGroup.options.find((o) => o.name === recipeVariant);
+      if (opt && Number(opt.price) > 0) return Number(opt.price);
+    }
+    return referencePrice;
+  }, [pricingMode, variantGroup, recipeVariant, referencePrice]);
+
+  // On entering Step 4, make sure the selected variant is still valid.
+  useEffect(() => {
+    if (step === 3 && recipeVariants.length > 0 && !recipeVariants.includes(recipeVariant)) {
+      setRecipeVariant(recipeVariants[0]);
+    }
+  }, [step, recipeVariants, recipeVariant]);
 
   useEffect(() => {
     let alive = true;
@@ -720,9 +748,10 @@ export default function ProductRegistrationWizard({
         favorite: false,
       });
 
-      // 3) Recipe (manual + voice rows share the same confirmed shape).
-      if (rows.length > 0) {
-        const components = rows
+      // 3) Recipe — one recipe per variant (rows share the same confirmed shape).
+      for (const variantName of recipeVariants) {
+        const variantRows = rowsByVariant[variantName] || [];
+        const components = variantRows
           .filter((r) => r.inventoryItemId)
           .map((r) => ({
             inventoryItemId: r.inventoryItemId,
@@ -733,7 +762,18 @@ export default function ProductRegistrationWizard({
             optional: false,
           }));
         if (components.length > 0) {
-          await api.createRecipe({ productId, name: pName.trim(), components, status: 'draft' });
+          // Active from the start: the merchant explicitly entered this recipe
+          // during registration and expects it to consume ingredients on sale.
+          // (Draft recipes are never consumed — only the Recipe Manager's
+          // "Save & Activate" makes a draft live, so a wizard recipe saved as
+          // draft would silently skip ingredient deduction forever.)
+          await api.createRecipe({
+            productId,
+            variantName,
+            name: pName.trim(),
+            components,
+            status: 'active',
+          });
         }
       }
 
@@ -783,8 +823,8 @@ export default function ProductRegistrationWizard({
     const unit = item.unit || 'g';
     const avgCost = Number(item.averageCost) || 0;
     const key = `${item._id}_${Date.now().toString(36)}`;
-    setManualRows([
-      ...manualRows,
+    updateCurrentRows((current) => [
+      ...current,
       {
         key,
         inventoryItemId: item._id,
@@ -806,8 +846,25 @@ export default function ProductRegistrationWizard({
       const q = Math.max(0, Number(qty) || 0);
       return { ...r, quantity: q, costPreview: money((r.averageCost ?? 0) * q) };
     };
-    setManualRows(manualRows.map(update));
-    setVoiceRows(voiceRows.map(update));
+    updateCurrentRows((current) => current.map(update));
+  };
+
+  const copyRecipeToOtherVariants = () => {
+    if (rows.length === 0 || recipeMode === 'skip') return;
+    setRowsByVariant((prev) => {
+      const next = { ...prev };
+      for (const v of recipeVariants) {
+        if (v !== recipeVariant) next[v] = rows.map((r) => ({ ...r, key: uid() }));
+      }
+      return next;
+    });
+    setModeByVariant((prev) => {
+      const next = { ...prev };
+      for (const v of recipeVariants) {
+        if (v !== recipeVariant) next[v] = recipeMode;
+      }
+      return next;
+    });
   };
 
   // ── Recipe: voice ──
@@ -847,7 +904,7 @@ export default function ProductRegistrationWizard({
       });
       const matched = (draft.matched || []).map((m: any) => toRow(m, false));
       const attention = (draft.needsAttention || []).map((m: any) => toRow(m, true));
-      setVoiceRows([...matched, ...attention]);
+      setRowsByVariant((prev) => ({ ...prev, [recipeVariant]: [...matched, ...attention] }));
       setRecipeMode('voice');
     } catch (e: any) {
       setRecipeError(e?.response?.data?.error || e?.message || 'Could not parse the ingredients — try typing them instead.');
@@ -931,9 +988,9 @@ export default function ProductRegistrationWizard({
   };
 
   const marginPct = useMemo(() => {
-    if (!(referencePrice > 0)) return null;
-    return Math.round(((referencePrice - recipeCost) / referencePrice) * 100);
-  }, [referencePrice, recipeCost]);
+    if (!(recipeVariantPrice > 0)) return null;
+    return Math.round(((recipeVariantPrice - recipeCost) / recipeVariantPrice) * 100);
+  }, [recipeVariantPrice, recipeCost]);
 
   // ── Render helpers ──
   const attachedKeys = useMemo(() => {
@@ -1470,9 +1527,38 @@ export default function ProductRegistrationWizard({
             <div className="space-y-4">
               <p className="text-[10px] font-bold uppercase text-gray-500 tracking-wider">Recipe (optional)</p>
 
+              {recipeVariants.length > 1 && (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase text-gray-500 tracking-wider">Recipe for:</span>
+                    {recipeVariants.map((v) => {
+                      const vHasRows = (rowsByVariant[v] || []).length > 0;
+                      const vPrice = variantGroup?.options?.find((o) => o.name === v)?.price;
+                      return (
+                        <button
+                          key={v}
+                          onClick={() => setRecipeVariant(v)}
+                          className={`px-2.5 py-1 rounded-full border text-[10px] font-bold cursor-pointer transition-all ${recipeVariant === v ? 'border-[var(--brand-color)] bg-[var(--color-primary-light)] text-[var(--color-text-primary)]' : 'border-[var(--color-border-default)] text-gray-500 hover:border-gray-300'}`}
+                        >
+                          <span className={`mr-1 ${vHasRows ? 'text-emerald-600' : 'text-gray-300'}`}>{vHasRows ? '✓' : '○'}</span>
+                          {v}{vPrice ? ` · ${fmt(vPrice, currencySymbol)}` : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={copyRecipeToOtherVariants}
+                    disabled={rows.length === 0 || recipeMode === 'skip'}
+                    className="text-[10px] font-semibold text-[var(--brand-color)] hover:underline cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                  >
+                    Copy to all
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => { setRecipeMode('skip'); setVoiceRows([]); setManualRows([]); }}
+                  onClick={() => { setRecipeMode('skip'); updateCurrentRows(() => []); }}
                   className={`rounded-xl border p-3 text-left cursor-pointer transition-all ${recipeMode === 'skip' ? 'border-[var(--brand-color)] bg-[var(--color-primary-light)]' : 'border-[var(--color-border-default)] hover:border-gray-300'}`}
                 >
                   <span className="block text-xs font-bold text-[var(--color-text-primary)]">Skip for now</span>
@@ -1486,7 +1572,7 @@ export default function ProductRegistrationWizard({
                   <span className="block text-[10px] text-gray-500 mt-0.5">Pick raw materials from your inventory one by one.</span>
                 </button>
                 <button
-                  onClick={() => { setRecipeMode('voice'); if (voiceRows.length === 0) setRecipeText(''); }}
+                  onClick={() => { setRecipeMode('voice'); if (rows.length === 0) setRecipeText(''); }}
                   className={`rounded-xl border p-3 text-left cursor-pointer transition-all ${recipeMode === 'voice' ? 'border-[var(--brand-color)] bg-[var(--color-primary-light)]' : 'border-[var(--color-border-default)] hover:border-gray-300'}`}
                 >
                   <span className="block text-xs font-bold text-[var(--color-text-primary)]">Describe it</span>
@@ -1579,9 +1665,9 @@ export default function ProductRegistrationWizard({
               {(rows.length > 0 || recipeMode !== 'skip') && (
                 <div className="rounded-xl border border-[var(--color-border-default)] overflow-hidden">
                   <div className="px-3 py-2 bg-[var(--color-primary-light)] border-b border-[var(--color-border-default)] flex items-center justify-between">
-                    <p className="text-[10px] font-bold uppercase text-gray-500 tracking-wider">Recipe ingredients</p>
+                    <p className="text-[10px] font-bold uppercase text-gray-500 tracking-wider">{recipeVariants.length > 1 ? `Recipe for ${recipeVariant}` : 'Recipe ingredients'}</p>
                     {recipeMode !== 'skip' && (
-                      <button onClick={() => { setVoiceRows([]); setManualRows([]); setRecipeMode('skip'); }} className="text-[10px] font-semibold text-gray-400 hover:text-red-600 cursor-pointer">Clear</button>
+                      <button onClick={() => { updateCurrentRows(() => []); setRecipeMode('skip'); }} className="text-[10px] font-semibold text-gray-400 hover:text-red-600 cursor-pointer">Clear</button>
                     )}
                   </div>
                   {rows.length === 0 ? (
@@ -1606,7 +1692,7 @@ export default function ProductRegistrationWizard({
                             />
                             <span className="text-[10px] text-gray-400 w-7">{r.unit}</span>
                             <span className="text-xs font-mono font-bold text-[var(--color-text-primary)] w-20 text-right">{fmt(r.costPreview ?? 0, currencySymbol)}</span>
-                            <button onClick={() => { setManualRows(manualRows.filter((x) => x.key !== r.key)); setVoiceRows(voiceRows.filter((x) => x.key !== r.key)); }} className="p-1 text-gray-400 hover:text-red-600 cursor-pointer">
+                            <button onClick={() => updateCurrentRows((current) => current.filter((x) => x.key !== r.key))} className="p-1 text-gray-400 hover:text-red-600 cursor-pointer">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
@@ -1621,9 +1707,9 @@ export default function ProductRegistrationWizard({
                 </div>
               )}
 
-              {rows.length > 0 && referencePrice > 0 && (
+              {rows.length > 0 && recipeVariantPrice > 0 && (
                 <div className="rounded-xl bg-emerald-50/70 border border-emerald-200 px-3 py-2 flex items-center justify-between">
-                  <span className="text-[10px] font-semibold text-emerald-800">Selling price {fmt(referencePrice, currencySymbol)} · Estimated gross margin</span>
+                  <span className="text-[10px] font-semibold text-emerald-800">Selling price {fmt(recipeVariantPrice, currencySymbol)} · Estimated gross margin</span>
                   <span className={`text-xs font-mono font-bold ${(marginPct ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{marginPct}%</span>
                 </div>
               )}
@@ -1708,17 +1794,21 @@ export default function ProductRegistrationWizard({
 
                 <div>
                   <p className="text-[10px] font-bold uppercase text-gray-500 tracking-wider mb-1">Recipe</p>
-                  {rows.length === 0 ? (
+                  {recipeVariants.map((v) => {
+                    const vRows = rowsByVariant[v] || [];
+                    if (vRows.length === 0) return null;
+                    const vCost = money(vRows.reduce((s, r) => s + (r.costPreview ?? 0), 0));
+                    const vPrice = variantGroup?.options?.find((o) => o.name === v)?.price;
+                    const vRef = vPrice && Number(vPrice) > 0 ? Number(vPrice) : referencePrice;
+                    const vPct = vRef > 0 ? Math.round(((vRef - vCost) / vRef) * 100) : null;
+                    return (
+                      <p key={v} className="text-xs font-semibold text-[var(--color-text-primary)]">
+                        {v} — {vRows.length} ingredient{vRows.length === 1 ? '' : 's'} · {fmt(vCost, currencySymbol)}{vPct !== null ? ` · margin ${vPct}%` : ''}
+                      </p>
+                    );
+                  })}
+                  {recipeVariants.every((v) => (rowsByVariant[v] || []).length === 0) && (
                     <p className="text-xs text-gray-400">No recipe yet — can be added later from Inventory.</p>
-                  ) : (
-                    <>
-                      <p className="text-xs font-semibold text-[var(--color-text-primary)]">{rows.length} ingredient{rows.length === 1 ? '' : 's'} · Recipe cost {fmt(recipeCost, currencySymbol)}</p>
-                      {referencePrice > 0 && (
-                        <p className="text-[10px] text-gray-500 mt-0.5">
-                          Selling price {fmt(referencePrice, currencySymbol)} · Estimated gross margin <span className={`font-bold ${(marginPct ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{marginPct}%</span>
-                        </p>
-                      )}
-                    </>
                   )}
                 </div>
               </div>

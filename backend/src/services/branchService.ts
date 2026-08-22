@@ -342,13 +342,13 @@ export class BranchService {
       try {
         const Product = getModel('Product');
         // Menu products belong to the restaurant (or are global). We clone
-        // all non-deleted products whose availability is true (menu items).
-        // Inventory items (availability:false) are NOT cloned — each branch
+        // all non-deleted products with type='menu'.
+        // Inventory items (type='inventory') are NOT cloned — each branch
         // manages its own stock.
         const sourceProducts = await Product.find({
           restaurantId: tenantOid,
           isDeleted: { $ne: true },
-          availability: true,
+          type: 'menu',
         }).lean();
 
         if (sourceProducts.length > 0) {

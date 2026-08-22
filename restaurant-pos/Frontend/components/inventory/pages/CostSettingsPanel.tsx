@@ -16,7 +16,9 @@ import {
   AlertTriangle, Check, RefreshCw, IndianRupee,
 } from 'lucide-react';
 import { fetchCostSettings, updateCostSettings, calibrateCostSettings } from '../../../src/api/client';
+import { usePageRefresh } from '../usePageRefresh';
 import { useNotify } from '../InventoryManager';
+import ReceiptLoader from '../../ReceiptLoader';
 
 const fmt = (n: number) => '₹' + (Math.round(n * 100) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -55,6 +57,8 @@ export default function CostSettingsPanel() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  // Header refresh button re-fetches cost settings.
+  usePageRefresh(load);
 
   const num = (s: string) => { const n = parseFloat(s); return isNaN(n) ? 0 : n; };
 
@@ -113,7 +117,9 @@ export default function CostSettingsPanel() {
       </div>
 
       {!synced && settings === null && (
-        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 text-center text-sm text-gray-400">Loading cost settings…</div>
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 flex items-center justify-center">
+          <ReceiptLoader label="Loading cost settings…" />
+        </div>
       )}
 
       {synced && (

@@ -16,6 +16,7 @@ import InventoryEvent from '../../../models/InventoryEvent';
 import Bill from '../../../models/Bill';
 import BillItem from '../../../models/BillItem';
 import { dateRange, ReportScope } from './salesReportService';
+import { round2 } from '../../recipes/services/unitConversion';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);
@@ -24,6 +25,12 @@ function objectId(v: string): mongoose.Types.ObjectId {
 export class InventoryReportService {
   private productMatch(scope: ReportScope): Record<string, any> {
     return {
+      // Inventory items are identified by availability=false (the signal the
+      // whole POS inventory module uses). The `type` field defaults to 'menu'
+      // and is NOT reliably set on items created through the purchase/stock
+      // engine auto-create — matching on availability only keeps the reports
+      // consistent with the Items page and the summary endpoint.
+      availability: false,
       restaurantId: { $in: [objectId(scope.restaurantId), null] },
       isDeleted: { $ne: true },
     };
@@ -214,31 +221,101 @@ export class InventoryReportService {
     return rows.map((r: any) => ({ item: r._id, quantity: r.quantity, events: r.events }));
   }
 
-  /** GET /api/reports/inventory/expiry — items expiring soon or expired. */
+  /** GET /api/reports/inventory/expiry — items expiring soon or expired.
+   *  Per-batch FIFO: each batch with an expiry becomes its own row carrying the
+   *  REMAINING quantity of that batch. Legacy products without batches fall
+   *  back to the item's single expiryDate. */
   async expiry(scope: ReportScope, days = 30) {
     const products = await Product.find(this.productMatch(scope))
-      .select('name category currentStock unit expiryDate batchNumber')
+      .select('name category currentStock unit expiryDate batchNumber batches')
       .lean()
       .exec();
     const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime();
     const horizon = days * 86400000;
-    return products
-      .filter((p: any) => p.expiryDate)
-      .map((p: any) => {
-        const t = new Date(`${p.expiryDate}T00:00:00Z`).getTime();
-        return {
+    const rows: any[] = [];
+    for (const p of products as any[]) {
+      const batches = Array.isArray(p.batches)
+        ? p.batches.filter((b: any) => b.expiryDate && Number(b.quantity) > 0)
+        : [];
+      const pushRow = (expiryDate: string, quantity: number, batchNumber: string | null) => {
+        const t = new Date(`${expiryDate}T00:00:00Z`).getTime();
+        if (!Number.isFinite(t)) return;
+        const daysLeft = Math.floor((t - today) / 86400000);
+        if (daysLeft > horizon) return; // status OK — not expiring within the window
+        rows.push({
           name: p.name,
           category: p.category,
-          currentStock: p.currentStock,
+          currentStock: quantity,
           unit: p.unit || 'units',
-          expiryDate: p.expiryDate,
-          batchNumber: p.batchNumber || null,
-          daysLeft: Math.floor((t - today) / 86400000),
-          status: t < today ? 'Expired' : t - today <= horizon ? 'Expiring Soon' : 'OK',
-        };
-      })
-      .filter((r: any) => r.status !== 'OK')
-      .sort((a: any, b: any) => a.daysLeft - b.daysLeft);
+          expiryDate,
+          batchNumber,
+          daysLeft,
+          status: t < today ? 'Expired' : 'Expiring Soon',
+        });
+      };
+      if (batches.length > 0) {
+        for (const b of batches) pushRow(String(b.expiryDate), Number(b.quantity) || 0, b.batchNumber || p.batchNumber || null);
+      } else if (p.expiryDate) {
+        pushRow(String(p.expiryDate), Number(p.currentStock) || 0, p.batchNumber || null);
+      }
+    }
+    return rows.sort((a: any, b: any) => a.daysLeft - b.daysLeft);
+  }
+
+  /** GET /api/reports/inventory/summary — lightweight inventory overview.
+   *  Returns only the fields the Inventory Overview actually needs, with
+   *  per-product batch summary (count + earliest expiry) computed server-side
+   *  from the embedded batches — without transferring the full batch array.
+   *  Uses the compound index {restaurantId, type, name}.
+   *  No $or wrapper (single tenant clause), no countDocuments, no variants. */
+async summary(scope: ReportScope) {
+    const oid = objectId(scope.restaurantId);
+    const products = await Product.find({
+      availability: false,
+      restaurantId: oid,
+      isDeleted: { $ne: true },
+    } as any)
+      .select('_id name code category image unit currentStock minStock maxStock averageCost supplier availability expiryDate batchNumber updatedAt batches.expiryDate batches.quantity batches.batchNumber batches.cost')
+      .sort({ name: 1 })
+      .lean()
+      .exec() as any[];
+
+    return products.map((p) => {
+      const batches = Array.isArray(p.batches)
+        ? p.batches.filter((b: any) => b && Number(b.quantity) > 0)
+        : [];
+      const expiries = batches
+        .filter((b: any) => b.expiryDate)
+        .map((b: any) => String(b.expiryDate))
+        .sort();
+      // Stock VALUE = each remaining batch × its own purchase cost — NOT
+      // currentStock × averageCost. That way the Overview's value never swings
+      // with the rolling average; it reflects what the on-hand stock actually
+      // cost. Legacy items without batches fall back to currentStock × averageCost.
+      const stockValue = batches.length > 0
+        ? round2(batches.reduce((s: number, b: any) => s + (Number(b.quantity) || 0) * (Number(b.cost) || 0), 0))
+        : round2((Number(p.currentStock) || 0) * (Number(p.averageCost) || 0));
+      return {
+        _id: p._id,
+        id: String(p._id),
+        name: p.name,
+        code: p.code || '',
+        category: p.category || 'Uncategorized',
+        image: p.image || '',
+        unit: p.unit || 'pcs',
+        currentStock: Number(p.currentStock) || 0,
+        minStock: Number(p.minStock) || 0,
+        maxStock: Number(p.maxStock) || 0,
+        averageCost: Number(p.averageCost) || 0,
+        stockValue,
+        supplier: p.supplier || '',
+        availability: false,
+        expiryDate: expiries.length > 0 ? expiries[0] : (p.expiryDate || undefined),
+        batchNumber: p.batchNumber || undefined,
+        batchCount: batches.length,
+        lastUpdated: p.updatedAt ? String(p.updatedAt).slice(0, 10) : undefined,
+      };
+    });
   }
 
   /** GET /api/reports/inventory/suppliers — purchase summary per supplier. */

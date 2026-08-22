@@ -22,6 +22,8 @@ import {
   RefreshCw, Loader2, Sparkles, Scale, Tag, ArrowUpRight, ArrowDownRight,
 } from 'lucide-react';
 import { fetchCostIntelligence, fetchCostInsights } from '../../../src/api/client';
+import { usePageRefresh } from '../usePageRefresh';
+import ReceiptLoader from '../../ReceiptLoader';
 
 const money = (n: number) => Math.round(n * 100) / 100;
 const fmt = (n: number) => '₹' + money(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,6 +50,8 @@ export default function CostIntelligencePanel() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  // Header refresh button re-fetches cost intelligence.
+  usePageRefresh(load);
 
   const generateInsights = async () => {
     if (aiLoading) return;
@@ -67,9 +71,8 @@ export default function CostIntelligencePanel() {
 
   if (!synced && data === null) {
     return (
-      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 flex flex-col items-center text-sm text-gray-400">
-        <Loader2 className="w-6 h-6 animate-spin text-[var(--brand-color)] mb-2" />
-        Loading cost intelligence…
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-10 flex items-center justify-center">
+        <ReceiptLoader label="Loading cost intelligence…" />
       </div>
     );
   }

@@ -18,7 +18,7 @@ import RefreshButton from './common/RefreshButton';
 import type { DailySales, Bill, Order, TableInfo, Employee, Reservation } from '../src/types';
 import { generateDailySummary, type DailyAISummary } from '../src/ai/aiData';
 import { todayBusinessKey, isInBusinessDay, shiftDateKey, localDateKey } from '../src/data';
-import { fetchInventoryEvents, fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary } from '../src/api/client';
+import { fetchInventoryEvents, fetchInventorySummary, fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary } from '../src/api/client';
 import WeatherWidget from '../src/ai/WeatherWidget';
 import DashboardStatCard from './DashboardStatCard';
 
@@ -338,10 +338,17 @@ export default function DashboardWorkspace({
         .filter(b => isInBusinessDay(b, yesterdayKey, settings.openingTime))
         .reduce((s, b) => s + (b.grandTotal || 0), 0);
 
-      // REAL low-stock count — products at/below their minimum threshold.
-      const lowStockCount = products.filter((p: any) =>
-        Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
-      ).length;
+      // REAL low-stock count — inventory items at/below their minimum threshold.
+      // Uses fetchInventorySummary (type='inventory') since pos.products is menu-only.
+      let lowStockCount = 0;
+      try {
+        const invSummary = await fetchInventorySummary();
+        if (Array.isArray(invSummary)) {
+          lowStockCount = invSummary.filter((p: any) =>
+            Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
+          ).length;
+        }
+      } catch { /* non-fatal */ }
 
       // REAL open order count — orders still in progress (incl. Preparing).
       const openOrderCount = orders.filter(o =>

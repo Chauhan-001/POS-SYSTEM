@@ -26,6 +26,8 @@ async function applyPurchaseStock(opts: {
   unit: string;
   price: number;
   operator?: string;
+  expiryDate?: string;
+  batchNumber?: string;
 }) {
   try {
     await stockMovementService.applyMovement({
@@ -37,6 +39,8 @@ async function applyPurchaseStock(opts: {
       unit: opts.unit,
       purchasePrice: opts.price,
       operator: opts.operator,
+      expiryDate: opts.expiryDate || undefined,
+      batchNumber: opts.batchNumber || undefined,
       autoCreateProduct: true, // purchased item not in catalog → hidden inventory product
     });
   } catch (err: any) {
@@ -97,7 +101,14 @@ export class PurchaseService {
       if (params.endDate) query.date.$lte = params.endDate;
     }
     const limit = params.limit && params.limit > 0 ? params.limit : 100;
-    return purchaseRepo.findAll(query, { limit, sort: { date: -1, createdAt: -1 } });
+    // Projection: only the fields the Inventory UI/history/forecast consume —
+    // the full purchase docs were transferred for every list call before.
+    return purchaseRepo.findAll(
+      query,
+      { limit, sort: { date: -1, createdAt: -1 } },
+      undefined,
+      { _id: 1, supplier: 1, brand: 1, expiryDate: 1, item: 1, category: 1, quantity: 1, unit: 1, price: 1, total: 1, date: 1, status: 1, notes: 1, branchId: 1 },
+    );
   }
 
   /**
@@ -124,7 +135,8 @@ export class PurchaseService {
       unit: data.unit || 'kg',
     });
 
-    // Stock engine: increase stock + weighted avg cost + event + audit.
+    // Stock engine: increase stock + weighted avg cost + event + audit (with
+    // FIFO batch tracking when an expiry date was supplied).
     await applyPurchaseStock({
       restaurantId,
       branchId: ctx.branchId || data.branchId,
@@ -133,6 +145,8 @@ export class PurchaseService {
       unit: data.unit || 'kg',
       price,
       operator: ctx.operator,
+      expiryDate: data.expiryDate,
+      batchNumber: data.batchNumber,
     });
 
     return purchase;

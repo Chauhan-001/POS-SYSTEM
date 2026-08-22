@@ -8,11 +8,30 @@ export interface InventoryItem {
   minStock: number;
   maxStock: number;
   averageCost: number;
+  /** Stock value = Σ(batch qty × batch purchase cost); legacy = currentStock ×
+   *  averageCost. Never recomputed from the rolling average — reflects what
+   *  the on-hand stock actually cost. */
+  stockValue?: number;
   supplier: string;
   status: 'healthy' | 'normal' | 'low' | 'critical';
   expiryDate?: string;
   batchNumber?: string;
   lastUpdated: string;
+  /** Per-batch stock for FIFO/expiry tracking. Deductions consume the oldest
+   *  expiry first. Each batch shows its remaining quantity and expiry. */
+  batches?: StockBatch[];
+}
+
+export interface StockBatch {
+  batchNumber?: string;
+  /** YYYY-MM-DD; '' means the batch has no expiry (consumed last under FIFO). */
+  expiryDate?: string;
+  /** Remaining quantity in this batch. */
+  quantity: number;
+  /** YYYY-MM-DD the batch was received. */
+  receivedDate?: string;
+  /** Per-unit purchase cost of this batch. */
+  cost?: number;
 }
 
 export interface Purchase {
@@ -107,7 +126,6 @@ export interface InventorySettings {
 export type InventoryPage =
   | 'dashboard'
   | 'items'
-  | 'purchase'
   | 'waste'
   | 'suppliers'
   | 'analytics'

@@ -17,9 +17,17 @@ const componentSchema = z.object({
   return !!c.inventoryItemId;
 }, { message: 'A component needs an inventoryItemId (ingredient) or subRecipeId (sub-recipe)' });
 
-export const createRecipeSchema = z.object({
+const recipeFieldsSchema = z.object({
   productId: z.string().regex(/^[a-fA-F0-9]{24}$/),
-  variantName: z.string().max(100).optional(),
+  /**
+   * Every recipe belongs to EXACTLY ONE variant — there is no base recipe.
+   * Products without variants use the virtual 'Default' variant.
+   */
+  variantName: z.string().min(1).max(100).trim(),
+  /** Recipe role is always 'override' (kept for data compatibility; base recipes no longer exist). */
+  recipeMode: z.enum(['override']).default('override'),
+  /** For override recipes: the base Recipe this variant customizes. */
+  sourceRecipeId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).optional(),
   status: z.enum(['draft', 'active']).default('draft'),
@@ -29,15 +37,27 @@ export const createRecipeSchema = z.object({
   servingSize: z.number().min(1).optional(),
   preparationNotes: z.string().max(4000).optional(),
   components: z.array(componentSchema).max(200).default([]),
-}).strict();
+});
 
-export const updateRecipeSchema = createRecipeSchema.partial();
+export const createRecipeSchema = recipeFieldsSchema.strict();
+export const updateRecipeSchema = recipeFieldsSchema.partial().strict();
 
 export const recipeQuerySchema = z.object({
   status: z.enum(['draft', 'active', 'archived']).optional(),
   productId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
   branchId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
   search: z.string().max(100).optional(),
+  limit: z.coerce.number().min(1).max(500).optional(),
+}).optional();
+
+export const variantCopySchema = z.object({
+  variantName: z.string().min(1).max(100).trim(),
+  status: z.enum(['draft', 'active']).optional(),
+}).strict();
+
+export const effectiveQuerySchema = z.object({
+  productId: z.string().regex(/^[a-fA-F0-9]{24}$/),
+  variantName: z.string().max(100).optional(),
 }).optional();
 
 export const recipeParamsSchema = z.object({ id: objectId }).strict();

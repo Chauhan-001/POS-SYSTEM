@@ -52,7 +52,8 @@ export class BaseRepository<T extends Document> {
   async findAll(
     filter: FilterQuery<T> = {},
     pagination?: PaginationParams,
-    populate?: PopulateOptions | (PopulateOptions | string)[]
+    populate?: PopulateOptions | (PopulateOptions | string)[],
+    projection?: Record<string, 0 | 1> | string
   ): Promise<PaginatedResult<T>> {
     const query = this.buildFilter(filter);
     const page = pagination?.page || 1;
@@ -66,6 +67,7 @@ export class BaseRepository<T extends Document> {
         .skip(skip)
         .limit(limit)
         .populate(populate || [])
+        .select(projection || {})
         .exec(),
       this.model.countDocuments(query).exec(),
     ]);

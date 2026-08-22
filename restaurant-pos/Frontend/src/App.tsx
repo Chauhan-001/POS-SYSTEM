@@ -77,16 +77,109 @@ import type { TourActions } from '../components/GuidedTour';
 // Phase 1.10: every lazy import is wrapped in `safeLazy` so a chunk that fails to
 // fetch (e.g. device just went offline before the chunk was cached) resolves to a
 // harmless placeholder instead of rejecting and unmounting the entire POS tree.
-const safeLazy = (loader: () => Promise<{ default: React.ComponentType<any> }>) =>
-  React.lazy(() =>
-    loader().catch(() => ({
-      default: (() => (
-        <div className="flex items-center justify-center h-40 text-sm text-gray-400">
-          This section is unavailable while offline. Reconnect and try again.
+//
+// Phase 2.0: `safeLazy` now retries failed chunk loads when the browser comes
+// back online. Previously, React.lazy cached the rejected promise permanently,
+// so a section that failed to load while offline stayed broken until a full page
+// reload. The new pattern uses a `React.lazy` per generation counter — when the
+// `online` event fires we bump the generation, creating a fresh lazy component
+// that re-attempts the import.
+function safeLazy(loader: () => Promise<{ default: React.ComponentType<any> }>) {
+  let generation = 0;
+
+  const Wrapper = React.memo(function SafeLazyWrapper(props: any) {
+    const [gen, setGen] = React.useState(generation);
+    const [hasError, setHasError] = React.useState(false);
+
+    // Retry loading when coming back online
+    React.useEffect(() => {
+      const onOnline = () => {
+        generation++;
+        setHasError(false);
+        setGen(generation);
+      };
+      window.addEventListener('online', onOnline);
+      return () => window.removeEventListener('online', onOnline);
+    }, []);
+
+    const LazyComp = React.useMemo(() =>
+      React.lazy(() =>
+        loader()
+          .then((mod) => {
+            // Reset error state on successful load
+            setHasError(false);
+            return mod;
+          })
+          .catch(() => {
+            setHasError(true);
+            return {
+              default: OfflinePlaceholder as unknown as React.ComponentType<any>,
+            };
+          }),
+      ),
+      [gen],
+    );
+
+    return (
+      <React.Suspense fallback={
+        <div className="flex items-center justify-center py-10">
+          <ReceiptLoader label="Loading workspace…" />
         </div>
-      )) as unknown as React.ComponentType<any>,
-    })),
+      }>
+        <ErrorBoundary fallback={<OfflinePlaceholderWithRetry onRetry={() => { generation++; setGen(generation); setHasError(false); }} />}>
+          <LazyComp {...props} />
+        </ErrorBoundary>
+      </React.Suspense>
+    );
+  });
+
+  // Offline placeholder with manual retry button
+  const OfflinePlaceholder: React.ComponentType<any> = ({ onRetry }: { onRetry: () => void }) => (
+    <div className="flex flex-col items-center justify-center h-40 gap-3 text-sm text-gray-400">
+      <div className="flex flex-col items-center gap-2">
+        <svg className="w-8 h-8 text-gray-500 animate-spin" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" stroke="currentColor" strokeWidth="3" />
+        </svg>
+        <span className="font-medium text-gray-600">Reconnecting…</span>
+        <span className="text-xs text-gray-400">This section will load automatically when connection is restored</span>
+      </div>
+      <button
+        onClick={onRetry}
+        className="px-3 py-1.5 bg-[var(--brand-color)] text-white text-xs font-semibold rounded-lg hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer"
+      >
+        Retry Now
+      </button>
+    </div>
   );
+
+  // Simple error boundary for lazy loading failures
+  class ErrorBoundary extends React.Component<{ children: React.ReactNode; fallback: React.ReactNode }, { hasError: boolean }> {
+    state = { hasError: false };
+    static getDerivedStateFromError() { return { hasError: true }; }
+    render() { return this.state.hasError ? this.props.fallback : this.props.children; }
+  }
+
+  const OfflinePlaceholderWithRetry = ({ onRetry }: { onRetry: () => void }) => (
+    <div className="flex flex-col items-center justify-center h-40 gap-3 text-sm text-gray-400">
+      <div className="flex flex-col items-center gap-2">
+        <svg className="w-8 h-8 text-gray-500" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+        </svg>
+        <span className="font-medium text-gray-600">Unable to Load</span>
+        <span className="text-xs text-gray-400">The connection was lost while loading this section</span>
+      </div>
+      <button
+        onClick={onRetry}
+        className="px-3 py-1.5 bg-[var(--brand-color)] text-white text-xs font-semibold rounded-lg hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer"
+      >
+        Try Again
+      </button>
+    </div>
+  );
+
+  return Wrapper;
+}
 
 const ProductManager = safeLazy(() => import('../components/ProductManager'));
 const MenuAvailabilityPage = safeLazy(() => import('../components/MenuAvailabilityPage'));
@@ -592,16 +685,20 @@ export default function App() {
     return () => { setOnApiError(null); setAiAuth(null, null); setAiToken(null); };
   }, [pos.currentEmployee]);
 
-  // Clear JWT token on logout (when currentEmployee becomes null)
+  // Clear JWT token on logout (when currentEmployee becomes null). Guarded on
+  // auth too: during a genuine login the POS employee state can briefly lag the
+  // auth context — without this guard the effect could wipe the freshly-issued
+  // tokens, 401-ing the very first workspace load (session expired → login →
+  // registration wizard).
   React.useEffect(() => {
-    if (!pos.currentEmployee) {
+    if (!pos.currentEmployee && !auth.isAuthenticated) {
       setAuthToken(null);
       setAiToken(null);
       localStorage.removeItem('pos_auth_token');
       localStorage.removeItem('pos_access_token');
       localStorage.removeItem('pos_refresh_token');
     }
-  }, [pos.currentEmployee]);
+  }, [pos.currentEmployee, auth.isAuthenticated]);
   // ─── Device Registration ───────────────────────────────────
   // Register this device after successful login
   React.useEffect(() => {
@@ -2257,7 +2354,7 @@ export default function App() {
                      <span className="text-[10px] text-gray-400 ml-auto">Catalog Management</span>
                    </div>
                    <div className="flex-1 min-h-0 overflow-hidden">
-                    <ProductManager products={pos.products} onUpdateProducts={pos.setProducts} currencySymbol={pos.settings.currencySymbol} categories={pos.categories} onUpdateCategories={pos.setCategories} categoryColors={pos.categoryColors} onUpdateCategoryColors={pos.setCategoryColors} branches={pos.branches} branchProductPrices={pos.branchProductPrices} onSetBranchProductPrices={pos.setBranchProductPrices} branchVariantPrices={pos.branchVariantPrices} onSetBranchVariantPrices={pos.setBranchVariantPrices} defaultTaxRate={pos.settings.defaultTaxRate} taxRules={pos.settings.taxRules} />
+                    <ProductManager products={pos.products} onUpdateProducts={pos.setProducts} currencySymbol={pos.settings.currencySymbol} categories={pos.categories} onUpdateCategories={pos.setCategories} categoryColors={pos.categoryColors} onUpdateCategoryColors={pos.setCategoryColors} branches={pos.branches} branchProductPrices={pos.branchProductPrices} onSetBranchProductPrices={pos.setBranchProductPrices} branchVariantPrices={pos.branchVariantPrices} onSetBranchVariantPrices={pos.setBranchVariantPrices} defaultTaxRate={pos.settings.defaultTaxRate} taxRules={pos.settings.taxRules} onOpenRecipes={() => { pos.setActiveWorkspace('Inventory' as any); window.setTimeout(() => { window.dispatchEvent(new CustomEvent('inventory:navigate', { detail: { tab: 'recipes' } })); }, 250); }} />
                   </div>
                 </div>
               )}
@@ -2437,12 +2534,12 @@ export default function App() {
                 </div>
               )}
               {pos.activeWorkspace === 'Inventory' && pos.hasInventory && (
-                <div className="flex flex-col flex-1 min-h-0"><InventoryManager onBack={() => pos.setActiveWorkspace('More')} moduleSettings={pos.moduleSettings} /></div>
+                <div className="flex flex-col flex-1 min-h-0"><InventoryManager onBack={() => pos.setActiveWorkspace('More')} moduleSettings={pos.moduleSettings} products={pos.products} /></div>
               )}
               {pos.activeWorkspace === 'Feedback' && (
                 <div className="flex flex-col flex-1 min-h-0">
                   <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('Dashboard')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="text-sm font-bold text-[var(--color-text-primary)]">Customer Feedback</span>
                     <span className="text-[10px] text-gray-400 ml-auto">Reviews from receipt QR scans</span>
                   </div>

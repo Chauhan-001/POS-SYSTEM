@@ -42,7 +42,12 @@ export interface RecipeComponentInput {
 
 export interface RecipeInput {
   productId: string;
-  variantName?: string;
+  /** Every recipe belongs to exactly one variant. Products without variants use the virtual 'Default' variant. */
+  variantName: string;
+  /** Recipe role is always 'override' (base recipes no longer exist). */
+  recipeMode?: 'override';
+  /** Kept for data compatibility — always null for new recipes (no base to link). */
+  sourceRecipeId?: string;
   name?: string;
   description?: string;
   status?: 'draft' | 'active';
@@ -94,15 +99,30 @@ export class RecipeService {
   async create(restaurantId: string, data: RecipeInput, ctx: { operator?: string; branchId?: string } = {}) {
     const product = await this.assertProduct(restaurantId, data.productId);
     await this.validateGraph(restaurantId, data.components || []);
-
     const components = await this.normalizeComponents(restaurantId, data.components || []);
-    const name = data.name || `${product.name}${data.variantName ? ` (${data.variantName})` : ''} Recipe`;
+
+    // ── Variant-only model ───────────────────────────────────────
+    // Every recipe belongs to exactly ONE variant. There is no base recipe and
+    // no inheritance. Products without variants use the virtual 'Default'
+    // variant. recipeMode is always 'override'.
+    const variantName = String(data.variantName || '').trim();
+    if (!variantName) {
+      throw new AppError(400, 'A recipe must belong to a variant — create recipes per variant.');
+    }
+    if (String(data.recipeMode || '') === 'base') {
+      throw new AppError(400, 'Base recipes no longer exist — every recipe belongs to a variant.');
+    }
+    const recipeMode = 'override';
+
+    const name = data.name || `${product.name} (${variantName}) Recipe`;
     const draft: any = {
       restaurantId,
       branchId: ctx.branchId || null,
       productId: product._id,
       productName: product.name,
-      variantName: data.variantName || null,
+      variantName,
+      recipeMode,
+      sourceRecipeId: null,
       name,
       description: data.description || '',
       status: data.status === 'active' ? 'active' : 'draft',
@@ -124,11 +144,11 @@ export class RecipeService {
     const recipe = await Recipe.create(draft);
 
     if (draft.status === 'active') {
-      await this.archiveSiblings(restaurantId, recipe._id.toString(), product._id.toString(), data.variantName, ctx);
+      await this.archiveSiblings(restaurantId, recipe._id.toString(), product._id.toString(), variantName, ctx);
     }
 
     await this.audit(restaurantId, recipe._id.toString(), 'RECIPE_CREATED', ctx.operator, {
-      name, status: draft.status, version: 1,
+      name, status: draft.status, version: 1, recipeMode,
     });
     return this.getById(restaurantId, recipe._id.toString());
   }
@@ -142,10 +162,27 @@ export class RecipeService {
     if (data.components !== undefined) {
       await this.validateGraph(restaurantId, data.components, id);
     }
+
+    // Identity is immutable on update: a recipe's (productId, variantName,
+    // recipeMode) is fixed at creation. Reparenting a recipe here is the exact
+    // mechanism that let the old UI mutate one variant's recipe into another's
+    // (Half→Full sharing ingredients). The editor creates a NEW recipe when a
+    // variant has none — it never moves an existing one.
+    const currentVariant = recipe.variantName ? String(recipe.variantName).trim() : '';
+    if (data.variantName !== undefined && String(data.variantName || '').trim() !== currentVariant) {
+      throw new AppError(
+        400,
+        'A recipe cannot be moved to another variant — create a recipe for that variant instead.'
+      );
+    }
     if (data.productId !== undefined && String(data.productId) !== String(recipe.productId)) {
-      const product = await this.assertProduct(restaurantId, data.productId);
-      recipe.productId = product._id as any;
-      recipe.productName = product.name;
+      throw new AppError(400, 'A recipe cannot be moved to another product — create a new recipe instead.');
+    }
+    if (data.recipeMode !== undefined && data.recipeMode !== recipe.recipeMode) {
+      throw new AppError(
+        400,
+        `A recipe's role (${recipe.recipeMode}) cannot be changed in place — create a new recipe with the desired role instead.`
+      );
     }
 
     const materialChanged =
@@ -160,7 +197,6 @@ export class RecipeService {
       await this.snapshotVersion(recipe, restaurantId, ctx.operator);
     }
 
-    if (data.variantName !== undefined) recipe.variantName = data.variantName || undefined;
     if (data.name !== undefined) recipe.name = data.name;
     if (data.description !== undefined) recipe.description = data.description;
     if (data.effectiveFrom !== undefined) recipe.effectiveFrom = data.effectiveFrom;
@@ -239,6 +275,9 @@ export class RecipeService {
       version: 1,
       effectiveFrom: today(),
       effectiveTo: null,
+      recipeMode: recipe.recipeMode || 'base',
+      variantName: recipe.variantName || null,
+      sourceRecipeId: recipe.recipeMode === 'override' ? (recipe.sourceRecipeId || null) : null,
       createdBy: ctx.operator,
       updatedBy: ctx.operator,
       isDeleted: false,

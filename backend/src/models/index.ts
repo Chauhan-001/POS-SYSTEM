@@ -114,7 +114,7 @@ export type {
 export type { IBranch } from './Branch';
 export type { IBranchSettings } from './BranchSettings';
 export type { IEmployee } from './Employee';
-export type { IProduct } from './Product';
+export type { IProduct, ProductType } from './Product';
 export type { IProductVariant } from './ProductVariant';
 export type { ICustomer } from './Customer';
 export type { ICustomerVisit } from './CustomerVisit';
@@ -159,6 +159,7 @@ export type { ICouponRedemption } from './CouponRedemption';
 export type { ICustomerActivity, CustomerActivityType } from './CustomerActivity';
 export type { IReferral, ReferralStatus } from './Referral';
 export type { ICampaign, CampaignChannel, CampaignStatus } from './Campaign';
+export type { ICampaignProposal, CampaignProposalObjective, CampaignProposalStrategy, CampaignProposalApprovalStatus, CampaignProposalExecutionStatus, CampaignProposalChannel, CampaignProposalStatusTransition, AutomationGuardrails, CampaignAutomationMode } from './CampaignProposal';
 export type { IExpenseCategory } from './ExpenseCategory';
 export type { IVendor } from './Vendor';
 export type { IRecurringExpense, RecurrenceFrequency } from './RecurringExpense';

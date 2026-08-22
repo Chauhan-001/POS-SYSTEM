@@ -94,10 +94,13 @@ export async function adjustProductStock(req: Request, res: Response): Promise<v
  */
 export async function listProducts(req: Request, res: Response): Promise<void> {
   try {
-    const { category, availability } = req.query;
+    const { category, availability, type } = req.query;
     const filter: any = {};
     if (category) filter.category = category;
     if (availability !== undefined) filter.availability = availability === 'true';
+    // Server-side type filter: defaults to 'menu' so callers never receive
+    // inventory items unless they explicitly request type=inventory.
+    filter.type = (type === 'inventory' || type === 'menu') ? type : 'menu';
     const restId = (req as AuthenticatedRequest).user?.restaurantId;
     if (restId && Types.ObjectId.isValid(restId)) {
       // Strict tenant scoping: ONLY this restaurant's own products.

@@ -214,10 +214,14 @@ export class ProductService {
    * List all products (non-deleted).
    * Optionally filter by category or availability.
    */
-  async list(filter: { category?: string; availability?: boolean; $or?: any[] } = {}) {
+  async list(filter: { category?: string; availability?: boolean; type?: string; $or?: any[] } = {}) {
     const query: any = {};
     if (filter.category) query.category = filter.category;
     if (filter.availability !== undefined) query.availability = filter.availability;
+    // Server-side type filter: defaults to 'menu' so the POS billing catalog
+    // never receives inventory items. Callers pass type='inventory' explicitly
+    // when they need raw materials (inventory module, recipe editor, etc.).
+    if (filter.type) query.type = filter.type;
     // Tenant scoping is built by the callers (products/availability controllers)
     // as an $or of owned + shared/global rows. Forward it so it actually reaches
     // Mongo — previously it was silently dropped, leaking every restaurant's

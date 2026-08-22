@@ -550,16 +550,17 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
               </div>
             )}
 
-            {/* First-run: offer registration instead of / alongside sign-in */}
-            {view === 'login' && isFirstRun && onRegister && (
+            {/* Register option — always available on the sign-in screen.
+                Leads to the isolated FirstTimeSetup registration screen. */}
+            {view === 'login' && onRegister && (
               <div className="mt-5 pt-4 border-t border-gray-100 text-center">
-                <p className="text-[10px] text-gray-400 mb-2">New here? Register your restaurant to become the Owner.</p>
+                <p className="text-[10px] text-gray-400 mb-2">Don't have an account? Register your restaurant to become the Owner.</p>
                 <button
                   type="button"
-                  onClick={() => setView('choose')}
+                  onClick={onRegister}
                   className="w-full border border-[var(--brand-color)] text-[var(--brand-color)] py-2.5 rounded-lg font-semibold text-xs hover:bg-blue-50 transition-colors cursor-pointer"
                 >
-                  I don't have credentials — Register this restaurant
+                  Register now
                 </button>
               </div>
             )}

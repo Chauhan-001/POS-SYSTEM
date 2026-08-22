@@ -14,6 +14,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import {
   Search, Mic, Trash2, Loader2, Sparkles,
 } from 'lucide-react';
+import { unitOptionsFor } from '../../src/utils/units';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -79,6 +80,9 @@ export interface RecipeInputStepProps {
   // ── Row quantity change ──
   onRowQuantityChange?: (key: string, qty: number) => void;
 
+  // ── Row unit change (kg → g, L → ml, etc.) ──
+  onRowUnitChange?: (key: string, unit: string) => void;
+
   // ── Row remove ──
   onRowRemove?: (key: string) => void;
 
@@ -112,11 +116,14 @@ export default function RecipeInputStep({
   onStartRecording,
   onStopRecording,
 
-  error,
+error,
 
   onRowQuantityChange,
+  onRowUnitChange,
   onRowRemove,
   onClearAll,
+
+  ..._
 }: RecipeInputStepProps) {
   const fmt = (n: number) =>
     currencySymbol + Number(n || 0).toLocaleString('en-IN', {
@@ -329,8 +336,9 @@ export default function RecipeInputStep({
                         )}
                       </p>
                       <p className="text-[10px] text-gray-400">
-                        per {r.unit}
-                        {r.averageCost !== undefined ? ` · ${fmt(r.averageCost)}` : ''}
+                        {onRowUnitChange && r.itemUnit && r.itemUnit !== r.unit
+                          ? `per ${r.unit} · ${fmt(r.averageCost ?? 0)}/${r.itemUnit}`
+                          : `per ${r.unit}${r.averageCost !== undefined ? ` · ${fmt(r.averageCost)}` : ''}`}
                       </p>
                     </div>
                     {onRowQuantityChange && (
@@ -342,7 +350,20 @@ export default function RecipeInputStep({
                         className="w-20 px-2 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-mono font-bold text-right focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                       />
                     )}
-                    <span className="text-[10px] text-gray-400 w-7">{r.unit}</span>
+                    {onRowUnitChange ? (
+                      <select
+                        value={r.unit}
+                        onChange={(e) => onRowUnitChange(r.key, e.target.value)}
+                        title="Change unit (e.g. kg → g, L → ml)"
+                        className="w-16 px-1.5 py-1.5 rounded-lg border border-[var(--color-border-default)] bg-white text-[10px] font-semibold text-gray-600 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] cursor-pointer text-center"
+                      >
+                        {unitOptionsFor(r.unit).map((u) => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-[10px] text-gray-400 w-7 text-center">{r.unit}</span>
+                    )}
                     <span className="text-xs font-mono font-bold text-[var(--color-text-primary)] w-20 text-right">
                       {fmt(r.costPreview ?? 0)}
                     </span>

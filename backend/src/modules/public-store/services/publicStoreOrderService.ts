@@ -212,6 +212,7 @@ export class PublicStoreOrderService {
     const scope = await resolveMenuProductScope(String(rid));
     const products = await Product.find({
       $or: scope,
+      type: 'menu',
       isDeleted: { $ne: true },
     })
       .sort({ category: 1, name: 1 })

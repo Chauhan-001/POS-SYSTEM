@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 /**
- * Customer-site configuration modal (Phase 4).
+ * Customer-site configuration modal — retro diner theme.
  *
- * Renders the SAME resolved configuration the POS uses (variant / modifier /
- * add-on groups from the menu payload). The customer picks options; the live
- * total is a display preview only — the server re-validates and re-prices
- * authoritatively at precheck/order time.
+ * Opens as a bottom sheet when a product has variants / modifiers / add-ons.
+ * The customer picks options; the live total is a display preview only — the
+ * server re-validates and re-prices authoritatively at precheck/order time.
  */
 
 const groupLabel = (type) =>
@@ -31,7 +31,6 @@ export default function ConfigModal({ item, onClose, onConfirm }) {
   );
 
   const [selection, setSelection] = useState({ selections: [] });
-  const [qty, setQty] = useState(1);
   const [error, setError] = useState('');
 
   const toggleOption = (group, optionId) => {
@@ -60,7 +59,6 @@ export default function ConfigModal({ item, onClose, onConfirm }) {
     const cur = Math.max(1, Number(quantities[optionId]) || 1);
     const nextQty = Math.max(1, Math.min(max, cur + delta));
     if (!current.includes(optionId)) {
-      // First tap adds it at qty 1.
       quantities[optionId] = 1;
       const rest = selection.selections.filter((s) => s.groupId !== group.id);
       setSelection({ selections: [...rest, { groupId: group.id, optionIds: [...current, optionId], quantities }] });
@@ -129,40 +127,53 @@ export default function ConfigModal({ item, onClose, onConfirm }) {
   const hasConfig = groups.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-6" onClick={onClose}>
-      <div
-        className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
+    <motion.div
+      className="config-overlay"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="config-sheet"
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', stiffness: 320, damping: 30 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+        <div className="sheet-handle" />
+
+        {/* Header */}
+        <div className="config-header">
           <div>
-            <h3 className="font-bold text-lg leading-tight">{item.name}</h3>
-            <p className="text-sm text-gray-500">Starting ₹{(Number(item.price) || 0).toFixed(2)}</p>
+            <h3 className="sheet-title" style={{ marginBottom: 0 }}>{item.name}</h3>
+            <span className="config-starting-price">Starting ₹{(Number(item.price) || 0).toFixed(2)}</span>
           </div>
-          <button className="text-2xl leading-none text-gray-400 hover:text-gray-700 px-1" onClick={onClose} aria-label="Close">
-            ×
+          <button className="config-close-btn" onClick={onClose} aria-label="Close">
+            ✕
           </button>
         </div>
 
-        <div className="px-5 py-3 overflow-y-auto space-y-5">
-          {!hasConfig && <p className="text-sm text-gray-500">This item has no options.</p>}
+        {/* Options body */}
+        <div className="config-body">
+          {!hasConfig && <p className="muted" style={{ margin: 0 }}>This item has no options.</p>}
+
           {groups.map((group) => {
             const entry = selection.selections.find((s) => s.groupId === group.id);
             const selectedIds = entry?.optionIds || [];
             return (
-              <div key={group.id}>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="font-semibold text-sm">{group.name}</span>
+              <div key={group.id} className="config-group">
+                <div className="config-group-header">
+                  <span className="config-group-name">{group.name}</span>
                   {group.required && (
-                    <span className="text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
-                      Required
-                    </span>
+                    <span className="config-required-badge">Required</span>
                   )}
                   {group.selectionMode === 'SINGLE' && (
-                    <span className="text-[10px] text-gray-400">choose one</span>
+                    <span className="config-hint">choose one</span>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="config-options">
                   {(group.options || [])
                     .filter((o) => o.active !== false)
                     .map((option) => {
@@ -171,29 +182,23 @@ export default function ConfigModal({ item, onClose, onConfirm }) {
                       const isAddon = group.type === 'ADD_ON_GROUP';
                       const addonQty = isAddon ? Number(entry?.quantities?.[option.id]) || (selected ? 1 : 0) : 0;
                       return (
-                        <div key={option.id} className="flex flex-col items-stretch">
+                        <div key={option.id} className="config-option-wrap">
                           <button
-                            className={`px-3 py-2 rounded-xl border text-sm font-medium transition-all ${
-                              selected
-                                ? 'border-blue-600 bg-blue-600 text-white shadow'
-                                : 'border-gray-200 bg-white text-gray-800 hover:border-blue-300'
-                            }`}
+                            className={`config-option${selected ? ' selected' : ''}`}
                             onClick={() => (isAddon ? setAddonQty(group, option.id, 1) : toggleOption(group, option.id))}
                           >
-                            {option.name}
-                            <span className={selected ? 'text-blue-100' : 'text-gray-400'}>{'  '}
-                              {p > 0 ? `+₹${p.toFixed(2)}` : p < 0 ? `−₹${Math.abs(p).toFixed(2)}` : ''}
-                            </span>
+                            <span>{option.name}</span>
+                            {p !== 0 && (
+                              <span className={selected ? 'config-price-on' : 'config-price'}>
+                                {p > 0 ? `+₹${p.toFixed(2)}` : `−₹${Math.abs(p).toFixed(2)}`}
+                              </span>
+                            )}
                           </button>
                           {isAddon && selected && (
-                            <div className="flex items-center justify-center gap-2 mt-1.5">
-                              <button className="w-6 h-6 rounded-full border text-sm leading-none" onClick={() => setAddonQty(group, option.id, -1)}>
-                                −
-                              </button>
-                              <span className="text-sm font-semibold w-4 text-center">{addonQty}</span>
-                              <button className="w-6 h-6 rounded-full border text-sm leading-none" onClick={() => setAddonQty(group, option.id, 1)}>
-                                +
-                              </button>
+                            <div className="config-addon-qty">
+                              <button className="config-qty-btn" onClick={() => setAddonQty(group, option.id, -1)}>−</button>
+                              <span className="config-qty-val">{addonQty}</span>
+                              <button className="config-qty-btn" onClick={() => setAddonQty(group, option.id, 1)}>+</button>
                             </div>
                           )}
                         </div>
@@ -204,33 +209,30 @@ export default function ConfigModal({ item, onClose, onConfirm }) {
             );
           })}
 
-          {error && <p className="text-sm text-red-600 font-medium">⚠️ {error}</p>}
+          {error && <p className="config-error">⚠️ {error}</p>}
 
           {configSummary && (
-            <p className="text-xs text-gray-500 border-t border-dashed border-gray-200 pt-3">
+            <div className="config-summary">
               {configSummary}
-            </p>
+            </div>
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-100 flex items-center gap-4">
-          <div className="flex items-center gap-2 border rounded-xl px-2 py-1">
-            <button className="w-7 h-7 rounded-full text-lg leading-none hover:bg-gray-100" onClick={() => setQty((q) => Math.max(1, q - 1))}>
-              −
-            </button>
-            <span className="w-5 text-center font-bold">{qty}</span>
-            <button className="w-7 h-7 rounded-full text-lg leading-none hover:bg-gray-100" onClick={() => setQty((q) => q + 1)}>
-              +
-            </button>
+        {/* Footer */}
+        <div className="config-footer">
+          <div className="config-footer-price">
+            <span className="config-footer-label">Total</span>
+            <span className="price">₹{unitTotal.toFixed(2)}</span>
           </div>
-          <button
-            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl transition-all disabled:opacity-50"
+          <motion.button
+            className="btn btn-ketchup btn-block"
+            whileTap={{ scale: 0.96 }}
             onClick={handleConfirm}
           >
-            Add {qty} × ₹{(unitTotal * qty).toFixed(2)}
-          </button>
+            Add to tray ✓
+          </motion.button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

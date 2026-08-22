@@ -65,6 +65,31 @@ export async function requireSubscription(req: Request, res: Response, next: Nex
  * Returns 403 if the plan does not include the feature.
  * Admins are always allowed (no restaurant context).
  */
+/**
+ * requireFeature(feature) → 403 if the restaurant's plan doesn't include it.
+ *
+ * The subscription lookup is cached in-memory per tenant+feature for a short
+ * TTL. The key is the full tenant identity (restaurantId), so a cache entry can
+ * never leak across restaurants; plan/feature changes apply within the TTL.
+ * Authorization is never weakened — a miss always re-reads the subscription.
+ */
+const FEATURE_CACHE_TTL_MS = 30_000;
+const featureCheckCache = new Map<string, { allowed: boolean; expiresAt: number }>();
+
+function readFeatureCache(key: string): boolean | undefined {
+  const hit = featureCheckCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.allowed;
+  return undefined;
+}
+function writeFeatureCache(key: string, allowed: boolean): void {
+  featureCheckCache.set(key, { allowed, expiresAt: Date.now() + FEATURE_CACHE_TTL_MS });
+  // Opportunistic cleanup — never grows unbounded for long.
+  if (featureCheckCache.size > 1000) {
+    const now = Date.now();
+    for (const [k, v] of featureCheckCache) if (v.expiresAt <= now) featureCheckCache.delete(k);
+  }
+}
+
 export function requireFeature(feature: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -75,9 +100,26 @@ export function requireFeature(feature: string) {
         return;
       }
 
+      const cacheKey = `${restaurantId}:${feature}`;
+      const cached = readFeatureCache(cacheKey);
+      if (cached !== undefined) {
+        if (!cached) {
+          res.status(403).json({
+            error: 'Feature not available',
+            message: `Your current plan does not include "${feature}". Upgrade to access this feature.`,
+            code: 'FEATURE_NOT_IN_PLAN',
+            requiredFeature: feature,
+          });
+          return;
+        }
+        next();
+        return;
+      }
+
       const sub = await Subscription.findOne({ restaurantId }).exec();
       if (!sub) {
         // No subscription record yet = first-time setup, allow
+        writeFeatureCache(cacheKey, true);
         next();
         return;
       }
@@ -93,11 +135,13 @@ export function requireFeature(feature: string) {
 
       // Free trial unlocks every feature — no plan restriction during trial
       if (sub.status === 'trial') {
+        writeFeatureCache(cacheKey, true);
         next();
         return;
       }
 
-      if (!effectiveFeatures(sub.features, sub.grantedFeatures).includes(feature)) {
+      const allowed = effectiveFeatures(sub.features, sub.grantedFeatures).includes(feature);
+      if (!allowed) {
         const plan = await SubscriptionPlan.findOne({ planId: sub.plan }).exec();
         res.status(403).json({
           error: 'Feature not available',
@@ -109,6 +153,7 @@ export function requireFeature(feature: string) {
         return;
       }
 
+      writeFeatureCache(cacheKey, true);
       next();
     } catch (error) {
       console.error('[SubscriptionMiddleware] requireFeature error:', error);

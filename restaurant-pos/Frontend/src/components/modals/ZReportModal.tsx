@@ -6,7 +6,7 @@
 import { FileText, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Product, SystemSettings } from '../../types';
-import { fetchInventoryEvents } from '../../api/client';
+import { fetchInventoryEvents, fetchInventorySummary } from '../../api/client';
 import ClosingAssistant from '../../ai/ClosingAssistant';
 
 interface ZReportData {
@@ -30,12 +30,21 @@ interface ZReportModalProps {
 }
 
 export default function ZReportModal({ isOpen, zReportData, settings, moduleSettings = {} as Record<string, boolean>, products = [], onClose }: ZReportModalProps) {
-  // REAL low-stock count — products at/below their minimum threshold, same
-  // calculation the inventory dashboard uses. Previously the AI closing
-  // assistant was hardcoded lowStockItems={0} so it always said stock was fine.
-  const lowStockItems = products.filter((p: any) =>
-    Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
-  ).length;
+  // REAL low-stock count — inventory items at/below their minimum threshold.
+  // Uses fetchInventorySummary() (type='inventory') instead of pos.products
+  // (which now contains only menu items).
+  const [lowStockItems, setLowStockItems] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    fetchInventorySummary().then((items) => {
+      if (cancelled || !items) return;
+      const low = items.filter((p: any) =>
+        Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
+      ).length;
+      setLowStockItems(low);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // REAL waste cost today — fetch waste events from the backend. Previously
   // hardcoded wasteCost={0}, so the assistant always reported "waste under

@@ -37,13 +37,21 @@ import {
   recalcSchema,
   dateRangeQuerySchema,
   costSettingsSchema,
+  variantCopySchema,
+  effectiveQuerySchema,
 } from '../validators/recipe';
 
 const router = Router();
 const writeRole = requireRole('Owner', 'Manager', 'Inventory');
 
 // ─── Recipes ─────────────────────────────────────────────────────
+// Variant/status surfaces MUST be registered before the /recipes/:id route
+// so 'status', 'variants', 'effective' are not captured as an objectId param.
+router.get('/recipes/status', requireAuth, requireFeature('inventory'), validate({ query: recipeQuerySchema }), cached({ ttlMs: 15_000, tags: ['recipes'] }), r.listRecipeStatus);
+router.get('/recipes/variants/:productId', requireAuth, requireFeature('inventory'), cached({ ttlMs: 15_000, tags: ['recipes'] }), r.listProductVariants);
+router.get('/recipes/effective', requireAuth, requireFeature('inventory'), validate({ query: effectiveQuerySchema }), cached({ ttlMs: 15_000, tags: ['recipes'] }), r.getEffectiveRecipe);
 router.get('/recipes', requireAuth, requireFeature('inventory'), validate({ query: recipeQuerySchema }), cached({ ttlMs: 15_000, tags: ['recipes'] }), r.listRecipes);
+router.get('/recipes/sweep', requireAuth, writeRole, requireFeature('inventory'), r.recipeSweep);
 router.get('/recipes/:id', requireAuth, requireFeature('inventory'), validate({ params: recipeParamsSchema }), r.getRecipe);
 router.get('/recipes/:id/versions', requireAuth, requireFeature('inventory'), validate({ params: recipeParamsSchema }), cached({ ttlMs: 30_000, tags: ['recipes'] }), r.getRecipeVersions);
 router.get('/recipes/:id/cost', requireAuth, requireFeature('inventory'), validate({ params: recipeParamsSchema }), cached({ ttlMs: 15_000, tags: ['recipes'] }), r.calculateCost);
@@ -52,6 +60,8 @@ router.put('/recipes/:id', requireAuth, writeRole, requireFeature('inventory'), 
 router.post('/recipes/:id/activate', requireAuth, writeRole, requireFeature('inventory'), validate({ params: recipeParamsSchema }), r.activateRecipe);
 router.post('/recipes/:id/archive', requireAuth, writeRole, requireFeature('inventory'), validate({ params: recipeParamsSchema }), r.archiveRecipe);
 router.post('/recipes/:id/duplicate', requireAuth, writeRole, requireFeature('inventory'), validate({ params: recipeParamsSchema }), r.duplicateRecipe);
+router.post('/recipes/:id/copy-variant', requireAuth, writeRole, requireFeature('inventory'), validate({ params: recipeParamsSchema, body: variantCopySchema }), r.copyRecipeToVariant);
+router.post('/recipes/:id/reset-to-base', requireAuth, writeRole, requireFeature('inventory'), validate({ params: recipeParamsSchema }), r.resetRecipeToBase);
 router.delete('/recipes/:id', requireAuth, writeRole, requireFeature('inventory'), validate({ params: recipeParamsSchema }), r.deleteRecipe);
 
 // ─── Dependency-aware recalculation ──────────────────────────────

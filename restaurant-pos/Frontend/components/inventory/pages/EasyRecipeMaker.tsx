@@ -33,6 +33,7 @@ import {
   Search, Loader2, CircleAlert, RefreshCw, PartyPopper, Utensils,
 } from 'lucide-react';
 import { useInventory } from '../InventoryManager';
+import ReceiptLoader from '../../ReceiptLoader';
 import {
   fetchProducts, recipeAiQuickCreate, recipeAiSearchInventory,
   createRecipe, fetchCostSettings,
@@ -117,6 +118,11 @@ interface Row {
 
 const uid = () => `r${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
+/** Resolve a product's id regardless of shape (POS state products carry `id`,
+ *  raw backend docs carry `_id`). Fixes recipe save/AI calls for products
+ *  opened from the Products & Catalog grid. */
+const pidOf = (p: any) => String(p?._id || p?.id || '');
+
 // ─── Quantity sanity check (never silently changes anything) ───────
 // A single serving of a dish is unlikely to contain more than ~500g, ~500ml
 // or ~10 pieces of one ingredient. When AI suggests something far bigger we
@@ -187,8 +193,9 @@ export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Pr
     Promise.all([fetchProducts(), fetchCostSettings()])
       .then(([prods, cs]) => {
         if (!alive) return;
+        // fetchProducts() defaults to type=menu, so results are already menu-only.
         const menu = Array.isArray(prods)
-          ? prods.filter((p: any) => p && p.availability !== false && !p.isDeleted && (Number(p.price) || 0) > 0)
+          ? prods.filter((p: any) => p && !p.isDeleted && (Number(p.price) || 0) > 0)
           : [];
         setProducts(menu);
         setSettings(cs || null);
@@ -220,11 +227,12 @@ export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Pr
           optional: false,
         }));
       const saved = await createRecipe({
-        productId: product._id,
-        variantName: selectedVariant || undefined,
+        productId: pidOf(product),
+        variantName: selectedVariant || 'Default',
+        recipeMode: selectedVariant ? 'override' : 'base',
         name: `${product.name}${selectedVariant ? ` (${selectedVariant})` : ''} Recipe`,
         yieldQuantity: 1,
-        yieldUnit: 'plate',
+        yieldUnit: 'unit',
         servingSize: 1,
         components,
         status: 'active',
@@ -310,9 +318,13 @@ export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Pr
           <PickDish
             products={products}
             onPick={(p) => {
-              // Check if a specific variant was selected (from variant buttons)
-              const variantName = (p as any)._selectedVariant || '';
-              const cleanProduct = variantName ? { ...p, _selectedVariant: undefined } : p;
+              // A specific variant button sets _selectedVariant; otherwise fall
+              // back to the first variant, or the virtual 'Default' for
+              // products without variants. There is no base recipe.
+              const explicit = (p as any)._selectedVariant;
+              const variants = (p.variants || []) as Array<{ name: string }>;
+              const variantName = explicit || (variants.length > 0 ? variants[0].name : 'Default');
+              const cleanProduct = explicit ? { ...p, _selectedVariant: undefined } : p;
               setProduct(cleanProduct);
               setSelectedVariant(variantName);
               setRows([]);
@@ -348,6 +360,7 @@ export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Pr
             rows={rows}
             settings={settings}
             saving={saving}
+            selectedVariant={selectedVariant}
             onBack={() => go('check')}
             onSave={() => void handleSave()}
           />
@@ -385,9 +398,8 @@ function PickDish({ products, onPick, onClose }: {
 
   if (products === null) {
     return (
-      <div className="max-w-xl mx-auto mt-16 text-center">
-        <Loader2 className="w-14 h-14 animate-spin text-[var(--brand-color)] mx-auto mb-4" />
-        <p className="text-xl font-bold text-gray-500">Loading your dishes…</p>
+      <div className="max-w-xl mx-auto mt-16 flex flex-col items-center">
+        <ReceiptLoader label="Loading your dishes…" size="lg" />
       </div>
     );
   }
@@ -440,12 +452,6 @@ function PickDish({ products, onPick, onClose }: {
                 <div className="px-3 pb-3 space-y-1.5">
                   <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 text-center">Variants</p>
                   <div className="flex flex-wrap gap-1 justify-center">
-                    <button
-                      onClick={() => onPick(p)}
-                      className="px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-blue-50 text-[10px] font-bold text-gray-600 hover:text-[var(--brand-color)] transition-all cursor-pointer"
-                    >
-                      Base
-                    </button>
                     {variants.map((v) => (
                       <button
                         key={v.name}
@@ -614,7 +620,7 @@ function HowScreen({ product, inventoryItems, onRows, selectedVariant }: {
     setLoading(true);
     setError('');
     try {
-      const draft = await recipeAiQuickCreate(product._id, trimmed);
+      const draft = await recipeAiQuickCreate(pidOf(product), trimmed);
       if (!draft) { setError('Could not reach the AI — add the ingredients one by one instead.'); return; }
       const rows: Row[] = [];
       const withPricing = (m: any): Partial<Row> => {
@@ -657,7 +663,7 @@ function HowScreen({ product, inventoryItems, onRows, selectedVariant }: {
     } finally {
       setLoading(false);
     }
-  }, [product._id, manual, onRows]);
+  }, [pidOf(product), manual, onRows]);
 
   // ─── Tap-to-add picker state ──────────────────────────────────────
   const [pickQ, setPickQ] = useState('');
@@ -1025,15 +1031,21 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
 // ────────────────────────────────────────────────────────────────────
 // STEP 4 — THE MONEY (plain words + colour, one-tap save)
 // ────────────────────────────────────────────────────────────────────
-function MoneyScreen({ product, rows, settings, saving, onBack, onSave }: {
+function MoneyScreen({ product, rows, settings, saving, onBack, onSave, selectedVariant }: {
   product: any;
   rows: Row[];
   settings: any | null;
   saving: boolean;
   onBack: () => void;
   onSave: () => void;
+  selectedVariant?: string;
 }) {
-  const price = Number(product.price) || 0;
+  // Price the selected VARIANT (Half ₹120 vs Full ₹179.98) — never the base
+  // price when a variant is being configured.
+  const variantPrice = selectedVariant
+    ? (product.variants || []).find((v: any) => v.name === selectedVariant)?.price
+    : undefined;
+  const price = Number(variantPrice ?? product.price) || 0;
   const { variable } = useWizardMath(rows, settings);
   const keep = money(price - variable);
   const margin = price > 0 ? keep / price * 100 : 0;

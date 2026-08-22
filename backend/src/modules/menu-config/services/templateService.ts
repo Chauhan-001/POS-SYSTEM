@@ -377,6 +377,7 @@ export async function usage(
   const tid = new mongoose.Types.ObjectId(templateId);
   const products = await Product.find({
     restaurantId: rid,
+    type: 'menu',
     isDeleted: false,
     $or: [
       { 'menuConfig.variantConfigurations.templateId': tid },
@@ -407,6 +408,7 @@ async function usageCountsForTemplates(restaurantId: string, templateIds: string
   const tids = templateIds.map((t) => new mongoose.Types.ObjectId(t));
   const products = await Product.find({
     restaurantId: rid,
+    type: 'menu',
     isDeleted: false,
     $or: [
       { 'menuConfig.variantConfigurations.templateId': { $in: tids } },

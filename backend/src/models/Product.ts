@@ -25,6 +25,19 @@
 
 import mongoose, { Schema, Document } from 'mongoose';
 
+/** A single stock batch for FIFO/expiry tracking. */
+export interface IStockBatch {
+  batchNumber?: string;
+  /** YYYY-MM-DD; '' means the batch has no expiry (consumed LAST under FIFO). */
+  expiryDate?: string;
+  /** Remaining quantity in this batch (same unit as the product). */
+  quantity: number;
+  /** YYYY-MM-DD the batch was received (tie-break for same expiry). */
+  receivedDate?: string;
+  /** Per-unit purchase cost of this batch. */
+  cost?: number;
+}
+
 /** A single learned alias entry, tracked for self-improvement analytics. */
 export interface ILearnedAlias {
   alias: string;
@@ -77,6 +90,8 @@ export interface IMenuConfig {
   addOnConfigurations: IProductConfigRef[];
 }
 
+export type ProductType = 'menu' | 'inventory';
+
 export interface IProduct extends Document {
   name: string;
   code: string;
@@ -84,6 +99,13 @@ export interface IProduct extends Document {
   category: string;
   image?: string;
   gstPercent: number;
+  /**
+   * Authoritative product type discriminator.
+   *  - 'menu'     → sellable menu item (displayed in billing, catalog, customer site)
+   *  - 'inventory' → raw material / ingredient (managed by the Inventory module)
+   * Defaults to 'menu' for backward compatibility with legacy documents.
+   */
+  type: ProductType;
   /**
    * Owner-facing product classification used to AUTO-RECOMMEND the tax
    * treatment at registration (classification → configured restaurant tax
@@ -93,6 +115,8 @@ export interface IProduct extends Document {
   taxClassification?: string;
   /** How gstPercent was assigned: 'automatic' (recommended from config) or 'manual' (owner override). */
   taxSource?: 'automatic' | 'manual';
+  /** Availability for menu items (sold-out toggle). For inventory items this
+   *  is always false. The `type` field is the authoritative discriminator. */
   availability: boolean;
   favorite?: boolean;
   /**
@@ -116,6 +140,10 @@ export interface IProduct extends Document {
   reorderLevel: number;
   /** Weighted average cost per unit (updated on every purchase) */
   averageCost: number;
+  /** Last purchase prices (per unit, max 10) — averageCost = their rolling
+   *  average, so the value reflects recent purchase prices instead of an
+   *  all-time weighted average that can never shake off old prices. */
+  lastPurchasePrices?: number[];
   /** Default supplier name */
   supplier?: string;
   /** Storage location (e.g. 'Fridge B', 'Shelf 3') */
@@ -124,10 +152,14 @@ export interface IProduct extends Document {
   notes?: string;
   /** Barcode (EAN/UPC/QR content) — unique per restaurant; used for scanner lookup */
   barcode?: string;
-  /** Expiry date (YYYY-MM-DD) for perishable items */
+  /** Expiry date (YYYY-MM-DD) for perishable items — reflects the OLDEST
+   *  remaining batch so expiry warnings fire as soon as any batch is due. */
   expiryDate?: string;
   /** Batch number for FIFO/expiry tracking */
   batchNumber?: string;
+  /** Per-batch stock for FIFO expiry tracking. currentStock = sum(quantity).
+   *  Deductions consume the oldest-expiry batch first ('' = no expiry → last). */
+  batches?: IStockBatch[];
   /** Meal combo: this product is a bundle of other products sold at comboPrice. */
   isCombo?: boolean;
   /** Meal combo: component product ids. */
@@ -231,6 +263,7 @@ const ProductSchema = new Schema<IProduct>(
     gstPercent: { type: Number, default: 5, min: 0, max: 100 },
     taxClassification: { type: String, default: '', trim: true },
     taxSource: { type: String, default: 'automatic', enum: ['automatic', 'manual'] },
+    type: { type: String, enum: ['menu', 'inventory'], default: 'menu', index: true },
     availability: { type: Boolean, default: true },
     favorite: { type: Boolean, default: false },
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', default: null, index: true },
@@ -245,12 +278,28 @@ const ProductSchema = new Schema<IProduct>(
     maxStock: { type: Number, default: 1000, min: 0 },
     reorderLevel: { type: Number, default: 0, min: 0 },
     averageCost: { type: Number, default: 0, min: 0 },
+    lastPurchasePrices: { type: [Number], default: [] },
     supplier: { type: String, trim: true, default: '' },
     storageLocation: { type: String, trim: true, default: '' },
     notes: { type: String, trim: true, default: '' },
     barcode: { type: String, trim: true, uppercase: true, default: '' },
     expiryDate: { type: String, trim: true, default: '' },
     batchNumber: { type: String, trim: true, default: '' },
+    // Per-batch FIFO/expiry tracking. currentStock is the sum of batch
+    // quantities; deductions consume the oldest-expiry batch first.
+    batches: {
+      type: [new Schema<IStockBatch>(
+        {
+          batchNumber: { type: String, trim: true, default: '' },
+          expiryDate: { type: String, trim: true, default: '' },
+          quantity: { type: Number, default: 0, min: 0 },
+          receivedDate: { type: String, trim: true, default: '' },
+          cost: { type: Number, default: 0, min: 0 },
+        },
+        { _id: false }
+      )],
+      default: [],
+    },
     // ─── Meal Combo fields (product-level bundle, synced to a backing Offer) ───
     isCombo: { type: Boolean, default: false },
     comboComponentIds: [{ type: Schema.Types.ObjectId, ref: 'Product' }],
@@ -280,6 +329,17 @@ const ProductSchema = new Schema<IProduct>(
 
 ProductSchema.index({ category: 1, availability: 1 });
 ProductSchema.index({ code: 1, isDeleted: 1 });
+// Core tenant-scoped queries filter by restaurantId + isDeleted — add compound
+// index to avoid full collection scans on every product list / availability call.
+ProductSchema.index({ restaurantId: 1, isDeleted: 1 });
+// Product type discriminator — the primary filter for separating menu items
+// from inventory items. Compound with restaurantId + isDeleted for the
+// most common query pattern: `type + restaurantId + isDeleted`.
+ProductSchema.index({ type: 1, restaurantId: 1, isDeleted: 1 });
+// Inventory summary query: type + tenant + sort. The compound index
+// serves the equality filter (restaurantId + type) and the sort (name)
+// in a single index scan — no in-memory sort, no fetch-phase filter.
+ProductSchema.index({ restaurantId: 1, type: 1, name: 1 });
 // Reusable menu-config: "which products use template X" is a tenant-scoped
 // query over each ref array — one compound index per array keeps it indexed.
 ProductSchema.index({ restaurantId: 1, 'menuConfig.variantConfigurations.templateId': 1 });

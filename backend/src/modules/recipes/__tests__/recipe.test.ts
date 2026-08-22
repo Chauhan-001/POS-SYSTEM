@@ -41,6 +41,7 @@ async function makeIngredient(name: string, unit: string, averageCost: number, r
     code: `INV-${name.toUpperCase().replace(/\s+/g, '')}`,
     price: 0,
     category: 'Inventory',
+    type: 'inventory',
     availability: false,
     restaurantId,
     currentStock: 100,
@@ -168,6 +169,7 @@ describe('RecipeCostEngine', () => {
     dish = await makeMenuProduct('Paneer Butter Masala', 280);
 
     const recipe = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'PBM v1',
       yieldQuantity: 1,
@@ -192,6 +194,7 @@ describe('RecipeCostEngine', () => {
     paneer = await makeIngredient('Paneer', 'kg', 100);
     dish = await makeMenuProduct('Wastage Dish', 100);
     const recipe = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       yieldQuantity: 1,
       yieldUnit: 'plate',
@@ -206,6 +209,7 @@ describe('RecipeCostEngine', () => {
   it('scales a sub-recipe by the required yield portion', async () => {
     const gravyBase = await makeIngredient('Gravy Base', 'kg', 40);
     gravy = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(gravyBase._id),
       name: 'Butter Masala Gravy',
       yieldQuantity: 1,
@@ -218,6 +222,7 @@ describe('RecipeCostEngine', () => {
 
     dish = await makeMenuProduct('Paneer Butter Masala', 280);
     const dishRecipe = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'PBM',
       yieldQuantity: 1,
@@ -244,6 +249,7 @@ describe('RecipeCostEngine', () => {
     const b = await makeIngredient('B', 'kg', 10);
     // A starts as a plain ingredient recipe.
     const ra = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(a._id),
       name: 'Recipe A',
       yieldQuantity: 1,
@@ -253,6 +259,7 @@ describe('RecipeCostEngine', () => {
 
     // B references A (fine — acyclic).
     const rb = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(b._id),
       name: 'Recipe B',
       yieldQuantity: 1,
@@ -277,6 +284,7 @@ describe('RecipeCostEngine', () => {
     const dish = await makeMenuProduct('Isolation Dish', 100);
     await expect(
       recipeService.create(REST_A, {
+        variantName: 'Default',
         productId: String(dish._id),
         name: 'Cross Tenant',
         yieldQuantity: 1,
@@ -292,6 +300,7 @@ describe('RecipeCostEngine', () => {
     paneer = await makeIngredient('Paneer', 'kg', 380);
     dish = await makeMenuProduct('Paneer Dish', 280);
     const recipe = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'Paneer Dish',
       status: 'active',
@@ -324,6 +333,7 @@ describe('RecipeCostEngine', () => {
     paneer = await makeIngredient('Paneer', 'kg', 100);
     dish = await makeMenuProduct('Same Dish', 200);
     const r1 = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'Same Dish v1',
       status: 'active',
@@ -332,6 +342,7 @@ describe('RecipeCostEngine', () => {
       components: [{ inventoryItemId: String(paneer._id), itemName: 'Paneer', unit: 'g', quantity: 200 }],
     }, { operator: 'owner' });
     const r2 = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'Same Dish v2',
       yieldQuantity: 1,
@@ -351,6 +362,7 @@ describe('RecipeCostEngine', () => {
     paneer = await makeIngredient('Paneer', 'kg', 100);
     dish = await makeMenuProduct('Dup Dish', 200);
     const r = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'Dup Dish',
       yieldQuantity: 1,
@@ -375,6 +387,7 @@ describe('ConsumptionService', () => {
     paneer = await makeIngredient('Paneer', 'kg', 380);
     dish = await makeMenuProduct('Paneer Butter Masala', 280);
     await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'PBM',
       status: 'active',
@@ -425,6 +438,7 @@ describe('ConsumptionService', () => {
     paneer = await makeIngredient('Paneer', 'kg', 380);
     dish = await makeMenuProduct('Paneer Butter Masala', 280);
     await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'PBM',
       status: 'active',
@@ -464,6 +478,7 @@ describe('ConsumptionService', () => {
     paneer = await makeIngredient('Paneer', 'kg', 380);
     dish = await makeMenuProduct('Paneer Butter Masala', 280);
     await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'PBM',
       status: 'active',
@@ -508,6 +523,7 @@ describe('RecalculateService (dependency-aware)', () => {
     const dishB = await makeMenuProduct('Dish B', 200);
 
     const ra = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dishA._id),
       name: 'Uses Paneer',
       yieldQuantity: 1,
@@ -515,6 +531,7 @@ describe('RecalculateService (dependency-aware)', () => {
       components: [{ inventoryItemId: String(paneer._id), itemName: 'Paneer', unit: 'g', quantity: 100 }],
     }, { operator: 'owner' });
     await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dishB._id),
       name: 'Uses Milk',
       yieldQuantity: 1,
@@ -549,6 +566,7 @@ describe('layered cost model (CostSettings)', () => {
     });
     const paneer = await makeIngredient('Paneer', 'kg', 380);
     const recipe = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'Layered',
       yieldQuantity: 1,
@@ -578,6 +596,7 @@ describe('layered cost model (CostSettings)', () => {
   it('settings change triggers restaurant-wide recalculation with layered fields', async () => {
     const paneer = await makeIngredient('Paneer', 'kg', 100);
     const created = await recipeService.create(REST_A, {
+      variantName: 'Default',
       productId: String(dish._id),
       name: 'Affected',
       yieldQuantity: 1,
@@ -617,6 +636,7 @@ describe('ProfitabilityService.billEconomics (order-screen offer strip)', () => 
   ) {
     const created = await recipeService.create(restaurantId, {
       productId: String(dish._id),
+      variantName: 'Default',
       name,
       yieldQuantity: 1,
       yieldUnit: 'plate',

@@ -11,6 +11,14 @@ const learnedAliasSchema = z.object({
   restaurantId: z.string().optional(),
 });
 
+const stockBatchSchema = z.object({
+  batchNumber: z.string().max(100).optional(),
+  expiryDate: z.string().max(20).optional(),
+  quantity: z.number().min(0),
+  receivedDate: z.string().max(20).optional(),
+  cost: z.number().min(0).optional(),
+});
+
 export const createProductSchema = z.object({
   name: nonEmptyString.max(200),
   code: z.string().min(1).max(50),
@@ -23,6 +31,9 @@ export const createProductSchema = z.object({
   // gstPercent, so billing/tax calculation is unchanged and stays deterministic.
   taxClassification: z.enum(['prepared_food', 'beverage', 'packaged', 'other']).optional(),
   taxSource: z.enum(['automatic', 'manual']).optional(),
+  // Product classification: 'menu' (billing catalog) or 'inventory' (raw
+  // material / pre-manufactured stock). Defaults to 'menu' at the model level.
+  type: z.enum(['menu', 'inventory']).optional(),
   availability: z.boolean().optional(),
   favorite: z.boolean().optional(),
   branchPrice: z.record(z.string(), z.number().min(0)).optional(),
@@ -40,6 +51,9 @@ export const createProductSchema = z.object({
   barcode: z.string().max(100).optional(),
   expiryDate: z.string().max(20).optional(),
   batchNumber: z.string().max(100).optional(),
+  // Per-batch FIFO/expiry tracking. The stock engine owns this on movement;
+  // API callers may read it and (rarely) write corrected batches.
+  batches: z.array(stockBatchSchema).max(200).optional(),
   // ─── Voice Inventory Resolution Fields ───────────────────────────
   voiceAliases: aliasListSchema.optional(),
   searchAliases: aliasListSchema.optional(),
@@ -107,6 +121,10 @@ export const adjustStockSchema = z.object({
 export const productQuerySchema = z.object({
   category: optString,
   availability: z.enum(['true', 'false']).optional(),
+  // Product classification filter — 'menu' (billing catalog) or 'inventory'
+  // (raw materials). The controller defaults to 'menu' when absent.
+  type: z.enum(['menu', 'inventory']).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
 }).optional();
 
 export const productParamsSchema = z.object({

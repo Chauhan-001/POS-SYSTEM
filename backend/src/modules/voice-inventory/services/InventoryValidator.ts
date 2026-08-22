@@ -126,7 +126,9 @@ export async function validateInventoryAction(
   try {
     // ALWAYS scoped to the authenticated restaurant — a voice command must
     // never see or be validated against another tenant's catalog.
+    // Filter by type='inventory' so only raw materials are fetched.
     const products = await Product.find({
+      type: 'inventory',
       restaurantId: new mongoose.Types.ObjectId(context.restaurantId),
       ...(context.branchId
         ? { branchId: new mongoose.Types.ObjectId(context.branchId) }
@@ -264,7 +266,8 @@ export async function getCurrentStock(
   branchId?: string
 ): Promise<{ stock: number; unit: string } | null> {
   try {
-    const query: any = { name: itemName };
+    const query: any = { name: itemName, type: 'inventory' };
+    if (restaurantId) query.restaurantId = new mongoose.Types.ObjectId(restaurantId);
     if (branchId) query.branchId = branchId;
 
     const product = await Product.findOne(query)

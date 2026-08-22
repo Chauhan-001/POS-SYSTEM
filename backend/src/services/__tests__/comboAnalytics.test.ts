@@ -75,6 +75,7 @@ async function makeIngredient(name: string, averageCost: number, restaurantId = 
     price: 0,
     category: 'Inventory',
     gstPercent: 0,
+    type: 'inventory',
     availability: false,
     restaurantId,
     currentStock: 100,

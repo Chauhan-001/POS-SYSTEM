@@ -32,6 +32,7 @@ async function makeProduct(name: string, unit: string, averageCost: number, rest
     code: `AI-${name.toUpperCase().replace(/\s+/g, '')}-${Math.random().toString(36).slice(2, 8)}`,
     price: 0,
     category: 'Inventory',
+    type: 'inventory',
     availability: false,
     restaurantId,
     currentStock: 100,

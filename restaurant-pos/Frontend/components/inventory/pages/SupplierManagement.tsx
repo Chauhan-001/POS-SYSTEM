@@ -265,7 +265,7 @@ export default function SupplierManagement({ onNavigate }: { onNavigate?: (page:
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={() => { setSelected(null); onNavigate?.('purchase'); }}
+                  <button onClick={() => { setSelected(null); onNavigate?.('items'); }}
                     className="flex-1 py-3 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2">
                     <ShoppingCart className="w-4 h-4" /> New Order
                   </button>

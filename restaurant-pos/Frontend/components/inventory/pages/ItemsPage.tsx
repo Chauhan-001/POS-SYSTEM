@@ -1,24 +1,26 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Plus, Package, Edit2, Trash2, Search, X, History, ShoppingCart,
-  Truck, Tag, Hourglass, Activity as ActivityIcon, AlertTriangle, Check, PackageX,
+  Truck, Tag, Hourglass, Activity as ActivityIcon, AlertTriangle, Check, PackageX, Loader2, Info,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Modal from '../components/Modal';
 import StatusBadge from '../components/StatusBadge';
 import ImageInput from '../../common/ImageInput';
+import ReceiptLoader from '../../ReceiptLoader';
 import type { InventoryItem, Purchase, TimelineEntry } from '../types';
 import { daysUntilExpiry } from '../expiryUtils';
 import { useNotify, useInventory, usePurchasesCtx, useInventoryEventsCtx } from '../InventoryManager';
+import { createPurchase, fetchSuppliers, createSupplier, adjustProductStock } from '../../../src/api/client';
 
 type ItemForm = {
   name: string; category: string; unit: string; currentStock: string;
-  minStock: string; maxStock: string; averageCost: string; supplier: string; image: string;
+  minStock: string; maxStock: string; averageCost: string; image: string;
 };
 
 const EMPTY_FORM: ItemForm = {
   name: '', category: 'Dairy', unit: 'kg', currentStock: '0',
-  minStock: '0', maxStock: '100', averageCost: '0', supplier: '', image: ''
+  minStock: '0', maxStock: '100', averageCost: '0', image: ''
 };
 
 function computeStatus(item: { currentStock: number; minStock: number }): InventoryItem['status'] {
@@ -62,13 +64,21 @@ const EVENT_META: Record<string, { label: string; color: string; sign: string }>
 
 const eventMeta = (type: string) => EVENT_META[type] || { label: type, color: 'bg-gray-50 text-gray-600 border-gray-100', sign: '±' };
 
-export default function ItemsPage() {
+export default function ItemsPage({ initialSearch = '' }: { initialSearch?: string }) {
   const notify = useNotify();
-  const { items, addItem, updateItem, removeItem, removeStock } = useInventory();
+  const { items, synced, addItem, updateItem, removeItem, removeStock, refreshItems } = useInventory();
   const purchasesCtx = usePurchasesCtx();
   const eventsCtx = useInventoryEventsCtx();
+  // Add-stock popup (per item card) — records a purchase so the item's stock
+  // rises through the stock engine and appears in the item's history.
+  const [stockItem, setStockItem] = useState<InventoryItem | null>(null);
+  const [stockQty, setStockQty] = useState('1');
+  const [stockPrice, setStockPrice] = useState('');
+  const [stockSupplier, setStockSupplier] = useState('');
+  const [stockExpiry, setStockExpiry] = useState('');
+  const [savingStock, setSavingStock] = useState(false);
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch);
   const [categoryFilter, setCategoryFilter] = useState('All');
   // Expiry view: 'all' (default grid) | 'expiring' (≤7 days) | 'expired' (past due).
   const [expiryView, setExpiryView] = useState<ExpiryView>('all');
@@ -156,18 +166,22 @@ export default function ItemsPage() {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setFormErrors({});
+    setShowNewCatInput(false);
+    setNewCatName('');
   };
 
   const openEdit = (item: InventoryItem) => {
     setModalMode('edit');
     setEditingId(item.id);
     setForm({
-      name: item.name, category: item.category, unit: item.unit,
-      currentStock: String(item.currentStock), minStock: String(item.minStock),
+      name: item.name, category: item.category, unit: item.unit, currentStock: String(item.currentStock),
+      minStock: String(item.minStock),
       maxStock: String(item.maxStock), averageCost: String(item.averageCost),
-      supplier: item.supplier, image: item.image
+      image: item.image
     });
     setFormErrors({});
+    setShowNewCatInput(false);
+    setNewCatName('');
   };
 
   const closeModal = () => {
@@ -175,6 +189,8 @@ export default function ItemsPage() {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setFormErrors({});
+    setShowNewCatInput(false);
+    setNewCatName('');
   };
 
   const updateField = (field: keyof ItemForm, value: string) => {
@@ -185,7 +201,6 @@ export default function ItemsPage() {
   const validate = (): boolean => {
     const errs: Partial<Record<keyof ItemForm, string>> = {};
     if (!form.name.trim()) errs.name = 'Name is required';
-    if (!form.supplier.trim()) errs.supplier = 'Supplier is required';
     const stock = Number(form.currentStock);
     const min = Number(form.minStock);
     const cost = Number(form.averageCost);
@@ -196,7 +211,7 @@ export default function ItemsPage() {
     return Object.keys(errs).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) return;
     const currentStock = Number(form.currentStock);
     const minStock = Number(form.minStock);
@@ -206,13 +221,26 @@ export default function ItemsPage() {
     const today = new Date().toISOString().slice(0, 10);
 
     if (modalMode === 'edit' && editingId) {
-      updateItem(editingId, { name: form.name, category: form.category, unit: form.unit, currentStock, minStock, maxStock, averageCost, supplier: form.supplier, image: form.image, status, lastUpdated: today });
+      const existing = items.find(i => i.id === editingId);
+      const delta = currentStock - (existing?.currentStock ?? 0);
+      // Stock edits go through the stock ENGINE (delta) so FIFO batches + the
+      // event ledger stay consistent — never a raw currentStock overwrite that
+      // would desync batches[]. Adjust FIRST, then save the other fields.
+      if (delta !== 0 && /^[a-fA-F0-9]{24}$/.test(editingId)) {
+        try {
+          await adjustProductStock(editingId, { delta, type: 'adjustment', reason: 'Manual stock edit' });
+        } catch {
+          notify('Stock edit failed — check your connection', 'warning');
+          return;
+        }
+      }
+      updateItem(editingId, { name: form.name, category: form.category, unit: form.unit, currentStock, minStock, maxStock, averageCost, image: form.image, status, lastUpdated: today });
       notify(`${form.name} updated`, 'success');
     } else {
       addItem({
         id: generateId(), name: form.name, category: form.category, unit: form.unit,
         image: form.image || '', currentStock, minStock, maxStock, averageCost,
-        supplier: form.supplier, status, lastUpdated: today
+        supplier: '', status, lastUpdated: today
       });
       notify(`${form.name} added`, 'success');
     }
@@ -224,6 +252,88 @@ export default function ItemsPage() {
     removeItem(deleteTarget.id);
     notify(`${deleteTarget.name} removed`, 'warning');
     setDeleteTarget(null);
+  };
+
+  const openAddStock = (item: InventoryItem) => {
+    setStockItem(item);
+    setStockQty('1');
+    setStockPrice(item.averageCost > 0 ? String(item.averageCost) : '');
+    setStockSupplier(item.supplier || '');
+    setStockExpiry('');
+  };
+
+  /** Best-effort: if the entered supplier is a real name not yet in the
+   *  Supplier module, create it there. Never fails the purchase. */
+  const ensureSupplierCreated = async (name: string, itemName: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || BLANK_SUPPLIERS.has(trimmed)) return;
+    try {
+      const existing = await fetchSuppliers({ limit: 200 });
+      const list = Array.isArray(existing) ? existing : [];
+      if (list.some((s: any) => String(s.name || '').trim().toLowerCase() === trimmed.toLowerCase())) return;
+      await createSupplier({
+        name: trimmed,
+        phone: '',
+        email: '',
+        address: '',
+        items: [itemName],
+        status: 'active',
+      });
+    } catch {
+      // offline / conflict — the purchase still stands; Suppliers refreshes later.
+    }
+  };
+
+  const handleAddStock = async () => {
+    if (!stockItem) return;
+    const qty = Number(stockQty);
+    if (!(qty > 0)) { notify('Enter a quantity', 'warning'); return; }
+    const unit = stockItem.unit || 'pcs';
+    const price = Number(stockPrice) || 0;
+    const typedSupplier = stockSupplier.trim();
+    const supplier = typedSupplier || 'Local Vendor';
+    const expiry = stockExpiry.trim();
+    setSavingStock(true);
+    try {
+      const created = await createPurchase({
+        item: stockItem.name,
+        quantity: qty,
+        unit,
+        price,
+        supplier,
+        expiryDate: expiry || undefined,
+        date: new Date().toISOString().slice(0, 10),
+        status: 'completed',
+      });
+      if (created && created._id) {
+        purchasesCtx.addPurchase({
+          id: created._id,
+          supplier: created.supplier || supplier,
+          item: created.item || stockItem.name,
+          quantity: created.quantity ?? qty,
+          unit: created.unit || unit,
+          price: created.price ?? price,
+          total: created.total ?? qty * price,
+          date: created.date || new Date().toISOString().slice(0, 10),
+          status: created.status || 'completed',
+        });
+      }
+      // New supplier detected → add to the Supplier module.
+      if (typedSupplier) void ensureSupplierCreated(typedSupplier, stockItem.name);
+      // The stock engine has already persisted the batch expiry onto the server
+      // product (derived from the earliest remaining batch), so refreshItems()
+      // below re-fetches it and the Expiry view reflects it. Do NOT call
+      // updateItem() here — it sends the full inventoryItemToProduct payload
+      // (stale currentStock/averageCost from the render closure) and would
+      // overwrite the stock engine's updates.
+      await refreshItems();
+      notify(`${qty} ${unit} ${stockItem.name} added`, 'success');
+      setStockItem(null);
+    } catch {
+      notify('Could not add stock — check your connection', 'warning');
+    } finally {
+      setSavingStock(false);
+    }
   };
 
   /** Two-step one-tap Discard: first tap arms the button, second tap executes.
@@ -405,7 +515,11 @@ export default function ItemsPage() {
           <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="text-center py-20 bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)]"
           >
-            {expiryView === 'expired' ? (
+            {!synced ? (
+              <div className="py-12 flex flex-col items-center">
+                <ReceiptLoader label="Loading inventory…" />
+              </div>
+            ) : expiryView === 'expired' ? (
               <>
                 <AlertTriangle className="w-12 h-12 text-gray-500 mx-auto mb-3" />
                 <p className="text-sm font-semibold text-gray-500">No expired items 🎉</p>
@@ -482,43 +596,57 @@ export default function ItemsPage() {
                   </div>
 
                   {/* Quick actions */}
-                  <div className="flex items-center gap-2 pt-3 border-t border-[var(--color-border-default)]">
-                    <button onClick={() => openEdit(item)}
-                      className="flex-1 py-2 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/30 hover:text-[var(--brand-color)] hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center gap-1"
+                  <div className="pt-3 border-t border-[var(--color-border-default)] space-y-2">
+                    <button onClick={() => openAddStock(item)}
+                      className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-[var(--brand-color)] to-[var(--brand-color)]/90 text-white text-xs font-bold shadow-sm hover:shadow-md hover:brightness-110 active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2 group"
                     >
-                      <Edit2 className="w-3 h-3" /> Edit
+                      <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                        <Plus className="w-3.5 h-3.5 group-hover:scale-125 transition-transform" />
+                      </span>
+                      Add Stock
+                      <span className="ml-auto text-[9px] font-mono bg-white/20 px-1.5 py-0.5 rounded-full">
+                        {item.currentStock} {item.unit}
+                      </span>
                     </button>
-                    <button onClick={() => setHistoryItem(item)}
-                      className="py-2 px-3 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-blue-500 hover:border-[var(--brand-color)]/30 hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center gap-1"
-                      title={`View add & stock history of ${item.name}`}
-                    >
-                      <History className="w-3 h-3" />
-                    </button>
-                    {item.expiryDate && daysUntilExpiry(item.expiryDate) <= 7 && (
-                      <button onClick={() => handleDiscard(item)} disabled={discardingId === item.id}
-                        className={`py-2 px-2.5 rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shrink-0 ${
-                          armDiscardId === item.id
-                            ? 'bg-[var(--color-red-600-solid)] text-white shadow-sm'
-                            : daysUntilExpiry(item.expiryDate) < 0
-                              ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
-                              : 'bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100'
-                        }`}
-                        title={armDiscardId === item.id ? 'Tap again to confirm discard' : 'Discard expired batch'}
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => openEdit(item)}
+                        className="flex-1 py-2 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-gray-500 hover:border-[var(--brand-color)]/30 hover:text-[var(--brand-color)] hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center gap-1"
                       >
-                        {discardingId === item.id ? (
-                          <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                        ) : armDiscardId === item.id ? (
-                          <><Check className="w-3 h-3" /> Confirm?</>
-                        ) : (
-                          <><PackageX className="w-3 h-3" /> Discard</>
-                        )}
+                        <Edit2 className="w-3 h-3" /> Edit
                       </button>
-                    )}
-                    <button onClick={() => setDeleteTarget(item)}
-                      className="py-2 px-3 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-red-400 hover:border-red-300 hover:bg-red-50 transition-all cursor-pointer"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                      <button onClick={() => setHistoryItem(item)}
+                        className="flex-1 py-2 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-blue-500 hover:border-[var(--brand-color)]/30 hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center gap-1"
+                        title={`View add & stock history of ${item.name}`}
+                      >
+                        <History className="w-3 h-3" /> History
+                      </button>
+                      {item.expiryDate && daysUntilExpiry(item.expiryDate) <= 7 && (
+                        <button onClick={() => handleDiscard(item)} disabled={discardingId === item.id}
+                          className={`py-2 px-2.5 rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shrink-0 ${
+                            armDiscardId === item.id
+                              ? 'bg-[var(--color-red-600-solid)] text-white shadow-sm'
+                              : daysUntilExpiry(item.expiryDate) < 0
+                                ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
+                                : 'bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100'
+                          }`}
+                          title={armDiscardId === item.id ? 'Tap again to confirm discard' : 'Discard expired batch'}
+                        >
+                          {discardingId === item.id ? (
+                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          ) : armDiscardId === item.id ? (
+                            <><Check className="w-3 h-3" /> Confirm?</>
+                          ) : (
+                            <><PackageX className="w-3 h-3" /> Discard</>
+                          )}
+                        </button>
+                      )}
+                      <button onClick={() => setDeleteTarget(item)}
+                        className="py-2 px-3 border border-[var(--color-border-default)] rounded-xl text-[10px] font-semibold text-red-400 hover:border-red-300 hover:bg-red-50 transition-all cursor-pointer shrink-0"
+                        title="Remove item"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -542,16 +670,33 @@ export default function ItemsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Category</label>
-                <div className="flex gap-2">
-                  <input type="text" list="inventory-category-options" value={form.category}
-                    onChange={e => updateField('category', e.target.value)}
-                    className="flex-1 px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] bg-[var(--color-bg-white)]"
-                    placeholder="Type or pick a category…" />
-                  <datalist id="inventory-category-options">
-                    {categories.map(c => <option key={c} value={c} />)}
-                  </datalist>
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1">Type a new name to create or rename this item's category.</p>
+                <select
+                  value={form.category}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === '__new__') setShowNewCatInput(true);
+                    else { updateField('category', v); setShowNewCatInput(false); }
+                  }}
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] bg-[var(--color-bg-white)]"
+                >
+                  {!form.category && <option value="" disabled>Select category…</option>}
+                  {form.category && !categories.includes(form.category) && <option value={form.category}>{form.category}</option>}
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="__new__">➕ New category…</option>
+                </select>
+                {showNewCatInput && (
+                  <div className="flex gap-2 mt-2">
+                    <input type="text" value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                      className="flex-1 px-3 py-2 rounded-lg border border-[var(--brand-color)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 bg-[var(--color-bg-white)]"
+                      placeholder="New category name…" autoFocus
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCategory(newCatName); } if (e.key === 'Escape') setShowNewCatInput(false); }} />
+                    <button onClick={() => addCategory(newCatName)}
+                      className="px-3 py-2 bg-[var(--brand-color)] text-white rounded-lg text-[10px] font-bold hover:bg-[var(--color-primary-hover)] cursor-pointer">Add</button>
+                  </div>
+                )}
+                {!showNewCatInput && (
+                  <p className="text-[10px] text-gray-400 mt-1">Includes every category on your menu — pick one or add a new one.</p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Unit</label>
@@ -564,13 +709,15 @@ export default function ItemsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Current Stock</label>
-                <input type="number" min="0" value={form.currentStock} onChange={e => updateField('currentStock', e.target.value)}
-                  className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all ${formErrors.currentStock ? 'border-red-300 bg-red-50' : 'border-[var(--color-border-input)] bg-[var(--color-bg-white)]'}`} />
-                {formErrors.currentStock && <p className="text-[10px] text-red-500 mt-1">{formErrors.currentStock}</p>}
-              </div>
+            <div className={`grid ${modalMode === 'edit' ? 'grid-cols-3' : 'grid-cols-2'} gap-4`}>
+              {modalMode === 'edit' && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-700 block mb-1.5">Current Stock</label>
+                  <input type="number" min="0" step="any" value={form.currentStock} onChange={e => updateField('currentStock', e.target.value)}
+                    className={`w-full px-4 py-3 rounded-xl border text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all ${formErrors.currentStock ? 'border-red-300 bg-red-50' : 'border-[var(--color-border-input)] bg-[var(--color-bg-white)]'}`} />
+                  {formErrors.currentStock && <p className="text-[10px] text-red-500 mt-1">{formErrors.currentStock}</p>}
+                </div>
+              )}
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1.5">Min Stock</label>
                 <input type="number" min="0" value={form.minStock} onChange={e => updateField('minStock', e.target.value)}
@@ -584,21 +731,24 @@ export default function ItemsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Avg Cost (₹)</label>
-                <input type="number" min="0" step="0.01" value={form.averageCost} onChange={e => updateField('averageCost', e.target.value)}
-                  className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all ${formErrors.averageCost ? 'border-red-300 bg-red-50' : 'border-[var(--color-border-input)] bg-[var(--color-bg-white)]'}`} />
-                {formErrors.averageCost && <p className="text-[10px] text-red-500 mt-1">{formErrors.averageCost}</p>}
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier</label>
-                <input type="text" value={form.supplier} onChange={e => updateField('supplier', e.target.value)}
-                  className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all ${formErrors.supplier ? 'border-red-300 bg-red-50' : 'border-[var(--color-border-input)] bg-[var(--color-bg-white)]'}`}
-                  placeholder="Supplier name" />
-                {formErrors.supplier && <p className="text-[10px] text-red-500 mt-1">{formErrors.supplier}</p>}
-              </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-700 block mb-1.5">Avg Cost (₹)</label>
+              <input type="number" min="0" step="0.01" value={form.averageCost} onChange={e => updateField('averageCost', e.target.value)}
+                className={`w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] transition-all ${formErrors.averageCost ? 'border-red-300 bg-red-50' : 'border-[var(--color-border-input)] bg-[var(--color-bg-white)]'}`} />
+              {formErrors.averageCost && <p className="text-[10px] text-red-500 mt-1">{formErrors.averageCost}</p>}
             </div>
+
+            {modalMode === 'edit' ? (
+              <div className="bg-amber-50/60 border border-amber-100 rounded-xl px-3.5 py-2.5 text-[10px] text-amber-700 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0" />
+                Changing stock here applies a stock-engine adjustment (delta) so FIFO batches and the event ledger stay accurate.
+              </div>
+            ) : (
+              <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-3.5 py-2.5 text-[10px] text-blue-700 flex items-center gap-1.5">
+                <Package className="w-3.5 h-3.5 shrink-0" />
+                Stock starts at 0 for new items — tap <b>Add Stock</b> on the item card to record a purchase.
+              </div>
+            )}
 
             <ImageInput
               value={form.image}
@@ -615,6 +765,75 @@ export default function ItemsPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Add Stock Modal — records a purchase so stock + avg cost + history
+          update through the stock engine (same as the removed Add Stock page). */}
+      <Modal isOpen={stockItem !== null} onClose={() => { if (!savingStock) setStockItem(null); }} title={`Add Stock — ${stockItem?.name || ''}`} size="sm">
+        {stockItem && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl border border-[var(--color-border-default)]">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[var(--brand-color)]/15 to-blue-100 flex items-center justify-center shrink-0">
+                <Package className="w-5 h-5 text-[var(--brand-color)]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">{stockItem.name}</p>
+                <p className="text-[11px] text-gray-500">{stockItem.currentStock} {stockItem.unit} in stock</p>
+              </div>
+              <StatusBadge status={stockItem.status} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Quantity</label>
+                <input type="number" min="0" step="any" value={stockQty} onChange={e => setStockQty(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Unit</label>
+                <select value={stockItem.unit || 'pcs'} onChange={e => setStockItem({ ...stockItem, unit: e.target.value })}
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)] bg-[var(--color-bg-white)]">
+                  <option value="kg">kg</option><option value="L">L</option><option value="pcs">pcs</option>
+                  <option value="g">g</option><option value="mL">mL</option><option value="dozen">dozen</option>
+                  <option value="packet">packet</option><option value="bottle">bottle</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Cost per {stockItem.unit} (₹)</label>
+                <input type="number" min="0" step="0.01" value={stockPrice} onChange={e => setStockPrice(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                  placeholder="0.00" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Supplier</label>
+                <input type="text" value={stockSupplier} onChange={e => setStockSupplier(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]"
+                  placeholder="Local Vendor" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-700 block mb-1.5">
+                Expiry date <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <input type="date" value={stockExpiry} onChange={e => setStockExpiry(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-[var(--color-border-input)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]/20 focus:border-[var(--brand-color)]" />
+              <p className="text-[10px] text-gray-400 mt-1">Skip it if the batch has no expiry — you can add it later when editing the item.</p>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-4 border-t border-[var(--color-border-default)]">
+              <button onClick={() => setStockItem(null)} disabled={savingStock}
+                className="px-5 py-2.5 border border-gray-300 rounded-xl text-sm font-semibold hover:bg-gray-50 cursor-pointer transition-all disabled:opacity-40">Cancel</button>
+              <button onClick={handleAddStock} disabled={savingStock}
+                className="px-5 py-2.5 bg-[var(--brand-color)] text-white rounded-xl text-sm font-bold hover:bg-[var(--color-primary-hover)] cursor-pointer shadow-sm transition-all flex items-center gap-2 disabled:opacity-50">
+                {savingStock ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Stock
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Item History Modal — every purchase (with supplier + date) and

@@ -300,6 +300,7 @@ export async function parseVoiceCommand(
       try {
         const products = await Product.find({
           name: { $in: avgLookupNames },
+          type: 'inventory',
           restaurantId: new mongoose.Types.ObjectId(restaurantId),
           isDeleted: { $ne: true },
         })
@@ -1317,7 +1318,7 @@ export async function listProductAliases(
   const { search, page = 1, limit = 50 } = req.query;
 
   try {
-    const filter: any = { isDeleted: { $ne: true } };
+    const filter: any = { isDeleted: { $ne: true }, type: 'inventory' };
     if (restaurantId && mongoose.Types.ObjectId.isValid(restaurantId)) {
       filter.$or = [
         { restaurantId: new mongoose.Types.ObjectId(restaurantId) },

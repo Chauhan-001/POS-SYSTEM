@@ -69,6 +69,7 @@ import { config } from '../config';
 import {
   restaurantRepo, branchRepo, userRepo, auditLogRepo, subscriptionRepo, deviceRepo,
 } from '../repositories';
+import { ALL_FEATURES } from '../constants/planFeatures';
 import { parsePagination, parseSearch, parseSort, parseDateRange } from '../utils/queryParser';
 import { settingsService } from '../modules/settings/services/settingsService';
 import { computeStorageMetrics } from '../modules/media/mediaService';
@@ -448,7 +449,9 @@ export class RestaurantService {
     let planPrice = 0;
     let invoiceNumber: string | undefined;
 
-    const trialDays = config.subscription?.trialDays ?? 7;
+    // '7-Day Free Trial' onboarding is always exactly 7 days with every feature
+    // unlocked (independent of plan.trialDays, which drives the paid/cash trial).
+    const TRIAL_MODE_DAYS = 7;
 
     try {
       if (onboardingMode === 'create_only') {
@@ -459,20 +462,24 @@ export class RestaurantService {
         trialEnd = null;
       } else if (onboardingMode === 'trial') {
         subStatus = 'trial';
-        subFeatures = [
-          'core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty', 'reservations',
-          'multi_branch', 'analytics', 'custom_branding', 'advanced_reports',
-          'expense_tracking', 'api_access', 'priority_support',
-        ];
+        subFeatures = ALL_FEATURES;
         subLimits = { maxBranches: 5, maxDevicesPerBranch: 10 };
-        subEndDate = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
-        trialEnd = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
+        subEndDate = new Date(now.getTime() + TRIAL_MODE_DAYS * 24 * 60 * 60 * 1000);
+        trialEnd = new Date(now.getTime() + TRIAL_MODE_DAYS * 24 * 60 * 60 * 1000);
       } else {
-        subStatus = 'active';
+        // Paid (Cash): payment is collected on the spot, so the plan is already
+        // paid — the subscription runs the plan's configured trial window first
+        // (plan.trialDays), then converts to the paid plan (active) automatically.
+        const planTrialDays = typeof planDoc?.trialDays === 'number' && planDoc.trialDays > 0
+          ? planDoc.trialDays
+          : 0;
+        subStatus = planTrialDays > 0 ? 'trial' : 'active';
         subFeatures = featuresList;
         subLimits = planLimits;
         subEndDate = new Date(now.getTime() + SUBSCRIPTION_DAYS * 24 * 60 * 60 * 1000);
-        trialEnd = null;
+        trialEnd = planTrialDays > 0
+          ? new Date(now.getTime() + planTrialDays * 24 * 60 * 60 * 1000)
+          : null;
       }
 
       const subExpiryDate = subEndDate || new Date(now.getTime() + SUBSCRIPTION_DAYS * 24 * 60 * 60 * 1000);

@@ -59,9 +59,14 @@ export function decideFirstRun(opts: {
     if (hasCachedOwner) {
       return { setupState: 'ready' };
     }
+    // Server unreachable + no cached owner. An authenticated session opens
+    // straight in. Otherwise the registration wizard needs the server (it
+    // creates the owner), so showing it while offline is pointless — fall
+    // back to the login screen. Registration is ONLY offered when the server
+    // explicitly answers "no owner exists" (fresh DB).
     return {
-      setupState: isAuthenticated ? 'setup' : 'ready',
-      ...(isAuthenticated ? {} : { firstRunChoice: 'register' as const }),
+      setupState: 'ready',
+      ...(isAuthenticated ? {} : { firstRunChoice: 'login' as const }),
     };
   }
 

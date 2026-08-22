@@ -26,11 +26,12 @@
  */
 
 import mongoose from 'mongoose';
-import { Recipe, RecipeVersion, RecipeConsumption, Product } from '../../../models';
+import { Recipe, RecipeVersion, RecipeConsumption, Product, ProductVariant } from '../../../models';
 import ConfigurationTemplate from '../../menu-config/models/ConfigurationTemplate';
 import { inventoryEventRepo } from '../../../repositories';
 import { AppError } from '../../../utils/AppError';
 import { recipeCostEngine } from './recipeCostEngine';
+import { recipeResolutionService } from './recipeResolutionService';
 import { stockMovementService } from '../../../services/stockMovementService';
 import { round2, round4 } from './unitConversion';
 
@@ -40,27 +41,34 @@ export interface ConsumptionCtx {
   operator?: string;
 }
 
-/** The ACTIVE recipe for a product+variant, resolved to a version. */
+/** The ACTIVE recipe for a product+variant, resolved to a version.
+ *
+ *  Resolution semantics (single source of truth: recipeResolutionService —
+ *  VARIANT-ONLY model, no base recipe, no inheritance):
+ *   - variant line with its own recipe   → consume the variant's recipe.
+ *   - variant line with NO recipe        → null (zero consumption; the
+ *     recipe-status list flags it HIGH).
+ *   - plain line (no variant)            → the product's 'Default' recipe
+ *     (products WITH variants have no Default — plain lines consume nothing).
+ */
 async function resolveRecipeVersion(restaurantId: string, productId: string, variantName: string | undefined, saleDate: string): Promise<{
   recipe: any;
   version: number;
   recipeName: string;
+  resolution: any;
   costLines: Awaited<ReturnType<typeof recipeCostEngine.costRecipe>>['lines'];
 } | null> {
-  const match: any = {
-    restaurantId,
-    productId,
-    status: 'active',
-    isDeleted: { $ne: true },
+  const resolved = await recipeResolutionService.resolveEffectiveRecipe(restaurantId, productId, variantName, { date: saleDate });
+  if (!resolved.recipe) return null;
+
+  const cost = await recipeCostEngine.costRecipe(resolved.recipe, { restaurantId });
+  return {
+    recipe: resolved.recipe,
+    version: resolved.version,
+    recipeName: resolved.recipeName,
+    resolution: resolved.resolution,
+    costLines: cost.lines,
   };
-  if (variantName) match.variantName = variantName;
-  else match.variantName = { $in: [null, ''] };
-
-  const recipe = await Recipe.findOne(match).lean().exec();
-  if (!recipe) return null;
-
-  const cost = await recipeCostEngine.costRecipe(recipe, { restaurantId });
-  return { recipe, version: recipe.version, recipeName: recipe.name, costLines: cost.lines };
 }
 
 export class ConsumptionService {
@@ -201,17 +209,61 @@ export class ConsumptionService {
     ));
     if (productIds.length === 0) return keys;
     try {
-      const recipes = await Recipe.find({
+      // Only valid ObjectIds are queried — a malformed/temp line id must not
+      // abort the whole batch and silently fall back to legacy deduction.
+      const oids = productIds
+        .filter((id: any) => mongoose.Types.ObjectId.isValid(id))
+        .map((id: any) => new mongoose.Types.ObjectId(id));
+      if (oids.length === 0) return keys;
+
+      // Active recipes → `productId::variantName` for each variant. Legacy base
+      // recipes (empty variantName) map to the plain key `productId::`.
+      const activeRecipes = await Recipe.find({
         restaurantId,
-        productId: { $in: productIds },
+        productId: { $in: oids },
         status: 'active',
         isDeleted: { $ne: true },
       })
         .select('productId variantName')
         .lean()
         .exec();
-      for (const r of recipes) {
-        keys.add(`${String(r.productId)}::${r.variantName || ''}`);
+      const productsWithActive = new Set<string>();
+      for (const r of activeRecipes) {
+        const name = r.variantName ? String(r.variantName).trim() : '';
+        productsWithActive.add(String(r.productId));
+        if (name) keys.add(`${String(r.productId)}::${name}`);
+        else keys.add(`${String(r.productId)}::`);
+      }
+
+      // Variant-LESS products with an active recipe resolve PLAIN sales too
+      // (via the virtual 'Default' variant) — add the `productId::` key so the
+      // legacy menu-product deduction is skipped and only ingredients are
+      // consumed. Products WITH variants never get the plain key.
+      if (productsWithActive.size > 0) {
+        const pids = [...productsWithActive].map((id) => new mongoose.Types.ObjectId(id));
+        const variantDocs = await ProductVariant.find({
+          productId: { $in: pids },
+          isDeleted: { $ne: true },
+        })
+          .select('productId')
+          .lean()
+          .exec();
+        const withVariantRow = new Set(variantDocs.map((pv: any) => String(pv.productId)));
+        const products = await Product.find({ _id: { $in: pids }, isDeleted: { $ne: true } })
+          .select('menuConfig')
+          .lean()
+          .exec();
+        const withMenuConfigVariants = new Set(
+          products
+            .filter((p: any) => p.menuConfig?.variantConfigurations?.length)
+            .map((p: any) => String(p._id))
+        );
+        for (const pid of productsWithActive) {
+          if (!withVariantRow.has(pid) && !withMenuConfigVariants.has(pid)) {
+            keys.add(`${pid}::`);
+            keys.add(`${pid}::Default`);
+          }
+        }
       }
     } catch (err: any) {
       console.warn('[ConsumptionService] activeRecipeKeys failed (legacy fallback):', err.message);
@@ -267,8 +319,20 @@ export class ConsumptionService {
           quantity: qty,
           recipeVersion: version,
           recipeName,
+          resolvedMode: resolved.resolution?.mode || 'exact',
+          sourceRecipeId: resolved.resolution?.sourceRecipeId || (recipe?._id ? String(recipe._id) : undefined),
           costLines,
         });
+      } else {
+        // DIAGNOSTIC — a missing/draft recipe is the #1 reason a sale consumes
+        // no ingredients. Log it so the operator can see exactly which sold
+        // item has no ACTIVE recipe (draft recipes are never consumed).
+        const probe = await recipeResolutionService.resolveEffectiveRecipe(restaurantId, productId, item?.variantName, { date: saleDate });
+        const reason = probe?.resolution?.warning?.code || probe?.resolution?.mode || 'no_recipe';
+        console.warn(
+          `[ConsumptionService] NO consumption for "${item?.itemName || item?.product?.name || productId}" (variant: "${item?.variantName || ''}") — ${reason}. ` +
+          `Recipe missing or not ACTIVE (a DRAFT recipe is never consumed; activate it in the Recipe Manager).`
+        );
       }
       // Phase 4 — configuration layers: selected variant/modifier options
       // (recipeMappingId → delta recipe) and add-ons (productId → own recipe)

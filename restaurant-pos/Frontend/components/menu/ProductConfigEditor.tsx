@@ -455,9 +455,11 @@ interface EditorProps {
   onUpdateProduct: (updated: Product) => void;
   onConfigChanged: () => void;
   onClose: () => void;
+  /** Optional: open the recipe editor for this product. */
+  onOpenRecipe?: (productId: string) => void;
 }
 
-export default function ProductConfigEditor({ product, currencySymbol, onUpdateProduct, onConfigChanged, onClose }: EditorProps) {
+export default function ProductConfigEditor({ product, currencySymbol, onUpdateProduct, onConfigChanged, onClose, onOpenRecipe }: EditorProps) {
   const [tab, setTab] = useState<Tab>('overview');
   const [refs, setRefs] = useState<ProductMenuConfig>(() => product.menuConfig ?? EMPTY_CONFIG);
   const [resolved, setResolved] = useState<ResolvedProductConfig | null>(null);
@@ -468,6 +470,7 @@ export default function ProductConfigEditor({ product, currencySymbol, onUpdateP
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [productRecipe, setProductRecipe] = useState<any>(null);
   const [pickerType, setPickerType] = useState<ConfigType | null>(null);
   const [builder, setBuilder] = useState<{ type: ConfigType; template?: MenuConfigTemplate } | null>(null);
   const [customizer, setCustomizer] = useState<{ type: ConfigType; ref?: ProductConfigRef; group: ResolvedConfigGroup } | null>(null);
@@ -507,6 +510,18 @@ export default function ProductConfigEditor({ product, currencySymbol, onUpdateP
           setLoading(false);
         }
       });
+    return () => { cancelled = true; };
+  }, [product.id]);
+
+  // Fetch the recipe status for this product.
+  useEffect(() => {
+    let cancelled = false;
+    api.fetchRecipes({ status: 'active' }).then((recipes: any) => {
+      if (cancelled) return;
+      const list = Array.isArray(recipes) ? recipes : [];
+      const match = list.find((r: any) => r.productId === product.id && !r.isDeleted);
+      setProductRecipe(match || null);
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [product.id]);
 
@@ -746,11 +761,15 @@ export default function ProductConfigEditor({ product, currencySymbol, onUpdateP
 
         <div className="rounded-xl border border-[var(--color-border-default)] divide-y divide-[var(--color-border-default)] bg-[var(--color-bg-white)]">
           {([
-            ['Recipe', '⚠ Not configured — available in a later phase', 'bg-amber-50 text-amber-600'],
+            productRecipe ? ['Recipe', `✓ Configured — ${productRecipe.name || 'active recipe'}`, 'bg-emerald-50 text-emerald-600'] as const : ['Recipe', '⚠ Not configured', 'bg-amber-50 text-amber-600'] as const,
             ['Kitchen', 'Uses the standard kitchen ticket', 'bg-emerald-50 text-emerald-600'],
             ['Online ordering', product.availability ? 'Visible to customers when the site is on' : 'Hidden — item is marked unavailable', product.availability ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'],
           ] as Array<[string, string, string]>).map(([name, text, cls]) => (
-            <div key={name} className="flex items-center justify-between px-4 py-3">
+            <div
+              key={name}
+              className={`flex items-center justify-between px-4 py-3 ${name === 'Recipe' && onOpenRecipe ? 'cursor-pointer hover:bg-gray-50 transition-colors' : ''}`}
+              onClick={name === 'Recipe' && onOpenRecipe ? () => { onClose(); onOpenRecipe(product.id); } : undefined}
+            >
               <span className="text-xs font-semibold text-[var(--color-text-primary)]">{name}</span>
               <span className={`text-[10px] font-semibold px-2 py-1 rounded-full ${cls}`}>{text}</span>
             </div>

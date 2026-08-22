@@ -313,7 +313,7 @@ export class BillService {
    * instead of re-aggregating every time. Never fails the bill on error.
    */
   async bumpDailySummary(data: { date?: string; branchId?: string; restaurantId?: string; subtotal: number; discount: number; gst: number; grandTotal: number; itemCount: number; cashierName?: string; paymentMethod?: string }) {
-    if (!data.date || !data.branchId) return;
+    if (!data.date) return;
     try {
       const today = data.date;
       const branchId = data.branchId;
@@ -712,12 +712,24 @@ export class BillService {
     // Recipe consumption — best-effort and NEVER fails billing. Any failure is
     // logged + audited so it stays observable while the completed bill
     // response remains successful.
+    let consumptionItems: Array<{ inventoryItemId: string; itemName: string; unit: string; quantity: number }> | undefined;
     try {
-      await consumptionService.generateForBill(bill, normalizedItems, {
+      const consumption = await consumptionService.generateForBill(bill, normalizedItems, {
         restaurantId,
         branchId,
         operator: ctx.operator || billData.cashierName,
       });
+      if (consumption && Array.isArray((consumption as any).items)) {
+        // Surface the exact per-ingredient deductions on the response so the
+        // POS can decrement inventory locally instead of re-fetching the whole
+        // catalog after every sale.
+        consumptionItems = (consumption as any).items.map((it: any) => ({
+          inventoryItemId: String(it.inventoryItemId || ''),
+          itemName: it.itemName || '',
+          unit: it.unit || 'pcs',
+          quantity: Number(it.quantity) || 0,
+        }));
+      }
     } catch (err: any) {
       console.error('[BillService] recipe consumption failed (non-fatal):', err.message);
       try {
@@ -842,7 +854,11 @@ export class BillService {
       });
     } catch { /* socket not ready — non-fatal */ }
 
-    return this.getById(bill._id.toString());
+    const billDoc = await this.getById(bill._id.toString());
+    if (billDoc && consumptionItems) {
+      (billDoc as any).consumption = consumptionItems;
+    }
+    return billDoc;
   }
 
   /**

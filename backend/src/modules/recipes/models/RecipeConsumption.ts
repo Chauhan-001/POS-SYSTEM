@@ -38,6 +38,12 @@ export interface IRecipeConsumptionLine {
   /** 'recipe' = base product recipe; 'option' = variant/modifier recipe delta;
    *  'addon' = a selected add-on's own product recipe (Phase 4 layers). */
   source?: 'recipe' | 'option' | 'addon';
+  /** How this line's recipe resolved: 'exact' = own recipe; 'inherit' = the
+   *  variant fell back to the base recipe; undefined = option/addon layers. */
+  resolvedMode?: 'exact' | 'inherit';
+  /** Base recipe id the line used (override for exact, inherited base for
+   *  inherit). Lets reports trace variant→base attribution. */
+  sourceRecipeId?: string;
   /** Human-readable option name for option/addon lines (e.g. "Extra Cheese"). */
   optionName?: string;
 }
@@ -87,6 +93,8 @@ const ConsumptionLineSchema = new Schema<IRecipeConsumptionLine>(
     recipeVersion: { type: Number, default: 0, min: 0 },
     recipeName: { type: String, trim: true, default: '' },
     source: { type: String, enum: ['recipe', 'option', 'addon'], default: 'recipe' },
+    resolvedMode: { type: String, enum: ['exact', 'inherit'], default: null },
+    sourceRecipeId: { type: String, trim: true, default: null },
     optionName: { type: String, trim: true, default: '' },
   },
   { _id: false }

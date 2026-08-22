@@ -158,6 +158,7 @@ export async function updateInventory(
       // name.
       const product = await Product.findOne({
         name: item.itemName,
+        type: 'inventory',
         restaurantId: new mongoose.Types.ObjectId(request.restaurantId),
         isDeleted: { $ne: true },
         ...(request.branchId
@@ -180,6 +181,7 @@ export async function updateInventory(
               category: 'Voice Added',
               // Raw materials added by voice are INVENTORY items (hidden from
               // the billing menu), not sellable menu items.
+              type: 'inventory',
               availability: false,
               price: 0,
               currentStock: Math.max(0, item.quantity || 0),
@@ -575,6 +577,7 @@ export async function undoInventory(
 
       const product = await Product.findOne({
         name,
+        type: 'inventory',
         restaurantId: new mongoose.Types.ObjectId(restaurantId),
         isDeleted: { $ne: true },
       }).lean();

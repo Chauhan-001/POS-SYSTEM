@@ -71,7 +71,6 @@ const emptyForm = {
   yearlyPrice: 0,
   maxUsers: 5,
   features: ['core_pos', 'basic_reports'],
-  aiEnabled: false,
   trialDays: 14,
   sortOrder: 0,
   isActive: true,
@@ -148,7 +147,6 @@ export default function SubscriptionPlans() {
       yearlyPrice: plan.yearlyPrice ?? 0,
       maxUsers: plan.maxUsers,
       features: plan.features,
-      aiEnabled: plan.aiEnabled,
       trialDays: plan.trialDays,
       sortOrder: plan.sortOrder,
       isActive: plan.isActive,
@@ -237,11 +235,6 @@ export default function SubscriptionPlans() {
       </div>
 
       <div className="flex flex-wrap gap-6">
-        <Toggle
-          enabled={formData.aiEnabled}
-          onChange={(v) => setFormData({ ...formData, aiEnabled: v })}
-          label="AI Enabled"
-        />
         <Toggle
           enabled={formData.isDefault}
           onChange={(v) => setFormData({ ...formData, isDefault: v })}
@@ -335,7 +328,7 @@ export default function SubscriptionPlans() {
         </div>
       </Modal>
 
-      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Subscription Plan" size="2xl">
+      <Modal open={showEditModal} onClose={() => { setShowEditModal(false); setEditingPlan(null) }} title="Edit Subscription Plan" size="2xl">
         {planForm}
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setShowEditModal(false)}>Cancel</Button>

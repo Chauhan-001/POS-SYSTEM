@@ -59,6 +59,10 @@ router.get('/inventory/aging', requireAuth, requireFeature('inventory'), validat
 router.get('/inventory/reorder', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryReorder);
 router.get('/inventory/fast-slow', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryFastSlow);
 router.get('/inventory/waste', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryWaste);
+// Lightweight inventory overview — intentionally NOT response-cached: it serves
+// live stock, is a lean/projected single-index query, and the POS caches +
+// invalidates it client-side on every product/stock write.
+router.get('/inventory/summary', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), c.inventorySummary);
 router.get('/inventory/expiry', requireAuth, requireFeature('inventory'), validate({ query: inventoryExpiryQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventoryExpiry);
 router.get('/inventory/suppliers', requireAuth, requireFeature('inventory'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.inventorySuppliers);
 

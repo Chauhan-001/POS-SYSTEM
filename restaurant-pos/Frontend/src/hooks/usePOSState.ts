@@ -88,6 +88,7 @@ export const MODULE_FEATURE_MAP: Record<string, string[]> = {
   enableAIVoiceEntry: ['ai', 'voice_ordering'],
   enableAIWeather: ['ai'],
   enableAIClosingAssistant: ['ai'],
+  enableInventory: ['inventory'],
 };
 
 /** Fetch data from API and update state + timestamped cache. Returns true if API was reachable. */
@@ -344,10 +345,18 @@ function sanitizeProductCache(list: Product[] | null | undefined): Product[] {
   if (!Array.isArray(list)) return [];
   return list
     .filter((p: any) => !String(p?.id || '').startsWith('demo_prod_'))
-    // Legacy installs have the old injected stock photo baked into the offline
-    // cache — treat it as "no image" so the billing grid shows the product
-    // initial placeholder instead of the same unrelated photo for every item.
-    .map((p: any) => (p?.image === LEGACY_PRODUCT_PLACEHOLDER ? { ...p, image: '' } : p));
+    .map((p: any) => {
+      const normalized: any = { ...p };
+      // A raw/legacy cache may lack the type/availability flags (defaults to
+      // 'menu'/true on the server). Normalize here so filters work correctly.
+      if (normalized.type === undefined) normalized.type = 'menu';
+      if (normalized.availability === undefined) normalized.availability = true;
+      // Legacy installs have the old injected stock photo baked into the offline
+      // cache — treat it as "no image" so the billing grid shows the product
+      // initial placeholder instead of the same unrelated photo for every item.
+      if (normalized.image === LEGACY_PRODUCT_PLACEHOLDER) normalized.image = '';
+      return normalized;
+    });
 }
 
 function mergeProductsById(local: Product[], incoming: any[]): Product[] {
@@ -377,6 +386,7 @@ function mergeProductsById(local: Product[], incoming: any[]): Product[] {
       // treated as "no image" so cached installs stop showing the stock photo.
       image: bp.image || (localP?.image && localP.image !== LEGACY_PRODUCT_PLACEHOLDER ? localP.image : ''),
       gstPercent: bp.gstPercent ?? localP?.gstPercent ?? 0,
+      type: bp.type ?? localP?.type ?? 'menu',
       availability: bp.availability ?? localP?.availability ?? true,
       favorite: bp.favorite ?? localP?.favorite,
       // Backend variants are authoritative, but an EMPTY array from a product

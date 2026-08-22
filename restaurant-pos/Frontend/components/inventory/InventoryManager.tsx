@@ -1,17 +1,18 @@
 import { useState, useCallback, useEffect, useRef, useMemo, createContext, useContext, type Context } from 'react';
 import { motion } from 'motion/react';
 import {
-  LayoutDashboard, Package, ShoppingCart, Truck, Trash2, BarChart3,
+  LayoutDashboard, Package, Truck, Trash2, BarChart3,
   CalendarX, Settings as SettingsIcon, ArrowLeft, CheckCircle, AlertCircle, Info,
-  Mic, Activity, ChefHat, IndianRupee,
+  Mic, Activity, ChefHat, IndianRupee, RefreshCw,
 } from 'lucide-react';
 import RecipesPage from './pages/RecipesPage';
 import CostIntelligencePanel from './pages/CostIntelligencePanel';
 import CostSettingsPanel from './pages/CostSettingsPanel';
 import type { InventoryPage, InventoryItem, Purchase, TimelineEntry } from './types';
+import { PAGE_REFRESH_EVENT } from './usePageRefresh';
 import { daysUntilExpiry } from './expiryUtils';
 import {
-  fetchProducts,
+  fetchInventorySummary,
   createProduct as apiCreateProduct,
   updateProduct as apiUpdateProduct,
   deleteProduct as apiDeleteProduct,
@@ -24,6 +25,8 @@ import {
   deleteInventoryEvent,
   CACHE_INVALIDATED_EVENT,
 } from '../../src/api/client';
+import { useAuth } from '../../src/hooks/useAuth';
+import { invalidateCache } from '../../src/data';
 
 /** Map a backend Product document into the frontend InventoryItem shape. */
 function productToInventoryItem(p: any): InventoryItem {
@@ -43,22 +46,42 @@ function productToInventoryItem(p: any): InventoryItem {
     minStock: min,
     maxStock: Number(p?.maxStock) || 0,
     averageCost: Number(p?.averageCost) || 0,
+    stockValue: Number(p?.stockValue) || 0,
     supplier: p?.supplier || '',
     status,
     expiryDate: p?.expiryDate || undefined,
     batchNumber: p?.batchNumber || undefined,
-    lastUpdated: p?.updatedAt ? String(p.updatedAt).slice(0, 10) : new Date().toISOString().slice(0, 10),
+    lastUpdated: p?.lastUpdated || (p?.updatedAt ? String(p.updatedAt).slice(0, 10) : new Date().toISOString().slice(0, 10)),
+    batches: Array.isArray(p?.batches)
+      ? p.batches.map((b: any) => ({
+          batchNumber: b.batchNumber || '',
+          expiryDate: b.expiryDate || '',
+          quantity: Number(b.quantity) || 0,
+          receivedDate: b.receivedDate || '',
+          cost: Number(b.cost) || 0,
+        }))
+      : undefined,
   };
 }
 
 /** Convert an InventoryItem into the backend product payload (inventory-only). */
 function inventoryItemToProduct(item: InventoryItem) {
+  const mappedBatches = Array.isArray(item.batches) && item.batches.length > 0
+    ? item.batches.filter((b) => Number(b.quantity) > 0).map((b) => ({
+        batchNumber: b.batchNumber || '',
+        expiryDate: b.expiryDate || '',
+        quantity: Number(b.quantity) || 0,
+        receivedDate: b.receivedDate || '',
+        cost: Number(b.cost) || 0,
+      }))
+    : [];
   return {
     name: item.name,
     category: item.category || 'Uncategorized',
     image: item.image || '',
     code: (item as any).code || `INV-${Date.now().toString(36).toUpperCase()}`,
     price: 0,
+    type: 'inventory',
     availability: false, // inventory-only item — hidden from the billing menu
     currentStock: Number(item.currentStock) || 0,
     unit: item.unit || 'pcs',
@@ -72,11 +95,24 @@ function inventoryItemToProduct(item: InventoryItem) {
     barcode: (item as any).barcode || '',
     expiryDate: item.expiryDate || '',
     batchNumber: item.batchNumber || '',
+    // Only send batches when the local item actually carries them — an empty
+    // array would otherwise wipe the server-side FIFO batches on a routine
+    // edit (the stock engine is the owner of batch data on movement).
+    ...(mappedBatches.length > 0 ? { batches: mappedBatches } : {}),
   };
 }
+
+/** Health status from current stock vs the minimum threshold. */
+function computeStatus(item: { currentStock: number; minStock: number }): InventoryItem['status'] {
+  const { currentStock, minStock } = item;
+  if (minStock > 0 && currentStock <= 0) return 'critical';
+  if (minStock > 0 && currentStock < minStock) return 'low';
+  if (minStock > 0 && currentStock <= minStock * 1.2) return 'normal';
+  return 'healthy';
+}
+
 import Dashboard from './pages/Dashboard';
 import ItemsPage from './pages/ItemsPage';
-import PurchaseEntry from './pages/PurchaseEntry';
 import WasteManagement from './pages/WasteManagement';
 import SupplierManagement from './pages/SupplierManagement';
 import InventoryAnalytics from './pages/InventoryAnalytics';
@@ -206,6 +242,10 @@ export const useInventoryEventsCtx = () => useStrictContext(InventoryEventsCtx, 
 interface InventoryManagerProps {
   onBack: () => void;
   moduleSettings?: Record<string, boolean>;
+  /** The POS catalog already loaded at login (instant, from the local cache).
+   *  Used to seed the inventory item list for a first paint with no network
+   *  wait; the module's own /products fetch refreshes stock in the background. */
+  products?: any[];
 }
 
 type Toast = { id: string; message: string; type: 'success' | 'warning' | 'info' };
@@ -217,7 +257,6 @@ export const useNotify = () => useContext(ToastCtx);
 const NAV_ITEMS: { id: InventoryPage; icon: typeof LayoutDashboard; label: string }[] = [
   { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
   { id: 'items', icon: Package, label: 'Items' },
-  { id: 'purchase', icon: ShoppingCart, label: 'Add Stock' },
   { id: 'suppliers', icon: Truck, label: 'Suppliers' },
   { id: 'expiry', icon: CalendarX, label: 'Expiry' },
   { id: 'waste', icon: Trash2, label: 'Waste' },
@@ -228,16 +267,51 @@ const NAV_ITEMS: { id: InventoryPage; icon: typeof LayoutDashboard; label: strin
   { id: 'timeline', icon: Activity, label: 'Activity' },
 ];
 
-export default function InventoryManager({ onBack, moduleSettings }: InventoryManagerProps) {
+export default function InventoryManager({ onBack, moduleSettings, products }: InventoryManagerProps) {
+  const auth = useAuth();
   const [page, setPage] = useState<InventoryPage>('dashboard');
+  // Search seed passed into the Items page when an Activity card is clicked —
+  // the timeline dispatches 'inventory:navigate' so tapping a card lands on the
+  // item it references. count bumps on every click to force a fresh mount.
+  const [pendingSearch, setPendingSearch] = useState<{ count: number; itemName?: string } | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Cross-page navigation used by child pages (e.g. Activity cards) without
+  // lifting all of InventoryManager's state. Clears the search seed so a manual
+  // tab switch never leaves a stale item search applied.
+  const goToPage = useCallback((p: InventoryPage) => {
+    setPage(p);
+    setPendingSearch(null);
+  }, []);
+
+  useEffect(() => {
+    const onNavigate = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: string; search?: string }>).detail as
+        { tab?: string; search?: string } | undefined;
+      const tab = detail?.tab as InventoryPage;
+      if (tab && NAV_ITEMS.some((n) => n.id === tab)) setPage(tab);
+      if (detail?.search) {
+        setPendingSearch((prev) => ({ count: (prev?.count || 0) + 1, itemName: detail.search }));
+      }
+    };
+    window.addEventListener('inventory:navigate', onNavigate);
+    return () => window.removeEventListener('inventory:navigate', onNavigate);
+  }, []);
   // Backend-driven item catalog (single source of truth = Product collection).
+  // Seed synchronously from the POS catalog already in memory/localStorage so
+  // the first paint has data; the background loadItems() refreshes stock.
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [itemsSynced, setItemsSynced] = useState(false);
   const [purchases, setPurchases] = useState<Purchase[] | null>(null);
   const [purchasesSynced, setPurchasesSynced] = useState(false);
   const [events, setEvents] = useState<TimelineEntry[] | null>(null);
   const [eventsSynced, setEventsSynced] = useState(false);
+
+  // Lazy loading: which data set each page needs.
+  const PAGE_NEEDS_PURCHASES: InventoryPage[] = ['dashboard', 'items', 'timeline'];
+  const PAGE_NEEDS_EVENTS: InventoryPage[] = ['items', 'waste', 'analytics', 'timeline'];
+  const purchasesLoadedRef = useRef(false);
+  const eventsLoadedRef = useRef(false);
 
   // Live expiry counts for the Items nav badge — computed from real product
   // expiryDate so staff see expiries without opening the page.
@@ -253,10 +327,10 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     return { expiring, expired };
   }, [items]);
 
-  // Load the real inventory catalog once (products = items). No demo/seed
-  // fallback: an empty array means the restaurant has no inventory products,
-  // and null (API unreachable) leaves the catalog empty with synced=false so
-  // pages show an honest offline state — never fabricated rows.
+  // Load the real inventory catalog from the LIGHTWEIGHT summary endpoint
+  // (lean/projected — no full product docs, no batches[], no variants).
+  // Renders immediately from the cached snapshot via the seed, then this
+  // background refresh keeps stock authoritative.
   //
   // INVENTORY-ONLY: only products with availability=false are inventory items
   // (raw materials / pre-manufactured stock like cold drinks — hidden from the
@@ -264,7 +338,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
   // to the billing menu and must never appear in the inventory module.
   const loadItems = useCallback(async () => {
     try {
-      const data = await fetchProducts({ availability: 'false' });
+      const data = await fetchInventorySummary();
       if (Array.isArray(data)) {
         setItems(data.map(productToInventoryItem));
         setItemsSynced(true);
@@ -278,8 +352,14 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     }
   }, []);
 
+  // Load inventory items from the dedicated inventory summary endpoint.
+  // The POS product catalog now only contains menu items (type='menu'),
+  // so inventory items are fetched separately via the summary endpoint.
+  const seededFromCatalogRef = useRef(false);
   useEffect(() => {
-    loadItems();
+    if (seededFromCatalogRef.current) return;
+    seededFromCatalogRef.current = true;
+    void loadItems();
   }, [loadItems]);
 
   // The inventory context guard auto-reloads the page ONCE if a stale dev HMR
@@ -292,13 +372,13 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     } catch { /* storage unavailable — guard stays tripped, harmless */ }
   }, []);
 
-  // Load real purchase history once for the whole Inventory module. Null when
-  // the API is unreachable (offline) so pages fall back to static demo data.
-  // fetchPurchases is TTL-cached (5 min), so remounts are instant, a 5-min
-  // interval re-checks the cache, and a write anywhere invalidates it and
-  // triggers an immediate re-fetch via the cache-invalidated event. A sequence
-  // guard ignores late/out-of-order responses when mount + event + interval
-  // overlap.
+  // Load real purchase history ON DEMAND (lazy per-page — see the page-gated
+  // effect below). Null when the API is unreachable (offline) so pages fall
+  // back to static demo data. fetchPurchases is TTL-cached (5 min), so
+  // remounts are instant, a 5-min interval re-checks the cache, and a write
+  // anywhere invalidates it and triggers an immediate re-fetch via the
+  // cache-invalidated event. A sequence guard ignores late/out-of-order
+  // responses when mount + event + interval overlap.
   const purchasesLoadSeq = useRef(0);
   const loadPurchases = useCallback(() => {
     const seq = ++purchasesLoadSeq.current;
@@ -311,9 +391,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     });
   }, []);
 
-  useEffect(() => { void loadPurchases(); }, [loadPurchases]);
-
-  // Load real activity events once for the whole Inventory module.
+  // Load real activity events on demand (lazy — see the page-gated effect).
   const eventsLoadSeq = useRef(0);
   const loadEvents = useCallback(() => {
     const seq = ++eventsLoadSeq.current;
@@ -324,27 +402,65 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     });
   }, []);
 
-  useEffect(() => { void loadEvents(); }, [loadEvents]);
+  // Lazy per-page: purchases only fetch when a page that needs them is open.
+  useEffect(() => {
+    if (PAGE_NEEDS_PURCHASES.includes(page) && !purchasesLoadedRef.current) {
+      purchasesLoadedRef.current = true;
+      void loadPurchases();
+    }
+  }, [page, loadPurchases]);
+
+  // Lazy per-page: events only fetch when a page that needs them is open.
+  useEffect(() => {
+    if (PAGE_NEEDS_EVENTS.includes(page) && !eventsLoadedRef.current) {
+      eventsLoadedRef.current = true;
+      void loadEvents();
+    }
+  }, [page, loadEvents]);
 
   // Timely freshness while the Inventory module stays open: re-check the
   // TTL-gated caches every 5 minutes (purchases 5min / events 1h TTL — the
   // fetches only hit the network when a cache expired), and re-fetch
   // immediately when a write anywhere invalidates one of our collections.
+  // Only collections already loaded are refreshed — never fetched on idle.
   useEffect(() => {
     const onInvalidated = (e: Event) => {
       const key = (e as CustomEvent<string>).detail;
       if (key === 'pos_purchases') void loadPurchases();
       else if (key === 'pos_inventory_events') void loadEvents();
-      // Stock changed through any /products write (POS sale deduction,
-      // Products manager edit, stock adjustment, another device) — re-fetch
-      // the catalog so the Overview's health/recommendation cards recompute
-      // deterministically (no LLM) instead of showing stale numbers.
-      else if (key === 'pos_products') void loadItems();
+      // Stock changed through any /products write (Products manager edit,
+      // stock adjustment, another device) — re-fetch the catalog so the
+      // Overview's health/recommendation cards recompute deterministically
+      // (no LLM) instead of showing stale numbers.
+      else if (key === 'pos_products' || key === 'pos_inventory_summary') void loadItems();
+    };
+    // A completed sale arrives with the EXACT ingredient deductions — decrement
+    // stock locally instead of re-fetching the whole catalog.
+    const onStockDeducted = (e: Event) => {
+      const lines = (e as CustomEvent).detail?.items as Array<{ inventoryItemId?: string; itemName?: string; quantity?: number }> | undefined;
+      if (!Array.isArray(lines) || lines.length === 0) return;
+      const today = new Date().toISOString().slice(0, 10);
+      setItems((prev) => prev.map((i) => {
+        const line = lines.find((l) =>
+          (l.inventoryItemId && String(l.inventoryItemId) === String(i.id))
+          || String(l.itemName || '').trim().toLowerCase() === String(i.name).trim().toLowerCase()
+        );
+        if (!line) return i;
+        const qty = Math.max(0, Number(line.quantity) || 0);
+        if (qty === 0) return i;
+        const currentStock = Math.max(0, Number(i.currentStock) - qty);
+        return { ...i, currentStock, status: computeStatus({ currentStock, minStock: Number(i.minStock) || 0 }), lastUpdated: today };
+      }));
     };
     window.addEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
-    const interval = setInterval(() => { void loadPurchases(); void loadEvents(); }, 5 * 60 * 1000);
+    window.addEventListener('pos:stock-deducted', onStockDeducted);
+    const interval = setInterval(() => {
+      if (purchasesLoadedRef.current) void loadPurchases();
+      if (eventsLoadedRef.current) void loadEvents();
+    }, 5 * 60 * 1000);
     return () => {
       window.removeEventListener(CACHE_INVALIDATED_EVENT, onInvalidated);
+      window.removeEventListener('pos:stock-deducted', onStockDeducted);
       clearInterval(interval);
     };
   }, [loadPurchases, loadEvents, loadItems]);
@@ -478,7 +594,15 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     if (/^[a-fA-F0-9]{24}$/.test(id)) {
       const current = items.find(i => i.id === id);
       if (current) {
-        apiUpdateProduct(id, inventoryItemToProduct({ ...current, ...updates })).catch(err =>
+        const payload = inventoryItemToProduct({ ...current, ...updates });
+        // The stock engine is the sole owner of stock / average cost / FIFO
+        // batches. A routine edit (rename, expiry, category…) must NEVER
+        // overwrite server-side stock movement with the render-closure values.
+        // Only include these fields when the caller explicitly changed them.
+        if (!('currentStock' in updates)) delete payload.currentStock;
+        if (!('averageCost' in updates)) delete payload.averageCost;
+        delete payload.batches; // batch state is server-owned on every path
+        apiUpdateProduct(id, payload).catch(err =>
           console.warn('[Inventory] updateItem failed:', err)
         );
       }
@@ -552,6 +676,22 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
     await loadItems();
   }, [loadItems]);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const handlePageRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      // Force the shared catalog (bypass TTL cache), purchases and events.
+      invalidateCache('pos_inventory_summary');
+      await loadItems();
+      if (purchasesLoadedRef.current) { await loadPurchases(); }
+      if (eventsLoadedRef.current) { await loadEvents(); }
+      // Tell the active page to re-fetch its own data.
+      window.dispatchEvent(new CustomEvent(PAGE_REFRESH_EVENT, { detail: page }));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadItems, loadPurchases, loadEvents, page]);
+
   const inventoryCtx: InventoryCtxType = { items, synced: itemsSynced, updateItem, addItem, removeItem, addStock, removeStock, refreshItems };
 
   return (
@@ -577,7 +717,7 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
                   const isActive = page === item.id;
                   const showBadge = item.id === 'items' && (expiryBadge.expiring > 0 || expiryBadge.expired > 0);
                   return (
-                    <button key={item.id} onClick={() => setPage(item.id)}
+                    <button key={item.id} onClick={() => goToPage(item.id)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                         isActive ? 'bg-[var(--brand-color)] text-white shadow-sm' : 'text-gray-500 hover:text-[var(--brand-color)] hover:bg-blue-50'
                       }`}
@@ -605,7 +745,13 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
             </div>
           </div>
           <div className="flex-1" />
-          <button onClick={() => setPage('settings')}
+          <button onClick={() => void handlePageRefresh()} disabled={refreshing}
+            className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] rounded-lg transition-all cursor-pointer disabled:opacity-50"
+            title="Refresh this page"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+          <button onClick={() => goToPage('settings')}
             className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] rounded-lg transition-all cursor-pointer"
             title="Settings"
           >
@@ -616,11 +762,10 @@ export default function InventoryManager({ onBack, moduleSettings }: InventoryMa
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto bg-[var(--color-bg-page)]">
           <motion.div key={page} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
-            {page === 'dashboard' && <Dashboard onNavigate={setPage} moduleSettings={moduleSettings} />}
-            {page === 'items' && <ItemsPage />}
-            {page === 'purchase' && <PurchaseEntry />}
+            {page === 'dashboard' && <Dashboard onNavigate={goToPage} moduleSettings={moduleSettings} />}
+            {page === 'items' && <ItemsPage key={pendingSearch?.count ?? 0} initialSearch={pendingSearch?.itemName || ''} />}
             {page === 'waste' && <WasteManagement moduleSettings={moduleSettings} />}
-              {page === 'suppliers' && <SupplierManagement onNavigate={(p) => setPage(p as InventoryPage)} />}
+              {page === 'suppliers' && <SupplierManagement onNavigate={(p) => goToPage(p as InventoryPage)} />}
               {page === 'analytics' && <InventoryAnalytics />}
               {page === 'recipes' && <RecipesPage />}
               {page === 'cost' && (

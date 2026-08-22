@@ -263,6 +263,82 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
   const [history, setHistory] = useState<any>(null);
   const [audit, setAudit] = useState<any>(null);
 
+  // ─── Late-arriving server settings ─────────────────────────────
+  // The form fields above are initialized ONCE from `settings` at mount. When
+  // the effective settings are slow to arrive (or the page mounts before the
+  // backend responds), the form would keep showing blank/default values forever
+  // while the server data sits in the background. This effect re-applies the
+  // latest server settings whenever they change — guarded by a snapshot of the
+  // current form values so it NEVER clobbers an in-progress edit.
+  const formSnapshot = () => JSON.stringify([
+    restName, address, phone, gstin, fssai, pan, ownerName, email, city, state, pinCode,
+    taxRate, taxRules, invoicePrefix, invoiceStartingNumber, invoiceSuffix, printSize,
+    sidebarLogoUrl, showCustomerName, showLoyaltyPoints, showPointsEarned, showQrCode,
+    showDiscountBreakdown, printLogoOnReceipt, roundOffTotal, showTaxSummary,
+    receiptFooterMessage, receiptFooterImageUrl, openingTime, closingTime,
+    printCategoryHeaders, showItemModifiers, showOrderTime, showTableNumber,
+    groupItemsInKOT, kotFooterNote, kotOutputMode, autoKotOnlineOrders,
+    moduleSettings, rolePermissions, theme, notifications, security, integrations, discount, routingRules,
+  ]);
+
+  const applySettingsToForm = useCallback((s: typeof settings) => {
+    setRestName(s.restaurantName || '');
+    setAddress(s.address || '');
+    setPhone(s.phone || '');
+    setGstin(s.gstin || '');
+    setFssai((s as any).fssai || '');
+    setPan((s as any).pan || '');
+    setOwnerName((s as any).ownerName || '');
+    setEmail((s as any).email || '');
+    setCity((s as any).city || '');
+    setState((s as any).state || '');
+    setPinCode((s as any).pinCode || '');
+    setTaxRate(s.defaultTaxRate ?? 5);
+    setTaxRules(normalizeSettingsTaxRules((s as any).taxRules));
+    setInvoicePrefix(s.invoicePrefix ?? 'INV-');
+    setInvoiceStartingNumber(s.invoiceStartingNumber ?? 1024);
+    setInvoiceSuffix(s.invoiceSuffix ?? '');
+    setPrintSize(s.printSize || '80mm');
+    setSidebarLogoUrl(s.sidebarLogoUrl || '');
+    setShowCustomerName(s.showCustomerNameOnReceipt ?? true);
+    setShowLoyaltyPoints(s.showLoyaltyPointsOnReceipt ?? true);
+    setShowPointsEarned(s.showLoyaltyPointsEarnedOnReceipt ?? true);
+    setShowQrCode(s.showQrCodeOnReceipt ?? true);
+    setShowDiscountBreakdown(s.showDiscountBreakdownOnReceipt ?? true);
+    setPrintLogoOnReceipt(s.printLogoOnReceipt ?? true);
+    setRoundOffTotal(s.roundOffTotal ?? false);
+    setShowTaxSummary(s.showTaxSummaryOnReceipt ?? true);
+    setReceiptFooterMessage(s.receiptFooterMessage ?? 'THANK YOU FOR DINING WITH US!');
+    setReceiptFooterImageUrl(s.receiptFooterImageUrl ?? '');
+    setOpeningTime(s.openingTime ?? '08:00');
+    setClosingTime(s.closingTime ?? '23:59');
+    setPrintCategoryHeaders(s.printCategoryHeaders ?? true);
+    setShowItemModifiers(s.showItemModifiers ?? true);
+    setShowOrderTime(s.showOrderTime ?? true);
+    setShowTableNumber(s.showTableNumber ?? true);
+    setGroupItemsInKOT(s.groupItemsInKOT ?? true);
+    setKotFooterNote(s.kotFooterNote ?? 'Cook with passion!');
+    setKotOutputMode(s.kotOutputMode ?? 'both');
+    setAutoKotOnlineOrders(s.onlineOrderAutoKot ?? true);
+    setModuleSettings({ ...DEFAULT_MODULES, ...(s.moduleSettings || {}) });
+    setRolePermissions({ ...DEFAULT_ROLE_PERMISSIONS, ...(s.rolePermissions || {}) });
+    setTheme(s.theme || { mode: 'light', brandColor: s.brandingColor || '#004ac6', accentColor: '#10b981', density: 'comfortable', borderRadius: 12 });
+    setNotifications(s.notifications || { lowStock: true, orders: true, sales: false, backups: true, printerErrors: true, syncFailures: true, employeeAlerts: false, channels: ['desktop'] });
+    setSecurity(s.security || { passwordMinLength: 8, sessionTimeoutMinutes: 60, autoLogout: true, failedLoginLockThreshold: 5, twoFactorEnabled: false, loginMethod: 'password', autoLockMinutes: 0 });
+    setIntegrations(s.integrations || { webhook: { enabled: false, url: '', secret: '' } });
+    setDiscount(s.discount || { maxDiscountPct: 20, managerApprovalAbove: 10, ownerApprovalAbove: 25, reasons: ['Festival offer', 'Customer complaint', 'Complimentary'], allowStacking: false });
+    setRoutingRules(s.printerRoutingRules ?? []);
+  }, []);
+
+  const appliedSnapshotRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const before = formSnapshot();
+    if (appliedSnapshotRef.current !== null && appliedSnapshotRef.current !== before) return;
+    applySettingsToForm(settings);
+    appliedSnapshotRef.current = formSnapshot();
+  }, [settings, applySettingsToForm]);
+
   useEffect(() => { void loadPrinters(); }, []);
   useEffect(() => { if (activeTab === 'history') { void loadHistory(); } }, [activeTab]);
 
@@ -406,49 +482,8 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
   };
 
   const handleDiscardChanges = () => {
-    setRestName(settings.restaurantName || '');
-    setAddress(settings.address || '');
-    setPhone(settings.phone || '');
-    setGstin(settings.gstin || '');
-    setFssai((settings as any).fssai || '');
-    setPan((settings as any).pan || '');
-    setOwnerName((settings as any).ownerName || '');
-    setEmail((settings as any).email || '');
-    setCity((settings as any).city || '');
-    setState((settings as any).state || '');
-    setPinCode((settings as any).pinCode || '');
-    setTaxRate(settings.defaultTaxRate ?? 5);
-    setTaxRules(normalizeSettingsTaxRules((settings as any).taxRules));
-    setInvoicePrefix(settings.invoicePrefix ?? 'INV-');
-    setInvoiceStartingNumber(settings.invoiceStartingNumber ?? 1024);
-    setInvoiceSuffix(settings.invoiceSuffix ?? '');
-    setPrintSize(settings.printSize || '80mm');
-    setSidebarLogoUrl(settings.sidebarLogoUrl || '');
-    setShowCustomerName(settings.showCustomerNameOnReceipt ?? true);
-    setShowLoyaltyPoints(settings.showLoyaltyPointsOnReceipt ?? true);
-    setShowPointsEarned(settings.showLoyaltyPointsEarnedOnReceipt ?? true);
-    setShowQrCode(settings.showQrCodeOnReceipt ?? true);
-    setShowDiscountBreakdown(settings.showDiscountBreakdownOnReceipt ?? true);
-    setPrintLogoOnReceipt(settings.printLogoOnReceipt ?? true);
-    setRoundOffTotal(settings.roundOffTotal ?? false);
-    setShowTaxSummary(settings.showTaxSummaryOnReceipt ?? true);
-    setReceiptFooterMessage(settings.receiptFooterMessage ?? 'THANK YOU FOR DINING WITH US!');
-    setReceiptFooterImageUrl(settings.receiptFooterImageUrl ?? '');
-    setOpeningTime(settings.openingTime ?? '08:00');
-    setClosingTime(settings.closingTime ?? '23:59');
-    setPrintCategoryHeaders(settings.printCategoryHeaders ?? true);
-    setShowItemModifiers(settings.showItemModifiers ?? true);
-    setShowOrderTime(settings.showOrderTime ?? true);
-    setShowTableNumber(settings.showTableNumber ?? true);
-    setKotOutputMode(settings.kotOutputMode ?? 'both');
-    setAutoKotOnlineOrders(settings.onlineOrderAutoKot ?? true);
-    setModuleSettings({ ...DEFAULT_MODULES, ...(settings.moduleSettings || {}) });
-    setRolePermissions({ ...DEFAULT_ROLE_PERMISSIONS, ...(settings.rolePermissions || {}) });
-    setTheme(settings.theme || { mode: 'light', brandColor: settings.brandingColor || '#004ac6', accentColor: '#10b981', density: 'comfortable', borderRadius: 12 });
-    setNotifications(settings.notifications || { channels: ['desktop'] });
-    setSecurity(settings.security || { passwordMinLength: 8, sessionTimeoutMinutes: 60, autoLogout: true, failedLoginLockThreshold: 5, twoFactorEnabled: false });
-    setIntegrations(settings.integrations || { webhook: { enabled: false, url: '', secret: '' } });
-    setRoutingRules(settings.printerRoutingRules ?? []);
+    applySettingsToForm(settings);
+    appliedSnapshotRef.current = formSnapshot();
     showToast('Changes discarded');
   };
 

@@ -57,7 +57,7 @@ export class CostIntelligenceService {
     // Cost lookups use the FULL product catalog (waste is logged for any
     // tracked item, not only recipe ingredients). Waste quantities arrive as
     // negative stock deltas — report absolute amounts.
-    const catalog: any[] = await Product.find({ restaurantId, isDeleted: { $ne: true } })
+    const catalog: any[] = await Product.find({ restaurantId, type: 'inventory', isDeleted: { $ne: true } })
       .select('name unit averageCost').limit(1000).lean().exec();
     const itemByName = new Map(catalog.map((i: any) => [String(i.name || '').toLowerCase(), i]));
     const wasteEvents: any[] = await InventoryEvent.find({

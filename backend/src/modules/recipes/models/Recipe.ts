@@ -29,6 +29,10 @@
 
 import mongoose, { Schema, Document } from 'mongoose';
 
+/** How a component entered an override recipe: copied from the base recipe at
+ *  creation time ('copy') or authored directly on the override ('custom'). */
+export type RecipeComponentSource = 'copy' | 'custom';
+
 /** A single recipe component: an inventory item or a sub-recipe. */
 export interface IRecipeComponent {
   /** Reference to an inventory product (Product._id). Required for
@@ -59,9 +63,22 @@ export interface IRecipeComponent {
   notes?: string;
   /** Display/consumption order. */
   sequence: number;
+  /** Provenance for override recipes: 'copy' if the line was inherited from the
+   *  base recipe at variant-creation time, 'custom' if authored by hand. */
+  componentSource?: RecipeComponentSource;
 }
 
 export type RecipeStatus = 'draft' | 'active' | 'archived';
+
+/**
+ * The role a recipe plays for its product.
+ *  - 'base'    → the product's default recipe (variantName is null/empty).
+ *  - 'override'→ a variant-specific customization. Unconfigured variants fall
+ *                back to the base recipe at resolve time (inheritance), so a
+ *                missing override NEVER causes zero consumption for variants
+ *                whose base recipe exists.
+ */
+export type RecipeMode = 'base' | 'override';
 
 export interface IRecipe extends Document {
   restaurantId: mongoose.Types.ObjectId;
@@ -71,7 +88,12 @@ export interface IRecipe extends Document {
   /** Denormalized product name snapshot. */
   productName: string;
   /** Optional variant name — a product can have one recipe per variant. */
-  variantName?: string;
+  variantName?: string | null;
+  /** Recipe role: base (variantName empty) or variant override. */
+  recipeMode: RecipeMode;
+  /** For override recipes: the base Recipe this variant customizes. Used for
+   *  reset-to-base and inherit semantics. */
+  sourceRecipeId?: mongoose.Types.ObjectId;
   name: string;
   description?: string;
   status: RecipeStatus;
@@ -129,6 +151,7 @@ const RecipeComponentSchema = new Schema<IRecipeComponent>(
     optional: { type: Boolean, default: false },
     notes: { type: String, trim: true, default: '' },
     sequence: { type: Number, default: 0 },
+    componentSource: { type: String, enum: ['copy', 'custom'], default: null },
   },
   { _id: false }
 );
@@ -140,6 +163,8 @@ const RecipeSchema = new Schema<IRecipe>(
     productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true, index: true },
     productName: { type: String, required: true, trim: true },
     variantName: { type: String, trim: true, default: null },
+    recipeMode: { type: String, enum: ['base', 'override'], default: 'base' },
+    sourceRecipeId: { type: Schema.Types.ObjectId, ref: 'Recipe', default: null },
     name: { type: String, required: true, trim: true },
     description: { type: String, trim: true, default: '' },
     status: { type: String, enum: ['draft', 'active', 'archived'], default: 'draft' },
@@ -200,6 +225,8 @@ const RecipeSchema = new Schema<IRecipe>(
 // One active recipe per (restaurant, product, variant) — enforced in the
 // service (partial index; Mongo cannot express it directly).
 RecipeSchema.index({ restaurantId: 1, productId: 1, variantName: 1, status: 1 });
+RecipeSchema.index({ restaurantId: 1, productId: 1, recipeMode: 1, status: 1 });
+RecipeSchema.index({ restaurantId: 1, sourceRecipeId: 1 });
 RecipeSchema.index({ restaurantId: 1, status: 1, createdAt: -1 });
 RecipeSchema.index({ restaurantId: 1, productId: 1, version: 1 });
 RecipeSchema.index({ restaurantId: 1, isDeleted: 1, createdAt: -1 });

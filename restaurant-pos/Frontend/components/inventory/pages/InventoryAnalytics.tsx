@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line,
   AreaChart, Area, PieChart, Pie, Cell, BarChart, Bar, Legend,
@@ -6,6 +6,8 @@ import {
 import { motion } from 'motion/react';
 import { useInventory, useInventoryEventsCtx } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
+import { usePageRefresh } from '../usePageRefresh';
+import ReceiptLoader from '../../ReceiptLoader';
 import {
   fetchInventoryValuation, fetchInventoryMovement, fetchInventoryWaste,
   fetchInventorySuppliers, fetchInventoryLowStock, fetchInventoryExpiry,
@@ -133,8 +135,9 @@ export default function InventoryAnalytics() {
   const [report, setReport] = useState<InventoryReportBundle>(EMPTY_BUNDLE);
   const [reportsLoaded, setReportsLoaded] = useState(false);
 
-  useEffect(() => {
+  const loadReports = useCallback(() => {
     let cancelled = false;
+    setReportsLoaded(false);
     const startDate = localDayStr(new Date(Date.now() - 29 * DAY_MS));
     const prevEnd = localDayStr(new Date(Date.now() - 30 * DAY_MS));
     const prevStart = localDayStr(new Date(Date.now() - 59 * DAY_MS));
@@ -162,6 +165,13 @@ export default function InventoryAnalytics() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    const cleanup = loadReports();
+    return cleanup;
+  }, [loadReports]);
+  // Header refresh button re-fetches all analytics reports.
+  usePageRefresh(loadReports);
 
   // Real purchase analytics — only null when the API is unreachable (offline).
   // Online-but-empty means ZERO charts (honest empty state), never demo data.
@@ -474,7 +484,7 @@ export default function InventoryAnalytics() {
           ) : reportsLoaded && lowStockRows.length === 0 ? (
             <div className="h-[220px] flex items-center justify-center text-xs text-gray-400">No low-stock items 🎉</div>
           ) : lowStockRows.length === 0 ? (
-            <div className="h-[220px] flex items-center justify-center text-xs text-gray-400">Loading…</div>
+            <div className="h-[220px] flex items-center justify-center"><ReceiptLoader label="Loading…" /></div>
           ) : (
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
               {lowStockRows.slice(0, 8).map((r) => (
@@ -522,7 +532,7 @@ export default function InventoryAnalytics() {
           ) : reportsLoaded && expiryRows.length === 0 ? (
             <div className="h-[220px] flex items-center justify-center text-xs text-gray-400">No items expiring in the next 30 days 🎉</div>
           ) : expiryRows.length === 0 ? (
-            <div className="h-[220px] flex items-center justify-center text-xs text-gray-400">Loading…</div>
+            <div className="h-[220px] flex items-center justify-center"><ReceiptLoader label="Loading…" /></div>
           ) : (
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
               {expiryRows.slice(0, 8).map((r, i) => (

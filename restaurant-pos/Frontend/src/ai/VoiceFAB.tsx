@@ -558,7 +558,7 @@ export default function VoiceFAB() {
     setCreatingProduct({ index, name, quantity, unit });
     setCreateError(null);
     try {
-      // Create the product via the existing API — availability=false makes it an inventory item.
+      // Create the product via the existing API — type='inventory' marks it as a raw material.
       // IMPORTANT: currentStock is set to 0 here because the confirm endpoint will add
       // the full quantity via InventoryService. If we set currentStock to `quantity` here,
       // the confirm would add it again (previousStock + quantity), causing double-stock.
@@ -567,6 +567,7 @@ export default function VoiceFAB() {
         code: name.toUpperCase().replace(/\s+/g, '-').slice(0, 20),
         price: 0,
         category: 'General',
+        type: 'inventory',
         availability: false, // inventory item, not menu item
         unit,
         currentStock: 0,

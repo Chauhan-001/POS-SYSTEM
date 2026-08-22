@@ -1,26 +1,67 @@
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { Calendar, Clock, AlertTriangle, AlertCircle, Info, CheckCircle } from 'lucide-react';
+import { Calendar, Clock, AlertTriangle, AlertCircle, Info, CheckCircle, Loader2 } from 'lucide-react';
 import { useNotify, useInventory } from '../InventoryManager';
+import { usePageRefresh } from '../usePageRefresh';
+import { fetchInventoryExpiry } from '../../../src/api/client';
+import ReceiptLoader from '../../ReceiptLoader';
+
+type ExpiryItem = {
+  name: string;
+  batchNumber?: string;
+  currentStock: number;
+  unit: string;
+  expiryDate?: string;
+  batches?: { batchNumber?: string; expiryDate?: string; quantity: number }[];
+};
 
 /** Build the expiry list from REAL item data (products with expiryDate in
- *  MongoDB). No demo fallback: a restaurant without expiry dates shows an
- *  honest empty state instead of fabricated rows. */
-function buildExpiryItems(items: { name: string; batchNumber?: string; currentStock: number; unit: string; expiryDate?: string }[]) {
-  return items
-    .filter(i => i.expiryDate)
-    .map(i => {
-      const daysRemaining = Math.ceil((new Date(i.expiryDate!).getTime() - Date.now()) / 86400000);
-      return {
+ *  MongoDB). Per-batch FIFO: each batch with an expiry becomes its own row with
+ *  the REMAINING quantity of that batch. Legacy items without batches fall back
+ *  to the item's single expiryDate. No demo fallback. */
+function buildExpiryItems(items: ExpiryItem[]) {
+  const rows: {
+    id: string;
+    item: string;
+    batchNumber: string;
+    quantity: number;
+    unit: string;
+    expiryDate: string;
+    daysRemaining: number;
+    suggestedAction: 'discard' | 'use_immediately' | 'sale';
+  }[] = [];
+  for (const i of items) {
+    const withExpiry = (i.batches || []).filter(b => b.expiryDate && Number(b.quantity) > 0);
+    if (withExpiry.length > 0) {
+      for (const b of withExpiry) {
+        const daysRemaining = Math.ceil((new Date(b.expiryDate!).getTime() - Date.now()) / 86400000);
+        rows.push({
+          id: `exp_${i.name}_${b.batchNumber || b.expiryDate || '0'}`,
+          item: i.name,
+          batchNumber: b.batchNumber || b.expiryDate || '—',
+          quantity: Number(b.quantity) || 0,
+          unit: i.unit,
+          expiryDate: b.expiryDate!,
+          daysRemaining,
+          suggestedAction: (daysRemaining < 0 ? 'discard' : daysRemaining <= 1 ? 'use_immediately' : daysRemaining <= 3 ? 'sale' : 'use_immediately') as any,
+        });
+      }
+    } else if (i.expiryDate) {
+      const daysRemaining = Math.ceil((new Date(i.expiryDate).getTime() - Date.now()) / 86400000);
+      rows.push({
         id: `exp_${i.name}_${i.batchNumber || '0'}`,
         item: i.name,
         batchNumber: i.batchNumber || '—',
         quantity: i.currentStock,
         unit: i.unit,
-        expiryDate: i.expiryDate!,
+        expiryDate: i.expiryDate,
         daysRemaining,
         suggestedAction: (daysRemaining < 0 ? 'discard' : daysRemaining <= 1 ? 'use_immediately' : daysRemaining <= 3 ? 'sale' : 'use_immediately') as any,
-      };
-    });
+      });
+    }
+  }
+  // Sort: most urgent (earliest expiry) first.
+  return rows.sort((a, b) => a.daysRemaining - b.daysRemaining);
 }
 
 const timeGroups = [
@@ -42,14 +83,64 @@ const actionLabels: Record<string, { label: string; icon: React.ReactNode; color
 export default function ExpiryManagement() {
   const notify = useNotify();
   const { items } = useInventory();
-  const expiryItems = buildExpiryItems(items);
+  // The dedicated backend expiry report (per-batch, with remaining quantity).
+  // Falls back to the live inventory catalog when the report can't load.
+  const [report, setReport] = useState<{
+    name: string; category?: string; currentStock: number; unit: string;
+    expiryDate: string; batchNumber: string | null; daysLeft: number; status: string;
+  }[] | null>(null);
+  const [reportSynced, setReportSynced] = useState(false);
+
+  const loadReport = useCallback(() => {
+    let cancelled = false;
+    setReportSynced(false);
+    fetchInventoryExpiry(30)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setReport(Array.isArray(data) ? data : null);
+        setReportSynced(true);
+      })
+      .catch(() => { if (!cancelled) { setReport(null); setReportSynced(true); } });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const cleanup = loadReport();
+    return cleanup;
+  }, [loadReport]);
+  // Header refresh button re-fetches this page's data.
+  usePageRefresh(loadReport);
+
+  // Fallback to the inventory catalog (per-batch via item.batches, or legacy
+  // expiryDate) when the report failed or returned nothing.
+  const expiryItems = useMemo(() => {
+    if (Array.isArray(report)) {
+      return report.map(r => ({
+        id: `exp_${r.name}_${r.batchNumber || r.expiryDate || '0'}`,
+        item: r.name,
+        batchNumber: r.batchNumber || null,
+        quantity: r.currentStock,
+        unit: r.unit,
+        expiryDate: r.expiryDate,
+        daysRemaining: r.daysLeft,
+        suggestedAction: (r.daysLeft < 0 ? 'discard' : r.daysLeft <= 1 ? 'use_immediately' : r.daysLeft <= 3 ? 'sale' : 'use_immediately') as any,
+      }));
+    }
+    return buildExpiryItems(items);
+  }, [report, items]);
+  const loading = !reportSynced;
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
       <div>
         <h1 className="text-xl font-bold">Expiry Tracking</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Items approaching expiration</p>
+        <p className="text-xs text-gray-400 mt-0.5">Items approaching expiration — per batch, with remaining quantity</p>
       </div>
 
+      {loading ? (
+        <div className="py-12 flex flex-col items-center">
+          <ReceiptLoader label="Loading expiry data…" />
+        </div>
+      ) : (<>
       {/* Timeline cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
         {timeGroups.filter(g => g.label !== 'Safe').map(group => {
@@ -86,24 +177,30 @@ export default function ExpiryManagement() {
               <p className="text-xs text-gray-400 mt-1">Set an expiry date on any inventory item to see it here — synced from your database.</p>
             </div>
           )}
-          {expiryItems.map(item => {
+          {expiryItems.map((item, idx) => {
             const group = timeGroups.find(g => g.range(item.daysRemaining)) || timeGroups[timeGroups.length - 1];
             const action = actionLabels[item.suggestedAction] || actionLabels.discard;
+            const batchCount = expiryItems.filter(e => e.item === item.item).length;
             return (
               <div key={item.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                 <div className="flex items-center gap-3">
                   <span className={`w-2 h-2 rounded-full ${group.dot}`} />
                   <div>
                     <p className="text-sm font-semibold">{item.item}</p>
-                    <p className="text-[10px] text-gray-400 font-mono">{item.batchNumber}</p>
+                    <p className="text-[10px] text-gray-400">
+                      {batchCount > 1 ? `Batch ${idx + 1} of ${batchCount}` : ''}
+                      {item.batchNumber ? `${batchCount > 1 ? ' · ' : ''}Batch #${item.batchNumber}` : ''}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="text-right">
-                    <p className="text-sm font-bold font-mono">{item.quantity} {item.unit}</p>
+                    <p className="text-sm font-bold font-mono">
+                      {item.quantity} <span className="text-[10px] font-normal text-gray-400">{item.unit} remaining</span>
+                    </p>
                     <p className="text-[10px] text-gray-400">
                       <Calendar className="w-3 h-3 inline mr-0.5" />
-                      {item.expiryDate}
+                      expires {item.expiryDate}
                     </p>
                   </div>
                   <button onClick={() => notify(`${item.item} marked for ${action.label.toLowerCase()}`, 'success')}
@@ -116,6 +213,7 @@ export default function ExpiryManagement() {
           })}
         </div>
       </motion.div>
+      </>)}
     </div>
   );
 }

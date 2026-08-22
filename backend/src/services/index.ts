@@ -43,6 +43,19 @@ import { RestaurantService } from './restaurantService';
 import { OwnerService } from './ownerService';
 import { PlanService } from './planService';
 import { DeviceService } from './deviceService';
+import { RestaurantIntelligenceOrchestrator } from './restaurantIntelligenceOrchestrator';
+import { DailyIntelligenceCycle } from './dailyIntelligenceCycle';
+import { OwnerActionCenter } from './ownerActionCenter';
+import { BusinessObjectiveSelector } from './businessObjectiveSelector';
+import { AutomationPolicyEngine } from './automationPolicyEngine';
+import { RestaurantHealthScore } from './healthScore';
+import { ExecutiveRestaurantSummary } from './executiveSummary';
+import { KillSwitches } from './killSwitches';
+import { DataQualityGate } from './dataQualityGate';
+import { ConsistencyChecks } from './consistencyChecks';
+import { AdvisorChat } from './advisorChat';
+import { Observability } from './observability';
+import { AIQualityMonitoring } from './aiQualityMonitoring';
 export { stockMovementService } from './stockMovementService';
 export { sessionService } from './sessionService';
 export { tableStateService } from './tableStateService';
@@ -88,6 +101,10 @@ export type { AvailabilityState, AvailabilityUpsertItem } from './availabilitySe
 export { orderAdjustmentService } from './orderAdjustmentService';
 export { refundService } from './refundService';
 
+// Learning / intelligence services (used by intelligenceController)
+export { recordOwnerFeedback, getFeedbackSummary, shouldSuppressStrategy, getStrategyPreferenceTrends } from './recommendationFeedbackService';
+export { runWeeklyLearningCycle, getRestaurantsNeedingProcessing, getLearningSummary } from './learningScheduler';
+
 export type {
   AuthService,
   ProductService,
@@ -122,4 +139,17 @@ export type {
   OwnerService,
   PlanService,
   DeviceService,
+  RestaurantIntelligenceOrchestrator,
+  DailyIntelligenceCycle,
+  OwnerActionCenter,
+  BusinessObjectiveSelector,
+  AutomationPolicyEngine,
+  RestaurantHealthScore,
+  ExecutiveRestaurantSummary,
+  KillSwitches,
+  DataQualityGate,
+  ConsistencyChecks,
+  AdvisorChat,
+  Observability,
+  AIQualityMonitoring,
 };
