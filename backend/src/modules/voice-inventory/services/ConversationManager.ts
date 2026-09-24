@@ -74,7 +74,7 @@ export interface ConverseOptions {
   transcript: string;
   language?: string;
   conversationId?: string;
-  /** When true, skip the LLM and use keyword fallback only. */
+  /** Legacy hint (Phase 3: parsing is always deterministic; kept for API shape). */
   skipLLM?: boolean;
 }
 

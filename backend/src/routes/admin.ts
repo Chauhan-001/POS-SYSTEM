@@ -80,33 +80,18 @@ import {
 
 import {
   getDashboardStats, getAnalytics, getRecentActivity, getLatestRestaurants,
-  getSubscriptionRevenue, getAIAnalyticsEndpoint, getDeviceAnalyticsEndpoint,
+  getSubscriptionRevenue, getDeviceAnalyticsEndpoint,
   getGrowthMetricsEndpoint, getChurnMetricsEndpoint, getActivityMetricsEndpoint,
   getApiRequestAnalyticsEndpoint,
 } from '../controllers/adminAnalyticsController';
 import {
   exportDashboardCSV, exportDashboardExcel, exportDashboardPDF,
 } from '../controllers/adminAnalyticsExportController';
-import {
-  getAiQuota,
-  getDashboardSummary,
-  getTokenSummary, getTokenTimeSeries, getTokensByModel, getTokensByRestaurant, getTokensByOwner, getTokensByFeature,
-  getRequestSummary, getRequestTimeSeries,
-  getCostSummary, getCostTimeSeries, getCostByModel, getCostByFeature, getCostByRestaurant, getCostByOwner,
-  getLatencySummary, getLatencyTimeSeries, getLatencyByModel, getLatencyByFeature,
-  getErrorSummary,
-  getModelAnalytics,
-  getRestaurantAnalytics, getRestaurantDetail,
-  getOwnerAnalytics, getOwnerDetail,
-  getFeatureAnalytics,
-  getVoiceAnalytics,
-  searchAiAnalytics,
-  getAvailableFilters,
-} from '../controllers/aiAnalyticsController';
+// PHASE 3: AI analytics endpoints (aiAnalyticsController) and AI settings
+// endpoints were removed with the AI execution layer.
 import {
   getCompanySettings, updateCompanySettings,
   getDefaultSubscriptionSettings, updateDefaultSubscriptionSettings,
-  getAISettings, updateAISettings,
   getGeneralSettings, updateGeneralSettings,
 } from '../controllers/adminSettingsController';
 import { searchSupport } from '../controllers/adminSupportController';
@@ -304,8 +289,8 @@ router.get('/admin/analytics/recent-activity', requireAuth, requireCollectionAcc
 router.get('/admin/analytics/latest-restaurants', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getLatestRestaurants);
 router.get('/admin/analytics/subscription-revenue', requireAuth, requireCollectionAccess('Subscription', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getSubscriptionRevenue);
 
-// ─── Phase 2.6 — Advanced Analytics ───────────────────────────
-router.get('/admin/analytics/ai', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getAIAnalyticsEndpoint);
+// ─── Phase 2.6 — Advanced Analytics ─────────────────────────
+// PHASE 3: GET /admin/analytics/ai (AI usage overview) removed — AI-only.
 router.get('/admin/analytics/devices', requireAuth, requireCollectionAccess('Device', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getDeviceAnalyticsEndpoint);
 router.get('/admin/analytics/growth', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getGrowthMetricsEndpoint);
 router.get('/admin/analytics/churn', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getChurnMetricsEndpoint);
@@ -317,66 +302,16 @@ router.get('/admin/analytics/export/csv', requireAuth, requireCollectionAccess('
 router.get('/admin/analytics/export/excel', requireAuth, requireCollectionAccess('Restaurant', 'read'), exportDashboardExcel);
 router.get('/admin/analytics/export/pdf', requireAuth, requireCollectionAccess('Restaurant', 'read'), exportDashboardPDF);
 
-// ─── Phase 2.7 — AI Usage Dashboard ────────────────────────────
-// Live per-key quota — short cache so the quota section stays fresh but the
-// dashboard still doesn't hammer the provider.
-router.get('/admin/analytics/ai/quota', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 30_000, tags: ['analytics'] }), getAiQuota);
-router.get('/admin/analytics/ai/dashboard', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getDashboardSummary);
-router.get('/admin/analytics/ai/filters', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 300_000, tags: ['analytics'] }), getAvailableFilters);
-router.get('/admin/analytics/ai/search', requireAuth, requireCollectionAccess('Restaurant', 'read'), searchAiAnalytics);
-
-// Token analytics
-router.get('/admin/analytics/ai/tokens/summary', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getTokenSummary);
-router.get('/admin/analytics/ai/tokens/timeseries', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getTokenTimeSeries);
-router.get('/admin/analytics/ai/tokens/by-model', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getTokensByModel);
-router.get('/admin/analytics/ai/tokens/by-restaurant', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getTokensByRestaurant);
-router.get('/admin/analytics/ai/tokens/by-owner', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getTokensByOwner);
-router.get('/admin/analytics/ai/tokens/by-feature', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getTokensByFeature);
-
-// Request analytics
-router.get('/admin/analytics/ai/requests/summary', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getRequestSummary);
-router.get('/admin/analytics/ai/requests/timeseries', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getRequestTimeSeries);
-
-// Cost analytics
-router.get('/admin/analytics/ai/cost/summary', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getCostSummary);
-router.get('/admin/analytics/ai/cost/timeseries', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getCostTimeSeries);
-router.get('/admin/analytics/ai/cost/by-model', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getCostByModel);
-router.get('/admin/analytics/ai/cost/by-feature', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getCostByFeature);
-router.get('/admin/analytics/ai/cost/by-restaurant', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getCostByRestaurant);
-router.get('/admin/analytics/ai/cost/by-owner', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getCostByOwner);
-
-// Latency analytics
-router.get('/admin/analytics/ai/latency/summary', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getLatencySummary);
-router.get('/admin/analytics/ai/latency/timeseries', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getLatencyTimeSeries);
-router.get('/admin/analytics/ai/latency/by-model', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getLatencyByModel);
-router.get('/admin/analytics/ai/latency/by-feature', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getLatencyByFeature);
-
-// Error analytics
-router.get('/admin/analytics/ai/errors/summary', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getErrorSummary);
-
-// Model analytics
-router.get('/admin/analytics/ai/models', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getModelAnalytics);
-
-// Restaurant AI usage
-router.get('/admin/analytics/ai/restaurants', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getRestaurantAnalytics);
-router.get('/admin/analytics/ai/restaurants/:restaurantId', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getRestaurantDetail);
-
-// Owner AI usage
-router.get('/admin/analytics/ai/owners', requireAuth, requireCollectionAccess('User', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getOwnerAnalytics);
-router.get('/admin/analytics/ai/owners/:ownerId', requireAuth, requireCollectionAccess('User', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getOwnerDetail);
-
-// Feature analytics
-router.get('/admin/analytics/ai/features', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getFeatureAnalytics);
-
-// Voice AI analytics
-router.get('/admin/analytics/ai/voice', requireAuth, requireCollectionAccess('Restaurant', 'read'), cached({ ttlMs: 60_000, tags: ['analytics'] }), getVoiceAnalytics);
+// ─── Phase 2.7 — AI Usage Dashboard — REMOVED (Phase 3, AI-only) ──────
+// All /admin/analytics/ai/* endpoints (quota, tokens, requests, cost,
+// latency, errors, models, restaurants, owners, features, voice) were
+// removed together with the AI execution layer.
 
 router.get('/admin/settings/company', requireAuth, requireCollectionAccess('Authorization', 'read'), cached({ ttlMs: 5 * 60_000, tags: ['settings'] }), getCompanySettings);
 router.put('/admin/settings/company', requireAuth, requireCollectionAccess('Authorization', 'update'), updateCompanySettings, invalidateCache('settings'));
 router.get('/admin/settings/default-subscription', requireAuth, requireCollectionAccess('Authorization', 'read'), cached({ ttlMs: 5 * 60_000, tags: ['settings'] }), getDefaultSubscriptionSettings);
 router.put('/admin/settings/default-subscription', requireAuth, requireCollectionAccess('Authorization', 'update'), updateDefaultSubscriptionSettings, invalidateCache('settings'));
-router.get('/admin/settings/ai', requireAuth, requireCollectionAccess('Authorization', 'read'), cached({ ttlMs: 5 * 60_000, tags: ['settings'] }), getAISettings);
-router.put('/admin/settings/ai', requireAuth, requireCollectionAccess('Authorization', 'update'), updateAISettings, invalidateCache('settings'));
+// PHASE 3: GET|PUT /admin/settings/ai removed — AI-only settings surface.
 router.get('/admin/settings/general', requireAuth, requireCollectionAccess('Authorization', 'read'), cached({ ttlMs: 5 * 60_000, tags: ['settings'] }), getGeneralSettings);
 router.put('/admin/settings/general', requireAuth, requireCollectionAccess('Authorization', 'update'), updateGeneralSettings, invalidateCache('settings'));
 

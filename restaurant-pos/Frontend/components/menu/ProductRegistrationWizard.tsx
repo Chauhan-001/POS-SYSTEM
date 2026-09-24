@@ -37,6 +37,7 @@ import type {
 import * as api from '../../src/api/client';
 import apiClient from '../../src/api/axios';
 import ImageInput from '../common/ImageInput';
+import { unitOptionsFor, conv } from '../../src/utils/units';
 
 // ─── Small helpers ────────────────────────────────────────────────
 
@@ -92,6 +93,10 @@ interface RecipeRow {
   inventoryItemId?: string;
   itemName: string;
   unit: string;
+  /** The inventory item's NATIVE unit (e.g. 'kg' when the row shows 'g') — the
+   *  denominator of averageCost, so quantity/cost stay correct after switching
+   *  to a sub-unit. */
+  itemUnit?: string;
   quantity: number;
   averageCost?: number;
   costPreview?: number;
@@ -830,6 +835,7 @@ export default function ProductRegistrationWizard({
         inventoryItemId: item._id,
         itemName: item.name,
         unit,
+        itemUnit: unit,
         quantity: 1,
         averageCost: avgCost,
         costPreview: money(avgCost),
@@ -840,11 +846,37 @@ export default function ProductRegistrationWizard({
     setRecipeResults(null);
   };
 
+  /** Row cost: quantity expressed in the item's native unit × its unit cost. */
+  const rowCost = (r: RecipeRow): number => {
+    const native = r.itemUnit || r.unit;
+    return money(conv(r.quantity, r.unit, native) * (r.averageCost ?? 0));
+  };
+
+  /** Effective cost per SELECTED unit (e.g. ₹0.1/g when the item costs ₹100/kg). */
+  const perSelectedUnitCost = (r: RecipeRow): number => {
+    const native = r.itemUnit || r.unit;
+    const factor = conv(1, native, r.unit);
+    return factor > 0 ? money((r.averageCost ?? 0) / factor) : (r.averageCost ?? 0);
+  };
+
   const setRowQty = (key: string, qty: number) => {
     const update = (r: RecipeRow): RecipeRow => {
       if (r.key !== key) return r;
       const q = Math.max(0, Number(qty) || 0);
-      return { ...r, quantity: q, costPreview: money((r.averageCost ?? 0) * q) };
+      return { ...r, quantity: q, costPreview: rowCost({ ...r, quantity: q }) };
+    };
+    updateCurrentRows((current) => current.map(update));
+  };
+
+  /** Switch an ingredient to a smaller/larger unit in the same family (kg → g,
+   *  L → ml) — the quantity is converted so the entered amount stays the same
+   *  physical quantity, and the cost preview is re-derived in the native unit. */
+  const setRowUnit = (key: string, nextUnit: string) => {
+    const update = (r: RecipeRow): RecipeRow => {
+      if (r.key !== key || !nextUnit || nextUnit === r.unit) return r;
+      const q = conv(r.quantity, r.unit, nextUnit);
+      const next = { ...r, unit: nextUnit, quantity: q };
+      return { ...next, costPreview: rowCost(next) };
     };
     updateCurrentRows((current) => current.map(update));
   };
@@ -1682,7 +1714,7 @@ export default function ProductRegistrationWizard({
                                 {r.itemName}
                                 {r.needsReview && <span className="ml-1.5 text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.5 rounded align-middle">check</span>}
                               </p>
-                              <p className="text-[10px] text-gray-400">per {r.unit}{r.averageCost !== undefined ? ` · ${fmt(r.averageCost, currencySymbol)}` : ''}</p>
+                              <p className="text-[10px] text-gray-400">per {r.unit}{r.averageCost !== undefined ? ` · ${fmt(perSelectedUnitCost(r), currencySymbol)}` : ''}</p>
                             </div>
                             <input
                               type="number" min={0}
@@ -1690,7 +1722,16 @@ export default function ProductRegistrationWizard({
                               onChange={(e) => setRowQty(r.key, Number(e.target.value))}
                               className="w-20 px-2 py-1.5 rounded-lg border border-[var(--color-border-input)] text-xs font-mono font-bold text-right focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
                             />
-                            <span className="text-[10px] text-gray-400 w-7">{r.unit}</span>
+                            <select
+                              value={r.unit}
+                              onChange={(e) => setRowUnit(r.key, e.target.value)}
+                              title="Change unit (e.g. kg → g, L → ml) — the quantity is converted automatically"
+                              className="w-16 px-1.5 py-1.5 rounded-lg border border-[var(--color-border-default)] bg-white text-[10px] font-semibold text-gray-600 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] cursor-pointer text-center"
+                            >
+                              {unitOptionsFor(r.unit).map((u) => (
+                                <option key={u} value={u}>{u}</option>
+                              ))}
+                            </select>
                             <span className="text-xs font-mono font-bold text-[var(--color-text-primary)] w-20 text-right">{fmt(r.costPreview ?? 0, currencySymbol)}</span>
                             <button onClick={() => updateCurrentRows((current) => current.filter((x) => x.key !== r.key))} className="p-1 text-gray-400 hover:text-red-600 cursor-pointer">
                               <Trash2 className="w-3.5 h-3.5" />

@@ -6,8 +6,14 @@
  * Compares Current vs Promo A vs Promo B vs Combo vs No Promotion
  * with full economic evaluation and constraint validation.
  *
+ * LAYER: CORE / ML-READY
+ *
  * All calculations are deterministic. AI is only used for explanation,
- * never for the core economic computation.
+ * never for the core economic computation. FUTURE ML: elasticity and
+ * uplift estimation can be upgraded from historical heuristics to a
+ * trained model without changing the ScenarioInput/ScenarioResult
+ * contracts. FUTURE AI INTEGRATION POINT: AI may narrate scenario
+ * comparisons; it must never compute them.
  */
 
 import mongoose from 'mongoose';

@@ -6,7 +6,7 @@
  *
  * Pipeline per request:
  *   1. Validate input (Zod)
- *   2. Parse transcript via AI (AIParser)
+ *   2. Parse transcript via the deterministic keyword/rule parser (VoiceParser)
  *   3. Resolve aliases (AliasResolver)
  *   4. Validate business rules (InventoryValidator)
  *   5. Build confirmation request (ConfirmationService)
@@ -17,7 +17,7 @@
  *   8. Update inventory (InventoryService)
  *   9. Update audit log status
  *
- * The LLM NEVER directly modifies the database.
+ * AI execution was removed in Phase 3 — parsing is fully deterministic.
  * All writes go through the validated InventoryService.
  */
 
@@ -39,20 +39,11 @@ import {
   buildParsedJson,
 } from '../services/AuditLogger';
 import { updateInventory, undoInventory } from '../services/InventoryService';
-import { transcribeAudio, getSTTConfig, getSttProviderChain } from '../services/SpeechService';
-import { recordSttUsage } from '../services/SttUsageService';
 import { issuePendingAction, consumePendingAction, rejectPendingAction, verifyPendingAction } from '../services/PendingActionService';
-import {
-  MAX_TRANSCRIBE_AUDIO_BYTES,
-  MAX_TRANSCRIBE_DURATION_SEC,
-} from '../validators/voiceInventory';
-import { aiConfig } from '../../ai/config';
 import ItemAlias from '../models/ItemAlias';
 import VoiceAuditLog from '../models/VoiceAuditLog';
 import Product from '../../../models/Product';
-import { generateAndApplyAliases } from '../services/AliasGeneratorService';
 import { learnFromCorrection } from '../services/SelfLearningService';
-import { detectNewProduct } from '../services/NewProductDetectionService';
 import type { ParsedItem, VoiceInventoryResponse, ConfirmationRequest } from '../types';
 
 /**
@@ -65,135 +56,75 @@ function safeRate(rate: unknown): number | undefined {
   return Math.min(Math.round(n * 100) / 100, 1_000_000);
 }
 
-// ====================================================================
-// POST /api/voice-inventory/transcribe
-// ====================================================================
-
 /**
- * Transcribe a base64 audio clip to text using the configured STT provider
- * (Groq Whisper by default when AI_PROVIDER=custom + AI_BASE_URL points at Groq).
- *
- * Request body:
- *   { audio: string (base64), audioMimeType?: string, language?: 'en' | 'hi' | 'hi-en' }
- *
- * Response:
- *   { success, transcript, confidence, latencyMs }
+ * Deterministic alias seeding for a product (Phase 3 — replaces the LLM
+ * AliasGeneratorService). Derives simple multilingual aliases from the name:
+ * trimmed name, singular/plural variants, and Hinglish/Devanagari names for
+ * well-known kitchen items. Same alias-shape the LLM path produced, fully
+ * offline, so the deterministic voice resolution stages keep working.
  */
-export async function transcribeVoiceAudio(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const startTime = Date.now();
-  const authReq = req as AuthenticatedRequest;
-  const { audio, audioMimeType = 'audio/webm', language = 'hi-en' } = req.body;
+function buildDeterministicAliases(productName: string, category?: string): string[] {
+  const name = String(productName || '').trim();
+  if (!name) return [];
 
-  try {
-    if (!audio || typeof audio !== 'string' || audio.length === 0) {
-      res.status(400).json({
-        success: false,
-        error: 'Audio (base64) is required',
-        latencyMs: Date.now() - startTime,
-      });
-      return;
-    }
+  const aliases = new Set<string>();
+  const lower = name.toLowerCase();
 
-    // Decode base64 → Buffer → Blob for the STT provider
-    const buffer = Buffer.from(audio, 'base64');
-    const audioBlob = new Blob([new Uint8Array(buffer)], { type: audioMimeType });
+  // Name itself + simple singular/plural variants.
+  aliases.add(name);
+  if (lower.endsWith('s') && lower.length > 3) aliases.add(name.slice(0, -1));
+  else aliases.add(`${name}s`);
 
-    // ── Audio size / duration caps (server-side, enforced BEFORE any STT call) ──
-    if (buffer.length > MAX_TRANSCRIBE_AUDIO_BYTES) {
-      res.status(413).json({
-        success: false,
-        error: `Audio too large (${Math.round(buffer.length / 1024)} KB). Max ${Math.round(MAX_TRANSCRIBE_AUDIO_BYTES / 1024)} KB.`,
-        code: 'AUDIO_TOO_LARGE',
-        latencyMs: Date.now() - startTime,
-      });
-      return;
-    }
-    // ~16 KB/s WebM/Opus — cap estimated duration so a long/hung recording is
-    // rejected instead of racking up STT cost.
-    const estimatedDurationSec = buffer.length / 16_000;
-    if (estimatedDurationSec > MAX_TRANSCRIBE_DURATION_SEC) {
-      res.status(413).json({
-        success: false,
-        error: `Audio too long (~${Math.round(estimatedDurationSec)}s > ${MAX_TRANSCRIBE_DURATION_SEC}s). Please re-record a shorter clip.`,
-        code: 'AUDIO_TOO_LONG',
-        latencyMs: Date.now() - startTime,
-      });
-      return;
-    }
-
-    console.log(
-      `[VoiceInventory] Audio file received: ${Math.round(buffer.length / 1024)} KB, ` +
-      `mime=${audioMimeType}, language=${language}, sttProvider=${getSTTConfig().provider}`
-    );
-
-    const result = await transcribeAudio(audioBlob, { language });
-    const totalLatency = Date.now() - startTime;
-
-    // Fire-and-forget cost/usage telemetry — never block the response.
-    recordSttUsage({
-      restaurantId: authReq?.user?.restaurantId || '',
-      branchId: authReq?.user?.branchIds?.[0],
-      employeeId: authReq?.user?.userId,
-      provider: result.provider || getSTTConfig().provider,
-      model: getSTTConfig().model || 'default',
-      audioBytes: buffer.length,
-      status: result.transcript ? 'success' : (result.error ? 'error' : 'empty'),
-      latencyMs: totalLatency,
-      transcriptExcerpt: result.transcript,
-      error: result.error?.message,
-      attemptHistory: result.attemptHistory,
-      costUsd: result.costUsd,
-      ipAddress: req.ip,
-    }).catch(() => {});
-
-    if (!result.transcript) {
-      console.warn('[VoiceInventory] Transcribe returned empty transcript', result.error);
-      res.json({
-        success: false,
-        error: result.error?.message || 'No speech detected in audio',
-        transcript: '',
-        confidence: 0,
-        latencyMs: totalLatency,
-        // Diagnostic details — the real Groq error, not the generic message
-        diagnostics: result.error || null,
-      });
-      return;
-    }
-
-    console.log(
-      `[VoiceInventory] Transcribed in ${totalLatency}ms: "${result.transcript.slice(0, 60)}" (conf=${result.confidence})`
-    );
-
-    res.json({
-      success: true,
-      transcript: result.transcript,
-      confidence: result.confidence,
-      language,
-      latencyMs: totalLatency,
-    });
-  } catch (error: any) {
-    console.error('[VoiceInventory] Transcribe error:', error.message, error?.stack || '');
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Audio transcription failed',
-      latencyMs: Date.now() - startTime,
-      diagnostics: error
-        ? {
-            message: error.message,
-            status: error.status,
-            stack: error.stack,
-            requestUrl: error.requestUrl,
-            model: error.model,
-            endpointMethod: error.endpointMethod,
-            responseBody: error.responseBody,
-          }
-        : null,
-    });
+  // Category as a search helper ("Dairy — Fresh Milk").
+  if (category && category.trim() && category.trim().toLowerCase() !== lower) {
+    aliases.add(category.trim());
   }
+
+  // Well-known Hinglish/Devanagari kitchen-item mappings (same spirit as the
+  // old LLM fallback — deterministic, offline, conservative).
+  const HINGLISH_MAP: Record<string, string[]> = {
+    'milk': ['doodh', 'dudh', 'दूध'],
+    'flour': ['atta', 'aata', 'आटा'],
+    'rice': ['chawal', 'चावल'],
+    'oil': ['tel', 'तेल'],
+    'paneer': ['पनीर'],
+    'butter': ['makkhan', 'मक्खन'],
+    'ghee': ['घी'],
+    'yogurt': ['dahi', 'दही'],
+    'curd': ['dahi', 'दही'],
+    'potato': ['aloo', 'आलू'],
+    'onion': ['pyaaz', 'प्याज'],
+    'tomato': ['tamatar', 'टमाटर'],
+    'sugar': ['chini', 'cheeni', 'चीनी'],
+    'salt': ['namak', 'नमक'],
+    'egg': ['anda', 'अंडा'],
+    'chicken': ['murghi', 'चिकन'],
+    'lentils': ['daal', 'दाल'],
+    'chickpeas': ['chana', 'चना'],
+    'spices': ['masala', 'मसाला'],
+  };
+
+  // Direct mapping on the full name...
+  for (const mapped of HINGLISH_MAP[lower] || []) aliases.add(mapped);
+  // ...and on any individual word ("Fresh Milk" → "doodh").
+  for (const word of lower.split(/[\s-]+/)) {
+    for (const mapped of HINGLISH_MAP[word] || []) aliases.add(mapped);
+  }
+
+  return [...aliases].filter((a) => a.length >= 2).slice(0, 20);
 }
+
+// PHASE 3: the LLM semantic (stage-8) registration was removed together with
+// the AI module. The deterministic resolution pipeline simply skips stage 8.
+
+// ====================================================================
+// POST /api/voice-inventory/transcribe — REMOVED (Phase 3)
+// ====================================================================
+// Server-side STT (Groq Whisper et al.) was AI-only execution and has been
+// removed together with SpeechService/SttUsageService. Voice input continues
+// via the browser's SpeechRecognition API, which posts plain transcripts to
+// /parse (deterministic keyword/rule parser).
+
 
 // ====================================================================
 // POST /api/voice-inventory/parse
@@ -1223,83 +1154,17 @@ export async function learnCorrection(
 }
 
 // ====================================================================
-// POST /api/voice-inventory/generate-aliases
+// POST /api/voice-inventory/generate-aliases — REMOVED (Phase 3)
 // ====================================================================
-
-/**
- * On-demand AI alias generation for a product.
- * Used from the Admin UI "Regenerate aliases" button.
- */
-export async function generateProductAliases(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const startTime = Date.now();
-  const { productId, productName, category, brand, existingAliases } = req.body;
-
-  try {
-    const result = await generateAndApplyAliases(productId, {
-      productName,
-      category,
-      brand,
-      existingAliases,
-    });
-
-    res.json({
-      success: !!result,
-      data: result,
-      message: result
-        ? `Generated ${result.allAliases.length} aliases`
-        : 'Alias generation failed',
-      latencyMs: Date.now() - startTime,
-    });
-  } catch (error: any) {
-    console.error('[VoiceInventory] Generate aliases error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Alias generation failed',
-      latencyMs: Date.now() - startTime,
-    });
-  }
-}
+// On-demand LLM alias generation was AI-only execution. Deterministic alias
+// seeding (name + Hinglish mappings) runs automatically at product creation.
 
 // ====================================================================
-// POST /api/voice-inventory/suggest-product
+// POST /api/voice-inventory/suggest-product — REMOVED (Phase 3)
 // ====================================================================
-
-/**
- * AI-powered new product suggestion.
- * Called when the resolution engine cannot match a spoken item.
- * Returns enriched product data for the merchant to approve.
- */
-export async function suggestNewProduct(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const startTime = Date.now();
-  const { spokenName, transcript, existingCategories } = req.body;
-
-  try {
-    const suggestion = await detectNewProduct(
-      spokenName,
-      transcript,
-      existingCategories
-    );
-
-    res.json({
-      success: true,
-      data: suggestion,
-      latencyMs: Date.now() - startTime,
-    });
-  } catch (error: any) {
-    console.error('[VoiceInventory] Suggest product error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Product suggestion failed',
-      latencyMs: Date.now() - startTime,
-    });
-  }
-}
+// LLM new-product suggestion was AI-only execution. Unmatched spoken names
+// surface as UNKNOWN_OR_AMBIGUOUS from the deterministic resolution engine;
+// the merchant creates products via POST /products/new.
 
 // ====================================================================
 // GET /api/voice-inventory/product-aliases
@@ -1552,12 +1417,18 @@ export async function createProductFromVoice(
 
     await product.save();
 
-    // Generate aliases asynchronously (don't wait)
+    // Seed deterministic aliases when none were supplied (Phase 3: the LLM
+    // alias generator was removed — deterministic mappings only).
     if (voiceAliases === undefined || voiceAliases.length === 0) {
-      generateAndApplyAliases(product._id.toString(), {
-        productName,
-        category,
-      }).catch((err) => console.warn('[VoiceInventory] Alias generation after create failed:', err.message));
+      const seedAliases = buildDeterministicAliases(productName, category);
+      const existing = new Set((product.voiceAliases || []).map((a: string) => a.toLowerCase()));
+      const additions = seedAliases.filter((a) => !existing.has(a.toLowerCase()));
+      if (additions.length > 0) {
+        await Product.updateOne(
+          { _id: product._id },
+          { $push: { voiceAliases: { $each: additions }, searchAliases: { $each: additions } } }
+        );
+      }
     }
 
     console.log(`[VoiceInventory] Created product from voice: "${productName}" (${sku})`);
@@ -1584,20 +1455,16 @@ export async function createProductFromVoice(
 
 /**
  * Get voice inventory module status.
+ * Phase 3: STT/LLM provider reporting removed with the AI execution layer.
  */
 export async function getStatus(
   _req: Request,
   res: Response
 ): Promise<void> {
-  const stt = getSTTConfig();
   res.json({
     enabled: true,
-    version: '1.1.0',
-    sttProvider: stt.provider,
-    sttModel: stt.model || 'default',
-    sttChain: getSttProviderChain(),
-    llmProvider: process.env.AI_PROVIDER || 'not configured',
-    llmModel: aiConfig.model || 'default',
+    version: '1.2.0',
+    parser: 'deterministic-keyword',
     languages: ['en', 'hi', 'hi-en'],
     intents: [
       'inventory_add',
@@ -1616,11 +1483,7 @@ export async function getStatus(
       'audit_logging',
       'item_alias_management',
       'product_resolution_engine',
-      'ai_alias_generation',
       'self_learning',
-      'new_product_detection',
-      'stt_provider_chain',
-      'stt_cost_tracking',
     ],
   });
 }

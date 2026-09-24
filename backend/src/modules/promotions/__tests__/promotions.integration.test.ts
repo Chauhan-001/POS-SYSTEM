@@ -14,13 +14,16 @@
  *  8. Published promotions surface on the public endpoint only while the
  *     linked offer is live; expired offers never surface their creative.
  *  9. Public projection exposes only safe presentation fields.
- * 10. AI copy falls back deterministically (no provider configured) and
- *     never invents financial values.
+ * 10. Creative copy is deterministic and never invents financial values.
  */
 
 import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
+
+// Test 10 asserts the DETERMINISTIC creative copy. Phase 3 removed the LLM
+// path entirely — generateCreativeCopy is now always the deterministic
+// template, so no AI mock is needed.
 
 import Restaurant from '../../../models/Restaurant';
 import Offer from '../../../models/Offer';
@@ -252,7 +255,7 @@ describe('Phase C — Promotion Studio lifecycle', () => {
     expect(result.promotions.length).toBe(0);
   });
 
-  it('10. AI copy falls back deterministically and never invents financial values', async () => {
+  it('10. creative copy is deterministic and never invents financial values', async () => {
     const { restaurant } = await seedRestaurant();
     const offer = await seedOffer(restaurant._id as mongoose.Types.ObjectId, { value: 20, minOrderValue: 499 });
     const copy = await promotionsService.generateCreativeCopy(String(restaurant._id), {
@@ -263,10 +266,10 @@ describe('Phase C — Promotion Studio lifecycle', () => {
       minOrderValue: 499,
       productNames: ['Burger'],
     });
-    // AI is unavailable in the test env → deterministic fallback, no crash.
+    // Deterministic template copy, no crash, no invented figures.
     expect(copy.title.length).toBeGreaterThan(0);
     expect(copy.cta.length).toBeGreaterThan(0);
-    // The fallback derives from authoritative offer data, never invents it.
+    // The copy derives from authoritative offer data, never invents it.
     expect(copy.title).toContain('20% OFF');
   });
 });

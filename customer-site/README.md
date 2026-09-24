@@ -1,4 +1,4 @@
-# HungryBolt — Customer Site
+# Customer Site
 
 React (Vite) public QR ordering website. One build serves **every restaurant tenant** —
 the URL decides which tenant and which ordering mode:

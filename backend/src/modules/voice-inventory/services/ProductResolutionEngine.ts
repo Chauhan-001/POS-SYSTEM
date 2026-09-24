@@ -15,7 +15,9 @@
  *   5. sku            — Match against product.code (SKU)
  *   6. barcode        — Match against product barcode (when present)
  *   7. fuzzy          — Levenshtein/Dice fuzzy match over names + aliases
- *   8. semantic       — Groq LLM semantic re-ranking of top candidates
+ *   8. semantic       — REMOVED in Phase 3 (was: optional LLM re-ranking).
+ *                       Stays in the trace with zero confidence so pipeline
+ *                       traces keep their shape; the stage never runs.
  *
  * After all stages, the ConfidenceEngine combines scores and decides:
  *   ≥0.95 auto-select | 0.80–0.94 confirm | 0.50–0.79 picker |
@@ -26,7 +28,6 @@
  *     — NO full collection scans.
  *   - Fuzzy stage pre-filters candidates via MongoDB text search or alias $in,
  *     then runs bounded (≤64) distance math in-process.
- *   - Semantic stage only sends a bounded (≤50) candidate set to the LLM.
  *
  * SECURITY:
  *   - Restaurant scoping is ALWAYS applied (restaurantId OR global catalog).
@@ -42,14 +43,11 @@ import {
   applyPhoneticBonus,
   normalizeForFuzzy,
 } from './FuzzyMatcher';
-import { semanticMatchWithPrefilter } from './SemanticMatcher';
 import { combineStageConfidence, decideAction } from './ConfidenceEngine';
-import { detectNewProduct } from './NewProductDetectionService';
 import type {
   ProductResolutionResult,
   ResolutionStage,
   StageResult,
-  SemanticMatchCandidate,
 } from '../types';
 
 // ====================================================================
@@ -60,8 +58,6 @@ import type {
 const FUZZY_MIN_SCORE = 0.62;
 /** Max candidates carried between stages. */
 const MAX_CANDIDATES = 64;
-/** Max candidates sent to the semantic (LLM) stage. */
-const MAX_SEMANTIC_CANDIDATES = 50;
 
 // ====================================================================
 // RESOLUTION OPTIONS
@@ -225,61 +221,11 @@ export async function resolveProduct(
       : await findFuzzyMatch(normalized, filter, restaurantId);
   pushStage(stages, 'fuzzy', fuzzyMatch, Date.now() - fuzzyStageStart);
 
-  // ─── STAGE 8: Semantic (LLM) Match ─────────────────────────────────
-  let semanticMatchResult: SemanticMatchCandidate | null = null;
-  if (
-    !options.skipSemantic &&
-    !exactMatch &&
-    !voiceMatch &&
-    !searchMatch &&
-    !learnedMatch &&
-    !skuMatch &&
-    !fuzzyMatch
-  ) {
-    const semanticStageStart = Date.now();
-    const semanticCandidates = await loadCandidateProducts(
-      filter,
-      MAX_CANDIDATES
-    );
-    const candidates = semanticCandidates.map((p) => ({
-      id: String(p._id),
-      name: p.name,
-      category: p.category,
-      unit: p.unit,
-    }));
-
-    const ranked = await semanticMatchWithPrefilter(
-      {
-        transcript: spokenName,
-        spokenName,
-        restaurantId: restaurantId || '',
-        candidates,
-      },
-      MAX_SEMANTIC_CANDIDATES
-    );
-
-    if (ranked.length > 0) {
-      const top = ranked[0];
-      const product = semanticCandidates.find((p) => String(p._id) === top.productId);
-      if (product) {
-        semanticMatchResult = {
-          productId: top.productId,
-          productName: top.productName || product.name,
-          confidence: top.confidence,
-          reason: top.reason,
-        };
-      }
-    }
-    pushStage(
-      stages,
-      'semantic',
-      semanticMatchResult
-        ? { productId: semanticMatchResult.productId, confidence: semanticMatchResult.confidence }
-        : null,
-      Date.now() - semanticStageStart,
-      semanticMatchResult ? ranked : undefined
-    );
-  }
+  // ─── STAGE 8: Semantic Match — REMOVED (Phase 3) ───────────────────
+  // The optional LLM re-ranker (SemanticMatcher) was removed with the AI
+  // execution layer. The stage stays in the trace with zero confidence so
+  // pipeline traces keep their shape; it never runs.
+  pushStage(stages, 'semantic', null, 0);
 
   // ─── Combine & Decide ──────────────────────────────────────────────
   const combined = combineStageConfidence(stages, {
@@ -287,34 +233,18 @@ export async function resolveProduct(
   });
   const decision = decideAction(
     combined.score,
-    !!(fuzzyMatch || semanticMatchResult || stages.some((s) => s.stage === 'semantic' || s.stage === 'fuzzy'))
+    !!fuzzyMatch
   );
 
   const winningProduct = await findWinningProduct(stages);
 
   // ─── New Product Detection (when unresolved) ───────────────────────
-  let newProductSuggestion = undefined;
-  if (
-    decision.level === 'new_product_suggestion' ||
-    (decision.level === 'unresolved' && !options.skipNewProductDetection)
-  ) {
-    const existingCategories =
-      options.existingCategories || (await loadExistingCategories(filter));
-    newProductSuggestion = await detectNewProduct(
-      normalized,
-      spokenName,
-      existingCategories
-    );
-    if (newProductSuggestion && newProductSuggestion.isLikelyRealProduct) {
-      decision.level = 'new_product_suggestion';
-      decision.thresholdApplied = 'new_product_suggestion';
-    }
-  }
+  // PHASE 3: AI new-product detection removed. Unresolved names surface as
+  // UNKNOWN_OR_AMBIGUOUS (or the confidence-band suggestion decision) and the
+  // merchant creates the product manually via POST /products/new.
 
   const outcome = winningProduct
     ? 'EXISTING_PRODUCT'
-    : decision.level === 'new_product_suggestion' && newProductSuggestion?.isLikelyRealProduct
-    ? 'NEW_PRODUCT_SUGGESTION'
     : 'UNKNOWN_OR_AMBIGUOUS';
 
   const result: ProductResolutionResult = {
@@ -333,7 +263,7 @@ export async function resolveProduct(
     matchedStage: combined.matchedStage,
     stages,
     decision: decision.level,
-    newProductSuggestion,
+    newProductSuggestion: undefined,
     shouldLearn: decision.level === 'product_picker' || decision.level === 'new_product_suggestion',
   };
 
@@ -349,7 +279,7 @@ function pushStage(
   stage: ResolutionStage,
   match: { productId?: string; confidence: number; matchedOn?: string } | null,
   latencyMs: number,
-  alternatives?: SemanticMatchCandidate[]
+  alternatives?: Array<{ productId: string; productName: string; confidence: number }>
 ): void {
   stages.push({
     stage,
@@ -539,14 +469,6 @@ async function loadCandidateProducts(
   }
 
   return candidates;
-}
-
-async function loadExistingCategories(filter: any): Promise<string[]> {
-  const docs = await Product.find(filter)
-    .select('category')
-    .distinct('category')
-    .limit(200);
-  return Array.isArray(docs) ? docs : [];
 }
 
 // ====================================================================

@@ -80,14 +80,15 @@ export const MODULE_FEATURE_MAP: Record<string, string[]> = {
   enableOffersPopup: ['offers', 'marketing'],
   enableProducts: ['products'],
   enableStaff: ['staff'],
-  enableAISummary: ['ai'],
+  // PHASE 3/4: AI-only module flags (enableAISummary, enableAIVoiceEntry,
+  // enableAIWeather, enableAIClosingAssistant) removed — their features no
+  // longer exist. Kept: enableAIInventoryHealth / enableAIPurchaseRecs /
+  // enableAILowStock / enableAIWasteAnalysis — the cards now run on the
+  // deterministic core engine and their toggles still apply.
   enableAIInventoryHealth: ['ai'],
   enableAIPurchaseRecs: ['ai'],
   enableAILowStock: ['ai'],
   enableAIWasteAnalysis: ['ai'],
-  enableAIVoiceEntry: ['ai', 'voice_ordering'],
-  enableAIWeather: ['ai'],
-  enableAIClosingAssistant: ['ai'],
   enableInventory: ['inventory'],
 };
 
@@ -1363,15 +1364,13 @@ export function usePOSState() {
       enableProducts: true, enableStaff: true, enableOffers: true,
       // ─── Online Ordering ─────────────────────────────────
       autoMarkSoldOutFromOrder: false, enableMenuAvailability: true,
-      // ─── AI Feature Toggles ──────────────────────────────
-      enableAISummary: true,
+      // ─── AI Feature Toggles (Phase 3/4: summary / voice entry / weather /
+      // closing-assistant flags removed — those AI features no longer exist;
+      // the remaining cards run on the deterministic core engine) ──
       enableAIInventoryHealth: true,
       enableAIPurchaseRecs: true,
       enableAILowStock: true,
       enableAIWasteAnalysis: true,
-      enableAIVoiceEntry: true,
-      enableAIWeather: true,
-      enableAIClosingAssistant: true,
       ...saved,
     };
 

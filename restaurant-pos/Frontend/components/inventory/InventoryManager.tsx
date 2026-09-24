@@ -118,9 +118,9 @@ import SupplierManagement from './pages/SupplierManagement';
 import InventoryAnalytics from './pages/InventoryAnalytics';
 import ExpiryManagement from './pages/ExpiryManagement';
 import SettingsPage from './pages/Settings';
-import VoicePage from './pages/VoicePage';
 import InventoryTimeline from './pages/InventoryTimeline';
-import VoiceFAB from '../../src/ai/VoiceFAB';
+// PHASE 3: the Voice page + Voice FAB were removed with the AI layer
+// (server-side STT endpoint deleted; voice entry was AI-only).
 
 type InventoryCtxType = {
   items: InventoryItem[];
@@ -263,7 +263,6 @@ const NAV_ITEMS: { id: InventoryPage; icon: typeof LayoutDashboard; label: strin
   { id: 'analytics', icon: BarChart3, label: 'Reports' },
   { id: 'recipes', icon: ChefHat, label: 'Recipes' },
   { id: 'cost', icon: IndianRupee, label: 'Costs' },
-  { id: 'voice', icon: Mic, label: 'Voice' },
   { id: 'timeline', icon: Activity, label: 'Activity' },
 ];
 
@@ -776,10 +775,7 @@ export default function InventoryManager({ onBack, moduleSettings, products }: I
               )}
               {page === 'expiry' && <ExpiryManagement />}
               {page === 'settings' && <SettingsPage />}
-              {page === 'voice' && <VoicePage />}
               {page === 'timeline' && <InventoryTimeline />}
-              {/* Voice FAB — accessible from all inventory pages */}
-              {moduleSettings?.enableAIVoiceEntry !== false && page !== 'voice' && <VoiceFAB />}
           </motion.div>
         </main>
 

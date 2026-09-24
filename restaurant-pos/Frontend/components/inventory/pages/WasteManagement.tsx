@@ -1,12 +1,18 @@
 import { Trash2, Plus, X, Lightbulb } from 'lucide-react';
 import RefreshButton from '../../common/RefreshButton';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNotify, useInventory, useInventoryEventsCtx } from '../InventoryManager';
-import { analyzeWaste, type WasteAnalysis, type AiResult } from '../../../src/ai/aiData';
 import type { WasteEntry } from '../types';
+// PHASE 3: the AI waste analysis (aiData live fetch) was removed with the AI
+// layer; the analysis card runs on the deterministic core engine.
 
 const WASTE_REASONS = ['spoiled', 'burnt', 'expired', 'dropped', 'other'] as const;
+
+/** View shape for the deterministic waste-analysis card (Phase 3). */
+interface AiAnalysisView {
+  data: WasteAnalysis;
+}
 
 /**
  * Parse the waste reason out of the backend event details. The stock engine
@@ -62,19 +68,11 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
   }, [events, itemCostByName]);
 
   const totalWaste = wasteLog.reduce((s, w) => s + w.cost, 0);
-  const [wasteAnalysis, setWasteAnalysis] = useState<AiResult<WasteAnalysis> | null>(null);
-  // AI analysis fires ONCE on mount (fresh login) and on the explicit Refresh
-  // button — never on the 5-minute events poll (which re-creates wasteLog and
-  // used to re-fire an LLM call each time). The backend cache absorbs repeats.
-  const [wasteAiRefreshKey, setWasteAiRefreshKey] = useState(0);
-  const [wasteAiLoading, setWasteAiLoading] = useState(false);
-  useEffect(() => {
-    setWasteAiLoading(true);
-    analyzeWaste(wasteLog)
-      .then(setWasteAnalysis)
-      .catch(() => setWasteAnalysis(null))
-      .finally(() => setWasteAiLoading(false));
-  }, [wasteAiRefreshKey]); // mount + explicit refresh only
+  // Deterministic waste analysis (Phase 3 — was an AI fetch). Recomputed
+  // synchronously from the log; no loading state needed.
+  const wasteAnalysis: AiAnalysisView | null = wasteLog.length > 0
+    ? { data: analyzeWasteLocal(wasteLog) }
+    : null;
 
   const handleSubmit = async () => {
     const item = items.find(i => i.name === formItem);
@@ -164,7 +162,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         )}
       </AnimatePresence>
 
-      {/* AI Waste Analysis */}
+      {/* Waste Analysis (deterministic) */}
       {moduleSettings?.enableAIWasteAnalysis !== false && wasteLog.length > 0 && wasteAnalysis && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
@@ -173,23 +171,8 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
             <div className="w-7 h-7 rounded-xl bg-[var(--color-purple-500-solid)] flex items-center justify-center">
               <Lightbulb className="w-4 h-4 text-white" />
             </div>
-            <span className="text-sm font-bold text-gray-800">AI Waste Analysis</span>
-            <RefreshButton
-              onRefresh={() => { setWasteAiRefreshKey(k => k + 1); return Promise.resolve(); }}
-              busy={wasteAiLoading}
-              title="Refresh AI analysis (calls the AI once)"
-              className="ml-auto gap-1 text-[9px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 border border-purple-200 rounded-full px-2 py-0.5 transition-colors"
-              iconClassName="w-2.5 h-2.5"
-            >
-              Refresh
-            </RefreshButton>
-            <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-              wasteAnalysis.source === 'live'
-                ? 'bg-emerald-50 text-emerald-600'
-                : 'bg-amber-50 text-amber-600'
-            }`}>
-              {wasteAnalysis.source === 'live' ? '● AI live' : '● Offline estimate'}
-            </span>
+            <span className="text-sm font-bold text-gray-800">Waste Analysis</span>
+            <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200" title="Calculated locally from your logged waste entries">Live data</span>
             <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
               wasteAnalysis.data.trend === 'increasing' ? 'bg-red-50 text-red-700' :
               wasteAnalysis.data.trend === 'decreasing' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'

@@ -13,6 +13,10 @@ export interface ICustomerRequest extends Document {
   branchId?: mongoose.Types.ObjectId;
   orderType: 'TABLE' | 'CAR' | 'TAKEAWAY' | 'PICKUP';
   tableId?: mongoose.Types.ObjectId;
+  /** Snapshot of the table NUMBER at request time — carried on the request so
+   *  the POS Calls panel / notifications show "Table 12" without re-resolving
+   *  the table roster (which may be branch-scoped or not yet loaded). */
+  tableNumber?: number | string;
   carId?: string;
   /** For ONLINE_ORDER requests — the order this call refers to. */
   orderId?: mongoose.Types.ObjectId;
@@ -79,6 +83,10 @@ const CustomerRequestSchema = new Schema<ICustomerRequest>(
       type: Schema.Types.ObjectId,
       ref: 'Table',
       index: true,
+    },
+    tableNumber: {
+      type: Schema.Types.Mixed,
+      default: null,
     },
     carId: {
       type: String,

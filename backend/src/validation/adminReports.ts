@@ -33,7 +33,8 @@ export const reportInactiveQuerySchema = reportQuerySchema.extend({
 
 /** Export job creation body. */
 export const reportExportBodySchema = z.object({
-  reportKey: z.enum(['growth', 'revenue', 'subscriptions', 'ai-revenue', 'support', 'devices', 'usage', 'owners', 'inactive', 'features']),
+  // 'ai-revenue' removed from the export whitelist (Phase 3 — AI-only report)
+  reportKey: z.enum(['growth', 'revenue', 'subscriptions', 'support', 'devices', 'usage', 'owners', 'inactive', 'features']),
   format: z.enum(['csv', 'json', 'xlsx', 'pdf']),
   query: reportQuerySchema.partial().optional(),
   password: optString,

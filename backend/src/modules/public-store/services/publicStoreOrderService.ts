@@ -1042,6 +1042,7 @@ export class PublicStoreOrderService {
         branchId: branchOid || undefined,
         orderType: (mode || 'TABLE') as any,
         tableId: tableOid,
+        tableNumber: body.tableNumber ?? undefined,
         carId: body.parkingSlot || body.carPlate || undefined,
         type: 'ONLINE_ORDER',
         priority: 'HIGH',
@@ -1191,6 +1192,7 @@ export class PublicStoreOrderService {
       mode?: 'TABLE' | 'CAR' | 'PICKUP';
       branchId?: string;
       tableId?: string;
+      tableNumber?: number | string;
       parkingSlot?: string;
       carPlate?: string;
       name?: string;
@@ -1221,14 +1223,19 @@ export class PublicStoreOrderService {
     // bell only sees its own location. Priority: explicit branchId (validated
     // to belong to this restaurant) → the table's branch (TABLE mode) → the
     // sticker's baked branch (QrToken). Never accept another tenant's branch.
+    // The table row is resolved independently so the table NUMBER is always
+    // available for notifications (regardless of which branch source wins).
+    let tableRow: any = null;
+    if (tableOid) {
+      tableRow = await Table.findOne({ _id: tableOid, restaurantId: rid, isDeleted: { $ne: true } }).lean().exec();
+    }
     let branchOid: mongoose.Types.ObjectId | null = null;
     if (body.branchId && mongoose.Types.ObjectId.isValid(body.branchId)) {
       const branch = await Branch.findOne({ _id: body.branchId, restaurantId: rid, isDeleted: { $ne: true } }).lean().exec();
       if (!branch) throw new AppError(400, 'Invalid branch');
       branchOid = branch._id;
-    } else if (tableOid) {
-      const table = await Table.findOne({ _id: tableOid, restaurantId: rid, isDeleted: { $ne: true } }).lean().exec();
-      if (table?.branchId) branchOid = table.branchId;
+    } else if (tableRow?.branchId) {
+      branchOid = tableRow.branchId;
     }
     if (!branchOid) {
       // Sticker fallback: QrToken.token is the opaque `qr_…` capability, while
@@ -1248,6 +1255,7 @@ export class PublicStoreOrderService {
       branchId: branchOid || undefined,
       orderType: mode,
       tableId: tableOid,
+      tableNumber: tableRow?.number ?? body.tableNumber ?? undefined,
       carId: body.parkingSlot || body.carPlate || undefined,
       customer: { name: body.name, phone: body.phone },
       type: (TYPE_MAP[reason] || 'CALL_WAITER') as any,
@@ -1264,6 +1272,7 @@ export class PublicStoreOrderService {
       orderType: mode,
       branchId: branchOid ? String(branchOid) : null,
       tableId: body.tableId || null,
+      tableNumber: tableRow?.number ?? null,
       parkingSlot: body.parkingSlot || null,
       carPlate: body.carPlate || null,
       message: body.message || null,

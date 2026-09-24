@@ -2,7 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * promotionsService.ts — Business logic for the Phase C Promotion Studio.
+ * promotionsService.ts — LAYER: CORE — Business logic for the Phase C
+ * Promotion Studio. This module must remain independent of AI and ML.
  *
  * The Offer is the financial source of truth. Promotions are presentation:
  *   - create/update validate that offerId belongs to the JWT restaurant.
@@ -14,11 +15,11 @@
  *     against the live offer so stale creatives are surfaced, never silently
  *     displayed with outdated pricing.
  *
- * AI copy (generateCreativeCopy) uses the existing AI provider abstraction via
- * executeAiText with feature 'promotion-copy' — the same cache/quota/fallback
- * pipeline as every other LLM feature. Only sanitized creative context is sent
- * (restaurant name, offer title/type/value, product names) — never PII, costs,
- * margins, stock, or supplier data.
+ * PHASE 2 (core extraction): the single AI entry point — generateCreativeCopy
+ * — is isolated below. It lazy-imports the AI module so this file has no
+ * static AI dependency, and it always degrades to the deterministic template
+ * (defaultCreative shape) when AI is unavailable. In Phase 3 the AI path can
+ * be lifted out wholesale without touching the CRUD/status logic above.
  */
 
 import mongoose from 'mongoose';
@@ -27,7 +28,6 @@ import Offer from '../../../models/Offer';
 import Product from '../../../models/Product';
 import { AppError } from '../../../utils/AppError';
 import { auditLogRepo } from '../../../repositories';
-import { executeAiText } from '../../ai/services/aiService';
 
 export interface PromotionActor {
   id?: string;
@@ -49,29 +49,6 @@ export interface CreativeCopyInput {
   language?: 'en' | 'hi' | 'hinglish';
   tone?: string;
   length?: 'short' | 'medium';
-}
-
-/** Short, concrete style guides — mirrors the offer-copy prompt (modules/ai/prompts/offerCopy.ts). */
-const CREATIVE_TONE_GUIDES: Record<string, string> = {
-  friendly: 'warm, casual and welcoming, like a neighbourhood restaurant talking to a regular customer',
-  funky: 'bold, playful and full of energy — punchy words, mild slang and personality, like a young street-food brand',
-  zomato: 'Zomato/Swiggy style — short, quirky, witty and appetite-driven; foodie humour and playful emoji',
-  professional: 'polished, clear and trustworthy — professional restaurant marketing copy, no slang',
-  premium: 'elegant and exclusive — refined wording that makes the offer feel like a privilege',
-  festive: 'celebration energy — festival framing, joyful words, light festive emoji',
-  genz: 'modern Gen-Z voice — casual, punchy one-liners, current slang used naturally',
-  minimal: 'very short and clean — fewest words possible while staying clear and friendly',
-};
-
-function creativeLanguageInstruction(language: string): string {
-  switch (language) {
-    case 'hi':
-      return 'Write in HINDI (Devanagari or clear Roman Hindi). Keep brand words like OFF, Combo and the discount value in English where it reads naturally.';
-    case 'hinglish':
-      return 'Write in HINGLISH — a natural mix of Hindi and English like young Indian food brands use on WhatsApp and Zomato (e.g. "Craving hai? 20% OFF mil raha hai!"). Hindi can be Roman script; keep it fun and authentic.';
-    default:
-      return 'Write in clear, natural English.';
-  }
 }
 
 export interface CreativeCopyResult {
@@ -350,8 +327,15 @@ export class PromotionsService {
   }
 
   /**
-   * AI creative copy — sanitized context only. Falls back to a deterministic
-   * template when the LLM is unavailable (executeAiText already handles this).
+   * Creative copy — fully deterministic templates (Phase 3). Previously an
+   * LLM produced the copy with these same templates as the offline fallback;
+   * the template output is now the only path, so copy can never invent
+   * discounts, prices or dates. The core (CRUD, publish, duplicate, mismatch
+   * checks) was and remains AI-independent.
+   *
+   * FUTURE AI INTEGRATION POINT: a future AI layer may re-add an LLM pass on
+   * top of these templates — the deterministic output below is and remains
+   * the source of truth.
    */
   async generateCreativeCopy(restaurantId: string, input: CreativeCopyInput): Promise<CreativeCopyResult> {
     const offer = await loadOffer(restaurantId, input.offerId);
@@ -364,38 +348,8 @@ export class PromotionsService {
     const validity = input.validUntil || offer.endDate ? `valid until ${input.validUntil || offer.endDate}` : '';
     const language = input.language || 'en';
     const tone = input.tone || 'friendly';
-    const lengthMode = input.length || 'short';
-    const toneGuide = CREATIVE_TONE_GUIDES[tone] || CREATIVE_TONE_GUIDES.friendly;
-
-    const context = [
-      `Restaurant: ${restaurantName}`,
-      `Offer title: ${offerTitle}`,
-      `Discount: ${discount}`,
-      products ? `Applicable on: ${products}` : '',
-      minOrder ? `Minimum order: ₹${Math.round(minOrder)}` : '',
-      validity,
-      `Tone: ${tone} — ${toneGuide}`,
-      `Language: ${creativeLanguageInstruction(language)}`,
-      lengthMode === 'short' ? 'Keep it SHORT (max 6 words for title, 1 line for subtitle).' : 'Medium length.',
-    ].filter(Boolean).join('\n');
-
-    const prompt = `You are a restaurant marketing copywriter. Write promotion creative copy for the restaurant below. Respond with EXACTLY 4 lines, one per field, with NO labels, NO quotes, NO numbering:
-Line 1: a catchy promotion title
-Line 2: a short subtitle
-Line 3: a one-sentence description with a call to action
-Line 4: a short CTA button label (2-3 words)
-
-${context}
-
-Rules:
-- Never invent discounts, prices, or dates that are not listed above.
-- Never mention internal costs, margins, stock, or customer data.
-- Plain text only.`;
 
     const start = Date.now();
-    const result = await executeAiText({ prompt, feature: 'promotion-copy', cacheKeyVariant: String(input.offerId), tenantId: restaurantId });
-    const text = String(result.text || '').trim();
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4);
 
     const funky = ['funky', 'genz', 'zomato'].includes(tone);
     const fallbackTitle = `${discount} · ${offerTitle}`;
@@ -412,12 +366,12 @@ Rules:
     const fallbackCta = language === 'hinglish' ? 'Order Karo' : language === 'hi' ? 'ऑर्डर करें' : funky ? 'Order Now 🔥' : 'Order Now';
 
     const out: CreativeCopyResult = {
-      title: lines[0] || fallbackTitle,
-      subtitle: lines[1] || fallbackSubtitle,
-      description: lines[2] || fallbackDesc,
-      cta: lines[3] || fallbackCta,
-      fallback: result.fallback || lines.length < 4,
-      cached: result.cached,
+      title: fallbackTitle,
+      subtitle: fallbackSubtitle,
+      description: fallbackDesc,
+      cta: fallbackCta,
+      fallback: true,
+      cached: false,
       latency: Date.now() - start,
     };
     return out;

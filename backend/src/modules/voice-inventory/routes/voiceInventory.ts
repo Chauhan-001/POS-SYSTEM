@@ -17,6 +17,11 @@
  *   GET  /api/voice-inventory/history   — Query voice action history
  *   GET  /api/voice-inventory/status    — Module status
  *
+ * REMOVED (Phase 3 — AI-only):
+ *   POST /api/voice-inventory/transcribe (server-side STT)
+ *   POST /api/voice-inventory/generate-aliases (LLM alias generation)
+ *   POST /api/voice-inventory/suggest-product (LLM new-product suggestion)
+ *
  * SECURITY:
  *   - All routes (except status) require authentication
  *   - All input is validated with Zod schemas
@@ -31,7 +36,6 @@ import { validate } from '../../../middleware/validate';
 import { voiceApiLimiter } from '../../../middleware/rateLimiter';
 import {
   parseVoiceCommand,
-  transcribeVoiceAudio,
   confirmVoiceAction,
   undoVoiceAction,
   listAliases,
@@ -43,8 +47,6 @@ import {
   getStatus,
   resolveSpokenProduct,
   learnCorrection,
-  generateProductAliases,
-  suggestNewProduct,
   listProductAliases,
   updateProductAliases,
   handleConverse,
@@ -53,7 +55,6 @@ import {
 } from '../controllers/voiceInventoryController';
 import {
   voiceParseRequestSchema,
-  voiceTranscribeSchema,
   voiceConfirmSchema,
   voiceUndoSchema,
   aliasCreateSchema,
@@ -62,8 +63,6 @@ import {
   voiceHistorySchema,
   resolveProductSchema,
   learnSchema,
-  generateAliasesSchema,
-  suggestProductSchema,
   converseSchema,
   analyticsSchema,
   createProductFromVoiceSchema,
@@ -95,18 +94,8 @@ router.post(
   parseVoiceCommand
 );
 
-/**
- * POST /api/voice-inventory/transcribe
- * Transcribe a base64 audio clip to text (Groq Whisper / STT provider).
- */
-router.post(
-  '/transcribe',
-  requireAuth,
-  requireFeature('inventory'),
-  validate({ body: voiceTranscribeSchema }),
-  voiceApiLimiter,
-  transcribeVoiceAudio
-);
+// POST /api/voice-inventory/transcribe — REMOVED (Phase 3, AI-only STT).
+// Browser SpeechRecognition posts plain transcripts to /parse instead.
 
 /**
  * POST /api/voice-inventory/confirm
@@ -231,31 +220,9 @@ router.post(
   learnCorrection
 );
 
-/**
- * POST /api/voice-inventory/generate-aliases
- * On-demand AI alias generation for a product.
- */
-router.post(
-  '/generate-aliases',
-  requireAuth,
-  requireFeature('inventory'),
-  validate({ body: generateAliasesSchema }),
-  voiceApiLimiter,
-  generateProductAliases
-);
-
-/**
- * POST /api/voice-inventory/suggest-product
- * AI-powered new product suggestion for unmatched items.
- */
-router.post(
-  '/suggest-product',
-  requireAuth,
-  requireFeature('inventory'),
-  validate({ body: suggestProductSchema }),
-  voiceApiLimiter,
-  suggestNewProduct
-);
+// POST /api/voice-inventory/generate-aliases — REMOVED (Phase 3, LLM aliases).
+// POST /api/voice-inventory/suggest-product — REMOVED (Phase 3, LLM detection).
+// Deterministic alias seeding runs automatically at product creation.
 
 // ─── PRODUCT ALIAS ADMIN ENDPOINTS ────────────────────────────────
 

@@ -26,7 +26,7 @@ import BillItemModel from '../models/BillItem';
 import BranchModel from '../models/Branch';
 import type { RecommendationContext } from './offerEngine';
 import { resolveMenuProductScope } from './productService';
-import { costIntelligenceService } from '../modules/recipes/services/costIntelligenceService';
+import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
 import { getOfferPerformance } from './offerAnalyticsService';
 import { profitabilityService } from '../modules/recipes/services/profitabilityService';
 
@@ -354,7 +354,7 @@ export async function buildRecommendationContext(
   let wastage: RecommendationContext['wastage'];
   if (opts.includeMargin !== false) {
     try {
-      const m = await costIntelligenceService.metrics(String(restaurantId), { days: 60 });
+      const m = await costIntelligenceCore.metrics(String(restaurantId), { days: 60 });
       const productMargins = (m.productProfitability || []).map((r: any) => ({
         productId: String(r.productId),
         productName: r.productName,
@@ -389,7 +389,7 @@ export async function buildRecommendationContext(
 
       let deterioratingProducts: NonNullable<RecommendationContext['margin']>['deterioratingProducts'] = [];
       try {
-        const det = await costIntelligenceService.marginDeterioration(String(restaurantId), { days: 60 });
+        const det = await costIntelligenceCore.marginDeterioration(String(restaurantId), { days: 60 });
         deterioratingProducts = (det.rows || []).map((r: any) => ({
           productId: String(r.productId),
           productName: r.productName,

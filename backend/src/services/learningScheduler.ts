@@ -6,6 +6,13 @@
  * strategy profiles, detect fatigue, and generate insights. These jobs run
  * on a schedule and are tenant-isolated.
  *
+ * LAYER: CORE / ML-READY
+ *
+ * Produces structured outcome data (recommendation outcomes, strategy
+ * profiles, promotion fatigue patterns) that a future ML service can consume.
+ * No model inference belongs here. Signals are recorded automatically from
+ * deterministic outcome measurements — never from an LLM.
+ *
  * Billing remains independent of the learning system. No autonomous promotion
  * publishing.
  */

@@ -62,7 +62,6 @@ import {
   getDashboardStats,
   getRecentActivity,
   getLatestRestaurants,
-  getAIAnalytics,
   getDeviceAnalytics,
   getGrowthMetrics,
   getChurnMetrics,
@@ -140,11 +139,7 @@ export default function Dashboard() {
     refetchInterval: REFRESH_INTERVAL,
   })
 
-  const aiAnalytics = useQuery({
-    queryKey: ['dashboard', 'ai-analytics'],
-    queryFn: () => getAIAnalytics(7),
-    refetchInterval: REFRESH_INTERVAL,
-  })
+  // AI Analytics query removed (Phase 3 — AI-only dashboard section deleted)
 
   const deviceAnalytics = useQuery({
     queryKey: ['dashboard', 'device-analytics'],
@@ -210,7 +205,7 @@ export default function Dashboard() {
         <StatCard label="Active Subscriptions" value={activeSubs} icon={CreditCard} color="text-success bg-success/10" link="/subscriptions" isLoading={stats.isLoading} />
         <StatCard label="Subscriptions Expiring" value={stats.data?.subscriptionsExpiring} icon={CreditCard} color="text-warning bg-warning/10" link="/subscriptions" isLoading={stats.isLoading} />
         <StatCard label="Today's Logins" value={stats.data?.todayLogins} icon={LogIn} color="text-success bg-success/10" link="/analytics" isLoading={stats.isLoading} />
-        <StatCard label="AI Requests" value={stats.data?.aiRequests} icon={Cpu} color="text-info bg-info/10" link="/ai-usage" isLoading={stats.isLoading} />
+        {/* 'AI Requests' stat card removed (Phase 3 — AI-only page deleted) */}
       </div>
 
       {/* Growth Metrics */}
@@ -255,45 +250,6 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* AI Analytics Overview */}
-      {aiAnalytics.data && (
-        <Card>
-          <CardHeader>
-            <div>
-              <CardTitle><Cpu size={16} className="inline mr-2" />AI Analytics (7 days)</CardTitle>
-              <CardDescription>AI usage, success rate, and performance</CardDescription>
-            </div>
-          </CardHeader>
-          <div className="px-6 pb-6">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <p className="text-xs text-surface-400 uppercase tracking-wider">Total Requests</p>
-                <p className="text-xl font-bold text-surface-900 dark:text-surface-100">{formatNumber(aiAnalytics.data.totalRequests)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-surface-400 uppercase tracking-wider">Success Rate</p>
-                <p className="text-xl font-bold text-success">{aiAnalytics.data.successRate}%</p>
-              </div>
-              <div>
-                <p className="text-xs text-surface-400 uppercase tracking-wider">Failures</p>
-                <p className="text-xl font-bold text-danger">{formatNumber(aiAnalytics.data.failures)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-surface-400 uppercase tracking-wider">Cache Hits</p>
-                <p className="text-xl font-bold text-surface-900 dark:text-surface-100">{formatNumber(aiAnalytics.data.cacheHits)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-surface-400 uppercase tracking-wider">Fallback Usage</p>
-                <p className="text-xl font-bold text-warning">{formatNumber(aiAnalytics.data.fallbackUsage)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-surface-400 uppercase tracking-wider">Avg Latency</p>
-                <p className="text-xl font-bold text-surface-900 dark:text-surface-100">{aiAnalytics.data.averageLatency}ms</p>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
 
       {/* Device Analytics Overview */}
       {deviceAnalytics.data && (
@@ -619,7 +575,6 @@ export default function Dashboard() {
           <Link to="/subscriptions"><Button variant="outline" size="sm"><CreditCard size={14} /> View Subscriptions</Button></Link>
           <Link to="/analytics"><Button variant="outline" size="sm"><TrendingUp size={14} /> View Analytics</Button></Link>
           <Link to="/support"><Button variant="outline" size="sm"><Activity size={14} /> Support Search</Button></Link>
-          <Link to="/ai-usage"><Button variant="outline" size="sm"><Cpu size={14} /> AI Usage</Button></Link>
         </div>
       </Card>
     </div>

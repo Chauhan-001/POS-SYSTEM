@@ -4,14 +4,15 @@ import RefreshButton from '../../common/RefreshButton';
 import { motion } from 'motion/react';
 import { daysUntilExpiry } from '../expiryUtils';
 import type { InventoryPage, InventoryAlert } from '../types';
-import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction, AiSource } from '../../../src/ai/aiData';
+import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction, AiSource } from '../../../src/core/inventoryIntelligence';
 import { useInventory } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
 import { usePageRefresh } from '../usePageRefresh';
-import AICard from '../../../src/ai/AICard';
-import { computeHealthScore, generatePurchaseRecs, predictLowStock, computeInventoryCardsLocal } from '../../../src/ai/aiData';
+
 import { fetchInventoryWaste } from '../../../src/api/client';
-import WeatherWidget from '../../../src/ai/WeatherWidget';
+// PHASE 3: the AI card backend (AICard + aiData live fetches) and the Weather
+// Widget were removed with the AI layer. All three intelligence cards run on
+// the deterministic core engine (src/core/inventoryIntelligence.ts).
 
 export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: (page: InventoryPage) => void; moduleSettings?: Record<string, boolean> }) {
   const { items, synced: itemsSynced } = useInventory();
@@ -144,13 +145,12 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
     }
     const sigAtStart = catalogSigRef.current;
     setAiLoading(true);
+    // Deterministic core computation (Phase 3 — was a live AI fetch).
     Promise.all([
-      computeHealthScore(items, wasteCost),
-      generatePurchaseRecs(items),
-      predictLowStock(items, purchases ?? undefined),
+      Promise.resolve({ data: computeHealthScoreLocal(items, wasteCost), source: 'data' as AiSource }),
+      Promise.resolve({ data: generatePurchaseRecsLocal(items), source: 'data' as AiSource }),
+      Promise.resolve({ data: predictLowStockLocal(items, purchases ?? undefined), source: 'data' as AiSource }),
     ]).then(([h, p, l]) => {
-      // Catalog changed while the LLM was answering — drop the stale result;
-      // the delta effect already recomputed (or will recompute) locally.
       if (catalogSigRef.current !== sigAtStart) return;
       lastComputedSigRef.current = sigAtStart;
       setHealthScore(h.data);
@@ -480,13 +480,7 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.15 }}
           className="space-y-3"
         >
-          {moduleSettings?.enableAIWeather !== false && (
-            <WeatherWidget
-              compact
-              menuItems={items.map(i => i.name).filter(Boolean)}
-              inventoryItems={items.map(i => i.name).filter(Boolean)}
-            />
-          )}
+          {/* Weather widget — removed (Phase 3, AI-only) */}
           <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold">Alerts</h2>

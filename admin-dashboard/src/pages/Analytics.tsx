@@ -81,25 +81,7 @@ export default function Analytics() {
           )
         )}
 
-        {chartCard('AI Usage',
-          isLoading ? <LoadingChart /> : (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data?.aiUsage || []}>
-                <defs>
-                  <linearGradient id="colorAI" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#94a3b8" />
-                <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" />
-                <Tooltip />
-                <Area type="monotone" dataKey="value" stroke="#f59e0b" fillOpacity={1} fill="url(#colorAI)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )
-        )}
+        {/* 'AI Usage' chart removed (Phase 3 — AI-only analytics) */}
       </div>
 
       <Card>

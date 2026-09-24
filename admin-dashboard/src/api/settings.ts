@@ -7,7 +7,7 @@
  *   Default Subscription:
  *     GET|PUT  /admin/settings/default-subscription
  *   AI:
- *     GET|PUT  /admin/settings/ai
+ *     GET|PUT  /admin/settings/ai  — removed (Phase 3, AI-only)
  *   General:
  *     GET|PUT  /admin/settings/general
  */
@@ -27,15 +27,9 @@ export interface CompanySettings {
 export interface DefaultSubscriptionSettings {
   plan: string
   maxDevices: number
+  /** Kept for API-shape compatibility (Phase 3: AI execution removed). */
   aiEnabled: boolean
   trialDays: number
-}
-
-export interface AISettings {
-  enabled: boolean
-  maxRequestsPerDay: number
-  model: string
-  apiKey?: string
 }
 
 export interface GeneralSettings {
@@ -65,15 +59,8 @@ export async function updateDefaultSubscriptionSettings(payload: Partial<Default
   return data
 }
 
-export async function getAISettings(): Promise<AISettings> {
-  const { data } = await apiClient.get('/api/admin/settings/ai')
-  return data
-}
-
-export async function updateAISettings(payload: Partial<AISettings>): Promise<AISettings> {
-  const { data } = await apiClient.put('/api/admin/settings/ai', payload)
-  return data
-}
+// PHASE 3: getAISettings / updateAISettings removed — the /admin/settings/ai
+// endpoints were removed server-side with the AI execution layer.
 
 export async function getGeneralSettings(): Promise<GeneralSettings> {
   const { data } = await apiClient.get('/api/admin/settings/general')

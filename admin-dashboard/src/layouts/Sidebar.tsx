@@ -39,7 +39,7 @@ const navItems = [
   { label: 'Subscription Revenue', icon: CreditCard, to: '/subscription-revenue' },
   { label: 'Security', icon: Shield, to: '/security' },
   { label: 'Audit Log', icon: ScrollText, to: '/audit-log' },
-  { label: 'AI Usage', icon: Cpu, to: '/ai-usage' },
+  // 'AI Usage' removed (Phase 3 — AI-only admin page)
   { label: 'Profile', icon: UserCircle, to: '/profile' },
 ]
 

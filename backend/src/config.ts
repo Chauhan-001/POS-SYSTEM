@@ -218,6 +218,30 @@ export const config = {
   })(),
 
   // ===========================================================================
+  // SECTION 7: WHATSAPP BUSINESS INTEGRATION (META)
+  // ===========================================================================
+
+  whatsapp: {
+    appId: process.env.META_APP_ID || '',
+    appSecret: process.env.META_APP_SECRET || '',
+    webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || '',
+    graphApiVersion: process.env.META_GRAPH_API_VERSION || 'v18.0',
+    encryptionKey: (() => {
+      const key = process.env.WHATSAPP_ENCRYPTION_KEY;
+      if (!key) {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('WHATSAPP_ENCRYPTION_KEY must be set in production');
+        }
+        return 'pos-whatsapp-dev-key-change-in-production';
+      }
+      if (key === 'pos-whatsapp-dev-key-change-in-production' && process.env.NODE_ENV === 'production') {
+        throw new Error('WHATSAPP_ENCRYPTION_KEY must not be the default dev value in production');
+      }
+      return key;
+    })(),
+  },
+
+  // ===========================================================================
   // SECTION 6: RATE LIMITING
   // ===========================================================================
 
@@ -252,7 +276,7 @@ export const config = {
       /** Max requests per IP per window (default: 300) — admin dashboard traffic */
       maxRequests: parseInt(process.env.RL_ADMIN_MAX || '300', 10),
     },
-    voice: {
+     voice: {
       /** Window in milliseconds (default: 1 minute) */
       windowMs: parseInt(process.env.RL_VOICE_WINDOW_MS || (60 * 1000).toString(), 10),
       /** Max requests per restaurant per window (default: 90) — voice parse/transcribe/confirm */
@@ -260,3 +284,10 @@ export const config = {
     },
   },
 };
+
+// Validate WhatsApp production requirements after config is fully constructed.
+if (process.env.NODE_ENV === 'production') {
+  if (!config.whatsapp.appSecret) {
+    throw new Error('META_APP_SECRET must be set in production');
+  }
+}

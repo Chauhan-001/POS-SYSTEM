@@ -7,9 +7,9 @@
  *
  * Reuses the existing cost/profitability stack — this module NEVER computes a
  * new cost formula:
- *   - productProfitability / costIntelligenceService.metrics → food cost %,
+ *   - productProfitability / costIntelligenceCore.metrics → food cost %,
  *     contribution margin, recipe cost, units sold
- *   - costIntelligenceService.marginDeterioration → before/after recipe cost
+ *   - costIntelligenceCore.marginDeterioration → before/after recipe cost
  *     and margin per product (deterministic ingredient-cost evidence)
  *   - MarginSafety provider thresholds (25% contribution margin / 60% food
  *     cost, 10% cost-rise) → the documented safety rules reused here
@@ -27,7 +27,7 @@
  */
 
 import ProductModel from '../models/Product';
-import { costIntelligenceService } from '../modules/recipes/services/costIntelligenceService';
+import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
 import { resolveMenuProductScope } from './productService';
 
 // ─── Central, documented thresholds ───────────────────────────────────
@@ -110,10 +110,10 @@ export async function getPriceIntelligence(
       .select('_id name category price branchPrice averageCost code')
       .lean()
       .exec(),
-    costIntelligenceService.metrics(String(restaurantId), { days: 60 }).catch(() => null),
+    costIntelligenceCore.metrics(String(restaurantId), { days: 60 }).catch(() => null),
   ]);
 
-  const det = await costIntelligenceService
+  const det = await costIntelligenceCore
     .marginDeterioration(String(restaurantId), { days: 60 })
     .catch(() => ({ rows: [] } as any));
   const detById = new Map<string, any>((det?.rows || []).map((r: any) => [String(r.productId), r]));

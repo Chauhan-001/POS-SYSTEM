@@ -93,6 +93,11 @@ function OnlineOrderCard({
             </span>
           </div>
         )}
+        {order.mode === 'TABLE' && order.tableNumber && (
+          <div className="flex items-center gap-1.5 text-[10px] text-blue-600">
+            <span className="font-semibold">Table {order.tableNumber}</span>
+          </div>
+        )}
         {order.deliveryEta && (
           <div className="flex items-center gap-1.5 text-[10px] text-blue-600">
             <Bike className="w-3 h-3" />

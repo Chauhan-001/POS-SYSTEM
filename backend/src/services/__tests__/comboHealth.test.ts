@@ -19,8 +19,8 @@ vi.mock('../offerAnalyticsService', () => ({
 vi.mock('../productService', () => ({
   resolveMenuProductScope: vi.fn(async () => [{ restaurantId: 'restA' }]),
 }));
-vi.mock('../../modules/recipes/services/costIntelligenceService', () => ({
-  costIntelligenceService: { metrics: vi.fn() },
+vi.mock('../../modules/recipes/services/costIntelligenceCore', () => ({
+  costIntelligenceCore: { metrics: vi.fn() },
 }));
 
 import { getComboHealth, MIN_EVIDENCE_UNITS } from '../comboHealthService';
@@ -28,7 +28,7 @@ import { WeakComboRecommendationProvider, type RecommendationContext } from '../
 import OfferModel from '../../models/Offer';
 import ProductModel from '../../models/Product';
 import { getComboAnalytics } from '../offerAnalyticsService';
-import { costIntelligenceService } from '../../modules/recipes/services/costIntelligenceService';
+import { costIntelligenceCore } from '../../modules/recipes/services/costIntelligenceCore';
 
 const REST = '507f1f77bcf86cd799439011';
 
@@ -58,7 +58,7 @@ beforeEach(() => {
     { _id: 'prodB', name: 'Fries', category: 'Sides' },
     { _id: 'prodC', name: 'Salad', category: 'Sides' },
   ]));
-  (costIntelligenceService.metrics as any).mockResolvedValue({
+  (costIntelligenceCore.metrics as any).mockResolvedValue({
     productProfitability: [
       { productId: 'prodA', productName: 'Burger', contributionMarginPercent: 60, unitsSold: 100 },
       { productId: 'prodB', productName: 'Fries', contributionMarginPercent: 15, unitsSold: 80 },

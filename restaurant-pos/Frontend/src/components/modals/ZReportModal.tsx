@@ -4,10 +4,9 @@
  */
 
 import { FileText, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import type { Product, SystemSettings } from '../../types';
-import { fetchInventoryEvents, fetchInventorySummary } from '../../api/client';
-import ClosingAssistant from '../../ai/ClosingAssistant';
+// PHASE 3: the AI Closing Assistant component was removed with the AI layer.
+// The Z-report remains fully deterministic.
 
 interface ZReportData {
   totalSales: number;
@@ -30,39 +29,10 @@ interface ZReportModalProps {
 }
 
 export default function ZReportModal({ isOpen, zReportData, settings, moduleSettings = {} as Record<string, boolean>, products = [], onClose }: ZReportModalProps) {
-  // REAL low-stock count — inventory items at/below their minimum threshold.
-  // Uses fetchInventorySummary() (type='inventory') instead of pos.products
-  // (which now contains only menu items).
-  const [lowStockItems, setLowStockItems] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    fetchInventorySummary().then((items) => {
-      if (cancelled || !items) return;
-      const low = items.filter((p: any) =>
-        Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
-      ).length;
-      setLowStockItems(low);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  // REAL waste cost today — fetch waste events from the backend. Previously
-  // hardcoded wasteCost={0}, so the assistant always reported "waste under
-  // control" even when the restaurant logged waste.
-  const [wasteCost, setWasteCost] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    fetchInventoryEvents({ type: 'waste', limit: 200 })
-      .then((events) => {
-        if (cancelled || !events) return;
-        setWasteCost(events
-          .filter((e: any) => String(e.timestamp || '').slice(0, 10) === todayStr)
-          .reduce((s: number, e: any) => s + Math.abs(Number(e.quantity) || 0) * (Number((products as any[]).find((p: any) => p.name === e.item)?.averageCost) || 0), 0));
-      })
-      .catch(() => { /* offline — keep 0 */ });
-    return () => { cancelled = true; };
-  }, [products, isOpen]);
+  // PHASE 3: the low-stock / waste-cost fetches only fed the AI Closing
+  // Assistant, which was removed with the AI layer. The Z-report itself is
+  // fully deterministic and unaffected.
+  void products;
 
   if (!isOpen) return null;
 
@@ -99,17 +69,7 @@ export default function ZReportModal({ isOpen, zReportData, settings, moduleSett
             </div>
           )}
 
-          {/* AI Closing Assistant */}
-          {moduleSettings.enableAIClosingAssistant !== false && (
-          <div className="pt-4 border-t border-[var(--color-border-default)]">
-            <ClosingAssistant
-              totalRevenue={zReportData.totalSales}
-              orderCount={zReportData.orderCount}
-              lowStockItems={lowStockItems}
-              wasteCost={wasteCost}
-            />
-          </div>
-          )}
+          {/* AI Closing Assistant — removed (Phase 3, AI-only) */}
         </div>
       </div>
     </div>

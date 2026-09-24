@@ -214,8 +214,8 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
         </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-md bg-[var(--color-bg-white)] rounded-xl shadow-lg overflow-hidden border border-[var(--color-border-default)]">
+      <div className="flex-1 min-h-0 flex overflow-y-auto p-6">
+        <div className="w-full max-w-md my-auto mx-auto bg-[var(--color-bg-white)] rounded-xl shadow-lg overflow-hidden border border-[var(--color-border-default)]">
           <div className="p-8">
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-[var(--brand-color)] text-white rounded-xl flex items-center justify-center font-bold text-xl mx-auto mb-4 shadow-md">

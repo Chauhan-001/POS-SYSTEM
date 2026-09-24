@@ -31,8 +31,6 @@ import {
   getGrowthReportEndpoint,
   getRevenueReportEndpoint,
   getSubscriptionReportEndpoint,
-  getAiRevenueReportEndpoint,
-  getAiUsageMetricsEndpoint,
   getSupportReportEndpoint,
   getDeviceReportEndpoint,
   getUsageReportEndpoint,
@@ -61,9 +59,8 @@ router.get('/admin/reports/revenue', ...R('Subscription', 'read'), validate({ qu
 
 router.get('/admin/reports/subscriptions', ...R('Subscription', 'read'), validate({ query: reportQuerySchema }), cached({ ttlMs: 120_000, tags: ['admin-reports'] }), getSubscriptionReportEndpoint);
 
-router.get('/admin/reports/ai-revenue', ...R('Subscription', 'read'), validate({ query: reportForecastQuerySchema }), cached({ ttlMs: 120_000, tags: ['admin-reports'] }), getAiRevenueReportEndpoint);
-
-router.get('/admin/reports/ai-usage-metrics', ...R('Subscription', 'read'), validate({ query: reportQuerySchema }), cached({ ttlMs: 60_000, tags: ['admin-reports'] }), getAiUsageMetricsEndpoint);
+// PHASE 3: /admin/reports/ai-revenue and /admin/reports/ai-usage-metrics
+// removed — AI-only reports.
 
 router.get('/admin/reports/support', ...R('SupportTicket', 'read'), validate({ query: reportQuerySchema }), cached({ ttlMs: 120_000, tags: ['admin-reports'] }), getSupportReportEndpoint);
 

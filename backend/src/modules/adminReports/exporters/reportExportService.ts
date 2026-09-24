@@ -130,7 +130,7 @@ async function collectRows(reportKey: string, query: any): Promise<Record<string
     case 'growth': return { growth: normalize((await adminReportingService.growth(opts)).series) };
     case 'revenue': return { revenue: normalize((await adminReportingService.revenue(opts)).series) };
     case 'subscriptions': return { subscriptions: normalize((await adminReportingService.subscriptions(opts)).planDistribution) };
-    case 'ai-revenue': return { aiRevenue: normalize((await adminReportingService.aiRevenue(opts)).series) };
+    // 'ai-revenue' export removed (Phase 3 — AI-only report)
     case 'support': return { support: normalize((await adminReportingService.support(opts)).trend) };
     case 'devices': return { devices: normalize((await adminReportingService.devices(opts)).byOs) };
     case 'usage': return { usage: normalize((await adminReportingService.usage(opts)).series) };

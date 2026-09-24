@@ -15,7 +15,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Wand2, Plus, Minus, RefreshCw, Loader2, CheckCircle, Tag, Percent, Users, CalendarClock, Send, Eye, Save, Palette, Image as ImageIcon, Trash2, Upload } from 'lucide-react';
 import * as api from '../../src/api/client';
 import { debugWarn } from '../../src/utils/debugLog';
-import { StepDots, AiTag, OFFER_TYPE_LABELS, OFFER_TYPE_ICONS, offerValueLabel, fmtNumber, LOYALTY_TIERS, AUDIENCE_OPTIONS, COPY_TONES, COPY_LANGUAGES, type AudienceOption } from './shared';
+import { StepDots, AiTag, OFFER_TYPE_LABELS, OFFER_TYPE_ICONS, offerValueLabel, fmtNumber, LOYALTY_TIERS, AUDIENCE_OPTIONS, COPY_TONES, COPY_LANGUAGES, buildOfferCopyTemplate, type AudienceOption } from './shared';
 import { estimateAudience, resolveAudience } from './useMarketingData';
 import { PromotionPreview } from './PromotionPreview';
 import { PROMO_TEMPLATES } from './promotionTemplates';
@@ -323,24 +323,19 @@ export default function CreatePromotion({ currencySymbol, products, segments, br
     setStep(1);
   };
 
+  // Message generation — deterministic template copy (Phase 3: the LLM copy
+  // endpoint was removed; the templates honour tone + language like before).
   const generateMessage = async () => {
     setAiBusy(true);
     try {
-      const res = await api.generateOfferCopy({
-        type: draft.type, value: draft.value,
-        discountValue: offerValueLabel(draft.type, draft.value, currencySymbol),
+      const data = buildOfferCopyTemplate({
+        type: draft.type,
+        value: draft.value,
         applicableCategories: draft.categories.length ? draft.categories : undefined,
-        targetAudience: AUDIENCE_OPTIONS.find((a) => a.id === draft.audienceChoice)?.label,
-        reason: draft.recommendationReason || undefined,
         minOrderValue: draft.minOrderValue,
-        durationDays: draft.runMode === 'schedule' && draft.endDate && draft.startDate
-          ? Math.max(1, Math.round((new Date(draft.endDate).getTime() - new Date(draft.startDate).getTime()) / 86400000)) : 7,
         tone: (draft.copyTone || 'friendly') as any,
         language: (draft.copyLanguage || 'en') as any,
-        // Explicit user action — bypass the AI cache so Regenerate re-calls the LLM.
-        bustCache: true,
       });
-      const data = res?.data || res;
       if (data) {
         setDraft((d) => ({
           ...d,
@@ -353,7 +348,7 @@ export default function CreatePromotion({ currencySymbol, products, segments, br
       }
     } catch (err) {
       debugWarn('CreatePromotion', 'copy generation failed:', err);
-      setError('AI copy is unavailable right now — keep the message or write your own.');
+      setError('Message generation failed — keep the message or write your own.');
     } finally {
       setAiBusy(false);
     }

@@ -153,7 +153,15 @@ export default function CustomerCallsPanel({
   const acknowledgeable = useMemo(() => sorted, [sorted]);
 
   const locationLabel = (c: PendingCall): string => {
-    if (c.type === 'ONLINE_ORDER') return `Order #${c.orderNumber ?? '…'}`;
+    if (c.type === 'ONLINE_ORDER') {
+      const base = `Order #${c.orderNumber ?? '…'}`;
+      const loc = c.orderType === 'TABLE' && c.tableNumber
+        ? ` · Table ${c.tableNumber}`
+        : c.orderType === 'CAR' && c.carId
+          ? ` · Car ${c.carId}`
+          : '';
+      return `${base}${loc}`;
+    }
     if (c.orderType === 'TABLE') return `Table ${c.tableId ? (tableNumberById.get(c.tableId) ?? '…') : '—'}`;
     if (c.orderType === 'CAR') return `Car ${c.carId || ''}`;
     return 'Pickup';

@@ -5,14 +5,15 @@
  *
  * Sections:
  *   - Company Information (name, email, phone, address)
- *   - Default Subscription (plan, devices, trial days, AI)
- *   - AI Settings (enabled, max requests per day, model)
+ *   - Default Subscription (plan, devices, trial days)
  *   - General Configuration (registration, maintenance, timezone, language)
+ *
+ * PHASE 3: the AI Settings section was removed with the AI layer (the
+ * GET|PUT /admin/settings/ai endpoints were removed server-side too).
  *
  * Data Sources:
  *   - GET /admin/settings/company               → Company settings
  *   - GET /admin/settings/default-subscription   → Default sub settings
- *   - GET /admin/settings/ai                     → AI settings
  *   - GET /admin/settings/general                → General settings
  *   - PUT endpoints for each section
  *
@@ -30,7 +31,6 @@ import { Skeleton } from '../components/ui/Skeleton'
 import {
   getCompanySettings, updateCompanySettings,
   getDefaultSubscriptionSettings, updateDefaultSubscriptionSettings,
-  getAISettings, updateAISettings,
   getGeneralSettings, updateGeneralSettings,
 } from '../api/settings'
 import { getPlans } from '../api/subscriptionPlans'
@@ -54,13 +54,11 @@ export default function Settings() {
 
   const company = useQuery({ queryKey: ['settings', 'company'], queryFn: getCompanySettings })
   const defaultSub = useQuery({ queryKey: ['settings', 'default-subscription'], queryFn: getDefaultSubscriptionSettings })
-  const ai = useQuery({ queryKey: ['settings', 'ai'], queryFn: getAISettings })
   const plans = useQuery({ queryKey: ['subscription-plans'], queryFn: () => getPlans({ limit: 100 }) })
   const general = useQuery({ queryKey: ['settings', 'general'], queryFn: getGeneralSettings })
 
   const [companyForm, setCompanyForm] = useState<any>({})
   const [subForm, setSubForm] = useState<any>({})
-  const [aiForm, setAiForm] = useState<any>({})
   const [generalForm, setGeneralForm] = useState<any>({})
 
   const availablePlans = plans.data?.data || []
@@ -81,10 +79,6 @@ export default function Settings() {
   }, [defaultSub.data, plans.data])
 
   useEffect(() => {
-    if (ai.data && Object.keys(aiForm).length === 0) setAiForm(ai.data)
-  }, [ai.data])
-
-  useEffect(() => {
     if (general.data && Object.keys(generalForm).length === 0) setGeneralForm(general.data)
   }, [general.data])
 
@@ -97,12 +91,6 @@ export default function Settings() {
   const updateSub = useMutation({
     mutationFn: () => updateDefaultSubscriptionSettings(subForm),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['settings', 'default-subscription'] }); toast.success('Default subscription updated') },
-    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update'),
-  })
-
-  const updateAi = useMutation({
-    mutationFn: () => updateAISettings(aiForm),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['settings', 'ai'] }); toast.success('AI settings updated') },
     onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update'),
   })
 
@@ -153,28 +141,12 @@ export default function Settings() {
             </div>
             <Input label="Max Devices" type="number" value={subForm.maxDevices || 1} onChange={(e) => setSubForm({ ...subForm, maxDevices: parseInt(e.target.value) || 1 })} />
             <Input label="Trial Days" type="number" value={subForm.trialDays || 0} onChange={(e) => setSubForm({ ...subForm, trialDays: parseInt(e.target.value) || 0 })} />
-            <label className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
-              <input type="checkbox" checked={subForm.aiEnabled || false} onChange={(e) => setSubForm({ ...subForm, aiEnabled: e.target.checked })} className="rounded border-surface-300 text-primary-600" />
-              Enable AI by default
-            </label>
             <div className="flex justify-end"><Button onClick={() => updateSub.mutate()} loading={updateSub.isPending}>Save Default Subscription</Button></div>
           </>
         )}
       </SettingsSection>
 
-      <SettingsSection title="AI Settings">
-        {ai.isLoading ? <Skeleton className="h-40" /> : (
-          <>
-            <label className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
-              <input type="checkbox" checked={aiForm.enabled || false} onChange={(e) => setAiForm({ ...aiForm, enabled: e.target.checked })} className="rounded border-surface-300 text-primary-600" />
-              Enable AI Features
-            </label>
-            <Input label="Max Requests Per Day" type="number" value={aiForm.maxRequestsPerDay || 0} onChange={(e) => setAiForm({ ...aiForm, maxRequestsPerDay: parseInt(e.target.value) || 0 })} />
-            <Input label="AI Model" value={aiForm.model || ''} onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })} />
-            <div className="flex justify-end"><Button onClick={() => updateAi.mutate()} loading={updateAi.isPending}>Save AI Settings</Button></div>
-          </>
-        )}
-      </SettingsSection>
+      {/* AI Settings section removed (Phase 3 — AI-only settings) */}
 
       <SettingsSection title="General Configuration">
         {general.isLoading ? <Skeleton className="h-40" /> : (

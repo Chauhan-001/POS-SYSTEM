@@ -32,7 +32,7 @@ export function usePOSLiveEvents(
   currentBranchId?: string | null,
   shouldFilterByBranch?: boolean,
   /** Fired after a new online/QR order is created (refetch orders + tables). */
-  onOrderCreated?: () => void,
+  onOrderCreated?: (payload?: any) => void,
   /** Fired for every customer service call (bell badge increment). */
   onWaiterCall?: (payload: any) => void,
   /** Fired when ANOTHER terminal silences a call (status → SEEN) — this
@@ -51,7 +51,13 @@ export function usePOSLiveEvents(
   /** Fired when settings are updated on another terminal. */
   onSettingsUpdated?: () => void,
   /** Fired when a bill is created or voided on another terminal. */
-  onBillChanged?: () => void
+  onBillChanged?: () => void,
+  /** Local table roster — used to resolve the table NUMBER for call
+   *  notifications that only carry a tableId. */
+  tables?: any[],
+  /** Local orders — used to resolve the table number for order-status
+   *  notifications (e.g. "Order ready") that only carry an orderId. */
+  orders?: any[]
 ) {
   const toastRef = useRef(showToast);
   toastRef.current = showToast;
@@ -80,6 +86,47 @@ export function usePOSLiveEvents(
   branchRef.current = currentBranchId ?? null;
   const branchFilteredRef = useRef(shouldFilterByBranch === true);
   branchFilteredRef.current = shouldFilterByBranch === true;
+  const tablesRef = useRef<any[]>(tables || []);
+  tablesRef.current = tables || [];
+  const ordersRef = useRef<any[]>(orders || []);
+  ordersRef.current = orders || [];
+
+  /** Resolve the display table number for a payload: explicit tableNumber
+   *  wins, else the linked order (by orderId) for ONLINE_ORDER payloads, else
+   *  the local table roster by tableId. */
+  const tableNumberFor = (payload: any): string => {
+    if (payload?.tableNumber !== undefined && payload?.tableNumber !== null && payload?.tableNumber !== '') {
+      return String(payload.tableNumber);
+    }
+    // ONLINE_ORDER payloads carry an orderId — the order doc has the table
+    // number even when the table roster is branch-scoped / not yet loaded.
+    if (payload?.orderId) {
+      const oid = String(payload.orderId);
+      const order = ordersRef.current.find((o: any) => String(o.id || o._id) === oid);
+      if (order?.tableNumber !== undefined && order?.tableNumber !== null && order?.tableNumber !== '') {
+        return String(order.tableNumber);
+      }
+    }
+    if (!payload?.tableId) return '';
+    const t = tablesRef.current.find((x) => String(x._id || x.id) === String(payload.tableId));
+    const n = t?.number ?? t?.name;
+    return n !== undefined && n !== null ? String(n) : '';
+  };
+
+  /** Resolve the display table number for an ORDER notification payload that
+   *  carries only an orderId (e.g. "order ready") by looking up the order. */
+  const orderTableNumberFor = (payload: any): string => {
+    if (payload?.tableNumber !== undefined && payload?.tableNumber !== null && payload?.tableNumber !== '') {
+      return String(payload.tableNumber);
+    }
+    const oid = String(payload?.orderId || '');
+    const order = ordersRef.current.find((o: any) => String(o.id || o._id) === oid);
+    if (order?.tableNumber !== undefined && order?.tableNumber !== null && order?.tableNumber !== '') {
+      return String(order.tableNumber);
+    }
+    if (order?.tableId) return tableNumberFor({ tableId: order.tableId });
+    return '';
+  };
 
   /** Branch isolation for live toasts: in multi-branch mode, only toast for
    *  this terminal's active branch (a branchless payload is kept — legacy
@@ -141,15 +188,18 @@ export function usePOSLiveEvents(
       socket.on('order:created', (payload: any) => {
         if (!payload?.orderNumber || !inBranchScope(payload?.branchId)) return;
         const mode = payload.mode ? ` · ${String(payload.mode).toLowerCase()}` : '';
+        const tableNo = tableNumberFor(payload);
         const where = payload.parkingSlot
           ? ` · Slot ${payload.parkingSlot}`
-          : payload.tableNumber
-            ? ` · Table ${payload.tableNumber}`
+          : tableNo
+            ? ` · Table ${tableNo}`
             : '';
         toastRef.current?.(`🛒 New online order #${payload.orderNumber}${mode}${where}`, 'success');
         // Refetch orders + tables so the floor plan turns Occupied and the
-        // KDS shows the auto-KOT immediately (not on the next 30s poll).
-        orderCreatedRef.current?.();
+        // KDS shows the auto-KOT immediately (not on the next 30s poll). The
+        // payload is forwarded so the terminal can auto-open the order's
+        // billing cart when idle.
+        orderCreatedRef.current?.(payload);
       });
 
       socket.on('order:updated', (payload: any) => {
@@ -160,7 +210,9 @@ export function usePOSLiveEvents(
         }
         if (payload?.status === 'Ready' && payload?.orderId && inBranchScope(payload?.branchId) && lastReadyOrderRef.current !== payload.orderId) {
           lastReadyOrderRef.current = payload.orderId;
-          toastRef.current?.(`🔔 Order #${payload.orderNumber ?? payload.orderId.slice(-4)} is ready`, 'info');
+          const tableNo = orderTableNumberFor(payload);
+          const where = tableNo ? ` · Table ${tableNo}` : '';
+          toastRef.current?.(`🔔 Order #${payload.orderNumber ?? payload.orderId.slice(-4)} is ready${where}`, 'info');
         }
       });
 
@@ -178,12 +230,13 @@ export function usePOSLiveEvents(
             CALL_WAITER: '🛎️ Call waiter',
           };
           const what = labels[payload?.type] || '🛎️ Waiter call';
+          const tableNo = tableNumberFor(payload);
           const where = payload?.parkingSlot
             ? `Slot ${payload.parkingSlot}`
             : payload?.carPlate
               ? `Car ${payload.carPlate}`
               : payload?.tableId
-                ? 'Table'
+                ? `Table ${tableNo}`.trim()
                 : '';
           toastRef.current?.(`${what}${where ? ` · ${where}` : ''}`, 'info');
         }

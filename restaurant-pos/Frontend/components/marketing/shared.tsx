@@ -252,3 +252,73 @@ export function fmtNumber(n?: number | null): string {
   const v = Number(n || 0);
   return v.toLocaleString('en-IN');
 }
+
+// ─── Deterministic offer-copy templates (Phase 3) ──────────────────
+
+export interface OfferCopyTemplateInput {
+  type: string;
+  value: number;
+  applicableCategories?: string[];
+  targetAudience?: string;
+  minOrderValue?: number;
+  durationDays?: number;
+  tone?: string;
+  language?: string;
+  currencySymbol?: string;
+}
+
+export interface OfferCopyTemplateOutput {
+  title: string;
+  description: string;
+  whatsapp: string;
+  sms: string;
+  push: string;
+  emailSubject: string;
+  emailBody: string;
+}
+
+/**
+ * Build offer copy from deterministic templates — the same shape the old LLM
+ * endpoint produced (Phase 3: no AI). Honours tone + language like the
+ * previous fallback path; never invents discounts, prices or dates.
+ */
+export function buildOfferCopyTemplate(input: OfferCopyTemplateInput): OfferCopyTemplateOutput {
+  const cur = input.currencySymbol || '₹';
+  const offerText = offerValueLabel(input.type, input.value, cur);
+  const on =
+    input.applicableCategories && input.applicableCategories.length > 0
+      ? ` on ${input.applicableCategories.slice(0, 3).join(', ')}`
+      : '';
+  const min = input.minOrderValue ? ` (min order ${cur}${input.minOrderValue})` : '';
+  const language = input.language || 'en';
+  const funky = input.tone === 'funky' || input.tone === 'genz' || input.tone === 'zomato';
+
+  const title = `${offerText}${on ? ` · ${input.applicableCategories![0]}` : ''}`.slice(0, 60);
+  const description =
+    language === 'hinglish'
+      ? `${offerText}${on}${min} — order karo aur treat lo!`
+      : language === 'hi'
+      ? `${offerText}${on}${min} — अभी ऑर्डर करें!`
+      : `${offerText}${on}${min}. Order now and treat yourself!`;
+
+  const whatsapp =
+    language === 'hinglish'
+      ? `🎉 *${title}*\n\n${offerText}${on}${min}! Ab order karo 🔥`
+      : language === 'hi'
+      ? `🎉 *${title}*\n\n${offerText}${on}${min}! अभी ऑर्डर करें 🔥`
+      : `🎉 *${title}*\n\n${offerText}${on}${min}! Order now 🔥`;
+  const sms =
+    language === 'hi'
+      ? `${offerText}${on}${min}. अभी ऑर्डर करें.`
+      : `${offerText}${on}${min}. Order now.`;
+  const push = `${funky ? '🔥 ' : '🎉 '}${offerText}${on}`;
+  const emailSubject = `${offerText}${on ? ` — ${input.applicableCategories![0]}` : ''}`.slice(0, 80);
+  const emailBody =
+    language === 'hinglish'
+      ? `Hi! ${offerText}${on}${min}. Order karo aur treat lo — visit us today!`
+      : language === 'hi'
+      ? `नमस्ते! ${offerText}${on}${min}. अभी ऑर्डर करें!`
+      : `Hi! We're offering ${offerText.replace(' OFF', ' off')}${on}${min}. Order now and treat yourself!`;
+
+  return { title, description, whatsapp, sms, push, emailSubject, emailBody };
+}

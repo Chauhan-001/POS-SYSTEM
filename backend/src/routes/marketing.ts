@@ -2,125 +2,47 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Marketing API — AI message generation, test messages.
+ * Marketing API — LAYER: CORE (AI execution removed in Phase 3).
+ * Message generation is deterministic template copy (previously the LLM's
+ * fallback path — identical output shape, no LLM dependency).
  */
 
 import { Router, Request, Response } from 'express';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
-import { complete } from '../modules/ai/provider/llmProvider';
 
 const router = Router();
 
 // ─── POST /api/marketing/generate-message ─────────────────────────
-// AI generates a campaign message based on offer + style + language.
+// Deterministic campaign message based on offer + style + language.
 
-router.post('/generate-message', requireAuth, requireRole('Owner', 'Manager'), async (req: Request, res: Response) => {
+router.post('/generate-message', requireAuth, requireRole('Owner', 'Manager'), (req: Request, res: Response) => {
   try {
     const {
       offer, restaurantName, branchNames,
-      style, language, length, useEmojis,
-      channel, modify, currentMessage,
+      useEmojis,
     } = req.body;
 
-    const styleLabel = style === 'auto' ? 'a suitable' : style;
-    const langLabel = language === 'auto' ? 'Hinglish' : language === 'hi-en' ? 'Hinglish' : language === 'hi' ? 'Hindi' : 'English';
-    const lengthLabel = length || 'medium';
+    const offerValue = offer?.type === 'percentage'
+      ? `${offer.value || 10}% OFF`
+      : offer?.type === 'flat'
+      ? `₹${offer.value || 50} OFF`
+      : offer?.type === 'combo'
+      ? `Combo at ₹${offer.value || 199}`
+      : `${offer?.value || ''} OFF`;
+    const emoji = useEmojis ? '🎉 ' : '';
+    const endEmoji = useEmojis ? ' 🔥' : '';
+    const minLine = offer?.minOrderValue ? ` (min order ₹${offer.minOrderValue})` : '';
+    const validLine = offer?.endDate ? ` Valid till ${offer.endDate}.` : '';
+    const branchLine = branchNames && branchNames !== 'All locations' ? ` Visit us at ${branchNames}!` : '';
 
-    let modifyInstruction = '';
-    if (modify === 'shorter') modifyInstruction = 'Make it shorter and more concise.';
-    else if (modify === 'catchier') modifyInstruction = 'Make it more catchy and attention-grabbing.';
-    else if (modify === 'professional') modifyInstruction = 'Make it more professional and business-like.';
-    else if (modify === 'urgency') modifyInstruction = 'Add urgency — make the customer feel they must act now.';
-    else if (modify === 'emojis') modifyInstruction = useEmojis ? 'Add relevant emojis.' : 'Remove all emojis.';
+    let message = `${emoji}🎉 *${offer?.title || 'Special Offer'}*\n\n`;
+    message += `${offerValue} on ${offer?.type === 'percentage' ? 'all orders' : 'your favourites'}${minLine}!${validLine}`;
+    if (offer?.description) message += `\n${offer.description}`;
+    message += `\n${branchLine ? branchLine + '\n' : ''}`;
+    message += `\n👉 Visit us today or order now!${endEmoji}`;
+    message += `\n— ${restaurantName || 'Our Restaurant'}`;
 
-    const emojiInstruction = useEmojis ? 'Use relevant emojis to make it lively.' : 'Do NOT use any emojis.';
-
-    const channelInstruction = channel === 'sms'
-      ? 'Keep it under 160 characters for SMS. No emojis.'
-      : channel === 'email'
-      ? 'Write an email subject line AND body. Format: SUBJECT: <subject>\\nBODY: <body>'
-      : 'Write a WhatsApp-appropriate message with formatting.';
-
-    const prompt = `You are a marketing message generator for a restaurant.
-
-OFFER DETAILS:
-- Name: ${offer.title || 'Special Offer'}
-- Type: ${offer.type || 'percentage'}
-- Value: ${offer.value || 0}
-- Description: ${offer.description || ''}
-- Min Order: ${offer.minOrderValue ? `₹${offer.minOrderValue}` : 'None'}
-- Valid: ${offer.startDate || 'today'} to ${offer.endDate || 'ongoing'}
-
-RESTAURANT: ${restaurantName || 'Our Restaurant'}
-BRANCHES: ${branchNames || 'All locations'}
-
-STYLE: ${styleLabel}
-LANGUAGE: ${langLabel}
-LENGTH: ${lengthLabel}
-CHANNEL: ${channel || 'whatsapp'}
-${emojiInstruction}
-${channelInstruction}
-${modifyInstruction ? `\nMODIFICATION: ${modifyInstruction}` : ''}
-${modify && currentMessage ? `\nCURRENT MESSAGE:\n${currentMessage}` : ''}
-
-RULES:
-1. Write ONLY the message text — no explanations, no quotes, no markdown.
-2. If style is "auto", pick the most suitable style for a restaurant promotion.
-3. Include the offer value, restaurant name, and a clear call to action.
-4. For Hinglish, use natural Romanized Hindi mixed with English.
-5. Keep it authentic to how Indian restaurants communicate with customers.
-6. Include branch names naturally if multiple branches.
-
-OUTPUT: Just the message text, nothing else.`;
-
-    const result = await complete([
-      { role: 'system', content: 'You are a restaurant marketing message writer. Output ONLY the message text.' },
-      { role: 'user', content: prompt },
-    ], { timeout: 15000, maxTokens: 500 });
-
-    let message = result.content?.trim() || '';
-    let subject = offer.title || 'Special Offer';
-
-    // Detect circuit-breaker / fallback response: when the AI provider is
-    // unavailable the LLM provider returns a generic fallback JSON blob that
-    // does NOT contain a marketing message. Substitute a deterministic
-    // template so the studio always shows something useful.
-    const isFallback = !message
-      || message.includes('circuit breaker')
-      || message.includes('AI service temporarily unavailable')
-      || message.includes('AI-powered recommendations paused')
-      || message.includes('keyInsight');
-
-    if (isFallback) {
-      const offerValue = offer.type === 'percentage'
-        ? `${offer.value || 10}% OFF`
-        : offer.type === 'flat'
-        ? `₹${offer.value || 50} OFF`
-        : offer.type === 'combo'
-        ? `Combo at ₹${offer.value || 199}`
-        : `${offer.value || ''} OFF`;
-      const emoji = useEmojis ? '🎉 ' : '';
-      const endEmoji = useEmojis ? ' 🔥' : '';
-      const minLine = offer.minOrderValue ? ` (min order ₹${offer.minOrderValue})` : '';
-      const validLine = offer.endDate ? ` Valid till ${offer.endDate}.` : '';
-      const branchLine = branchNames && branchNames !== 'All locations' ? ` Visit us at ${branchNames}!` : '';
-      message = `${emoji}🎉 *${offer.title || 'Special Offer'}*
-
-`;
-      message += `${offerValue} on ${offer.type === 'percentage' ? 'all orders' : 'your favourites'}${minLine}!${validLine}`;
-      if (offer.description) message += `\n${offer.description}`;
-      message += `\n${branchLine ? branchLine + '\n' : ''}`;
-      message += `\n👉 Visit us today or order now!${endEmoji}`;
-      message += `\n— ${restaurantName || 'Our Restaurant'}`;
-    }
-
-    // Parse email format if present
-    if (channel === 'email' && message.includes('SUBJECT:')) {
-      const subjectMatch = message.match(/SUBJECT:\s*(.+?)(?:\n|$)/i);
-      const bodyMatch = message.match(/BODY:\s*([\s\S]+)/i);
-      if (subjectMatch) subject = subjectMatch[1].trim();
-      if (bodyMatch) message = bodyMatch[1].trim();
-    }
+    const subject = offer?.title || 'Special Offer';
 
     res.json({ success: true, message, subject });
   } catch (err: any) {

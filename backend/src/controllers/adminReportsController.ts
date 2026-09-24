@@ -10,7 +10,7 @@
  *     GET /admin/restaurants/:id/reports/sales-summary|sales-trend|...  etc.
  *
  *  B. Platform-wide Admin Reports (Phase 2.10):
- *     GET /admin/reports/summary|growth|revenue|subscriptions|ai-revenue|
+ *     GET /admin/reports/summary|growth|revenue|subscriptions|
  *         support|devices|usage|owners|inactive|features
  *     GET /admin/reports/:restaurantId/subscriptions
  *     POST /admin/reports/exports
@@ -218,25 +218,8 @@ export async function getSubscriptionReportEndpoint(req: AuthenticatedRequest, r
   }
 }
 
-export async function getAiRevenueReportEndpoint(req: AuthenticatedRequest, res: Response): Promise<void> {
-  try {
-    const q = req.query as any;
-    const data = await adminReportingService.aiRevenue({ period: q.period, from: q.from, to: q.to, markup: q.markup });
-    res.json(okWithMeta(data, windowMeta(req)));
-  } catch (error: any) {
-    res.status(error?.statusCode || 500).json(fail(error?.message || 'Failed to load AI revenue report', error?.statusCode));
-  }
-}
-
-export async function getAiUsageMetricsEndpoint(req: AuthenticatedRequest, res: Response): Promise<void> {
-  try {
-    const q = req.query as any;
-    const data = await adminReportingService.aiUsageMetrics({ period: q.period, from: q.from, to: q.to });
-    res.json(okWithMeta(data, windowMeta(req)));
-  } catch (error: any) {
-    res.status(error?.statusCode || 500).json(fail(error?.message || 'Failed to load AI usage metrics', error?.statusCode));
-  }
-}
+// PHASE 3: getAiRevenueReportEndpoint / getAiUsageMetricsEndpoint removed —
+// AI-only reports (aggregations/ai.ts, aggregations/aiUsage.ts deleted).
 
 export async function getSupportReportEndpoint(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {

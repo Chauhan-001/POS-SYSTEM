@@ -19,7 +19,7 @@ import * as api from '../../src/api/client';
 import { debugWarn } from '../../src/utils/debugLog';
 import {
   EmptyState, fmtNumber, AUDIENCE_OPTIONS, OFFER_TYPE_LABELS,
-  offerValueLabel, COPY_TONES, COPY_LANGUAGES, BackHeader,
+  offerValueLabel, COPY_TONES, COPY_LANGUAGES, BackHeader, buildOfferCopyTemplate,
 } from './shared';
 import { estimateAudience, resolveAudience } from './useMarketingData';
 
@@ -101,41 +101,32 @@ export default function PromotePage({
     }
   };
 
+  // Message generation — deterministic template copy (Phase 3: the LLM copy
+  // endpoint was removed; templates honour tone + language like before).
   const generateMessage = useCallback(async () => {
     if (!selected) return;
     setAiBusy(true);
-    setAiStatus('Connecting to AI…');
     setError('');
     try {
-      setAiStatus('Generating copy with your style settings…');
-      const res = await api.generateOfferCopy({
+      const data = buildOfferCopyTemplate({
         type: selected.type, value: selected.value,
-        discountValue: offerValueLabel(selected.type, selected.value, currencySymbol),
         applicableCategories: selected.applicableCategories || [],
         targetAudience: AUDIENCE_OPTIONS.find((a) => a.id === audienceChoice)?.label,
-        reason: selected.recommendationReason,
         minOrderValue: selected.minOrderValue,
-        durationDays: selected.endDate
-          ? Math.max(1, Math.round((new Date(selected.endDate).getTime() - Date.now()) / 86400000))
-          : 7,
         tone: copyTone as any,
         language: copyLanguage as any,
-        bustCache: true,
+        currencySymbol,
       });
-      const data = res?.data || res;
       if (data?.whatsapp || data?.sms) {
         setMessage(data.whatsapp || data.sms);
-        setAiStatus('AI copy generated ✓');
+        setAiStatus('Message ready ✓');
         setTimeout(() => setAiStatus(''), 2000);
-      } else if (data?.fallback) {
-        setAiStatus('AI unavailable — used template copy');
-        setTimeout(() => setAiStatus(''), 3000);
       } else {
-        setError('AI copy is unavailable right now — edit the message manually and send.');
+        setError('Message generation failed — edit the message manually and send.');
       }
     } catch (err) {
       debugWarn('Promote', 'copy failed:', err);
-      setError('AI copy is unavailable right now — edit the message manually and send.');
+      setError('Message generation failed — edit the message manually and send.');
     } finally {
       setAiBusy(false);
     }

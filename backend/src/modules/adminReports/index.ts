@@ -54,13 +54,8 @@ export {
   recordSubscriptionHistory,
   getRestaurantSubscriptionLifecycle,
 } from './aggregations/subscriptions';
-export {
-  getAiRevenueReport,
-} from './aggregations/ai';
-export {
-  getAiUsageMetrics,
-} from './aggregations/aiUsage';
-export type { AiUsageMetricsReport } from './aggregations/aiUsage';
+// PHASE 3: aggregations/ai (AI revenue) and aggregations/aiUsage removed —
+// AI-only reports.
 export {
   getSupportReport,
 } from './aggregations/support';

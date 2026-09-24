@@ -24,6 +24,7 @@
  * - SAFE TO EXTEND: Add new workspace tab cases inside the workspace router switch
  * ============================================================================
  */
+
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
@@ -32,10 +33,10 @@ import { setDBData, getDBData, localDateKey, clearAllCache } from './data';
 import { decideFirstRun } from './firstRun';
 import { syncEngine } from './lib/syncEngine';
 import { workspaceToPath, pathToWorkspace, DEFAULT_WORKSPACE, type WorkspaceName } from './routes';
+
 import * as api from './api/client';
 import { setOnApiError, setAuthToken, getAuthToken } from './api/client';
 import { getOrCreateDeviceId } from './api/axios';
-import { setAiAuth, setAiToken } from './ai/aiClient';
 import { debugWarn } from './utils/debugLog';
 import { computeKOTDelta } from './utils/kotDelta';
 import { mergeOrdersWithServer } from './utils/orderMerge';
@@ -257,6 +258,44 @@ export default function App() {
   // KOT is created server-side, so the cashier never taps Send-KOT and the
   // paper ticket must fire from here when Auto Print KOT is enabled.
   const autoPrintedOnlineOrdersRef = React.useRef<Set<string>>(new Set());
+  // Optimistic table occupancy for customer-site orders. The backend occupies
+  // the table server-side (reconcileTable) on every TABLE-mode online order,
+  // but the Table View must flip the moment the order is SEEN — not after the
+  // /tables fetch round-trips. Marking the table Occupied locally right here
+  // (status + orderSince + orderId) makes it instant and self-healing; the
+  // authoritative server state is still applied by pos.refreshTables().
+  const occupyOnlineOrderTables = useCallback((list: any[]) => {
+    if (!pos.setTables || !Array.isArray(list) || list.length === 0) return;
+    const TERMINAL = new Set(['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held', 'Completed', 'Voided']);
+    const MANUAL = new Set(['Cleaning', 'Disabled', 'Merged']);
+    const now = new Date().toISOString();
+    const byTable = new Map<string, any>();
+    for (const o of list) {
+      if (String(o.type || '').toLowerCase() !== 'website') continue;
+      if (o.mode !== 'TABLE') continue;
+      const tableId = o.tableId ? String(o.tableId) : undefined;
+      if (!tableId || TERMINAL.has(String(o.status || ''))) continue;
+      // Idempotent: the newest live website order on a table wins.
+      byTable.set(tableId, o);
+    }
+    if (byTable.size === 0) return;
+    pos.setTables((prev: any[]) => {
+      let changed = false;
+      const next = prev.map((t: any) => {
+        const o = byTable.get(String(t.id));
+        if (!o) return t;
+        if (MANUAL.has(String(t.status || ''))) return t;
+        changed = true;
+        return {
+          ...t,
+          status: 'Occupied' as const,
+          orderSince: t.orderSince || o.createdAt || now,
+          orderId: String(o._id || o.id || t.orderId || ''),
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [pos.setTables]);
   const refreshOrdersAndTables = useCallback(() => {
     if (!navigator.onLine) return;
     api.fetchOrders()
@@ -281,37 +320,56 @@ export default function App() {
         }
         // Monotonic merge — never regress a locally Served KOT (see above).
         pos.setOrders((prev: any[]) => mergeOrdersWithServer(prev, list));
+        // Occupy the table of every live website TABLE order immediately so
+        // the Table View flips to Occupied without waiting for the fetch.
+        occupyOnlineOrderTables(list);
       })
       .catch(() => undefined);
     pos.refreshTables().catch(() => undefined);
-  }, [pos.setOrders, pos.refreshTables, pos.moduleSettings?.enableAutoPrintKOT, pos.settings?.kotOutputMode, pos.settings]);
+  }, [pos.setOrders, pos.refreshTables, pos.moduleSettings?.enableAutoPrintKOT, pos.settings?.kotOutputMode, pos.settings, occupyOnlineOrderTables]);
 
   // ─── Customer service calls (bell) — live badge + Calls page ───
   // The transient toast can be missed; the sidebar 'Calls' badge and the Calls
   // page show every pending call (table / car / pickup) LIVE until each is
   // acknowledged — socket push updates the list without any refresh.
-  const normalizeCall = useCallback((r: any): PendingCall => ({
-    id: String(r._id || r.id || ''),
-    type: r.type || 'CALL_WAITER',
-    orderType: r.orderType || 'TABLE',
-    tableId: r.tableId ? String(r.tableId) : undefined,
-    carId: r.carId || r.parkingSlot || r.carPlate || undefined,
-    message: r.message || undefined,
-    branchId: r.branchId ? String(r.branchId) : null,
-    createdAt: r.createdAt,
-    // Lifecycle — kept on acknowledged calls so the panel can show timestamps.
-    status: r.status || undefined,
-    seenAt: r.seenAt || undefined,
-    seenBy: r.seenBy || undefined,
-    completedAt: r.completedAt || undefined,
-    completedBy: r.completedBy || undefined,
-    // ONLINE_ORDER rows carry the order so staff can open it straight away.
-    orderId: r.orderId ? String(r.orderId) : undefined,
-    orderNumber: r.orderNumber ?? undefined,
-    tableNumber: r.tableNumber ?? undefined,
-    grandTotal: typeof r.grandTotal === 'number' ? r.grandTotal : undefined,
-    itemsCount: typeof r.itemsCount === 'number' ? r.itemsCount : undefined,
-  }), []);
+  const normalizeCall = useCallback((r: any): PendingCall => {
+    const tableId = r.tableId ? String(r.tableId) : undefined;
+    const orderId = r.orderId ? String(r.orderId) : undefined;
+    // Resolve the table number: 1) explicit on the raw record (now stored on
+    // CustomerRequest); 2) from the linked order (ONLINE_ORDER calls carry
+    // orderId, and the order doc has tableNumber); 3) from the local table
+    // roster by tableId.
+    const tableNo = r.tableNumber !== undefined && r.tableNumber !== null && r.tableNumber !== ''
+      ? r.tableNumber
+      : orderId
+        ? pos.orders.find((o: any) => String(o.id || o._id) === orderId)?.tableNumber
+        : undefined;
+    const finalTableNo = tableNo !== undefined && tableNo !== null
+      ? tableNo
+      : tableId
+        ? pos.tables.find((t: any) => String(t._id || t.id) === tableId)?.number
+        : undefined;
+    return {
+      id: String(r._id || r.id || ''),
+      type: r.type || 'CALL_WAITER',
+      orderType: r.orderType || 'TABLE',
+      tableId,
+      carId: r.carId || r.parkingSlot || r.carPlate || undefined,
+      message: r.message || undefined,
+      branchId: r.branchId ? String(r.branchId) : null,
+      createdAt: r.createdAt,
+      status: r.status || undefined,
+      seenAt: r.seenAt || undefined,
+      seenBy: r.seenBy || undefined,
+      completedAt: r.completedAt || undefined,
+      completedBy: r.completedBy || undefined,
+      orderId,
+      orderNumber: r.orderNumber ?? undefined,
+      tableNumber: finalTableNo,
+      grandTotal: typeof r.grandTotal === 'number' ? r.grandTotal : undefined,
+      itemsCount: typeof r.itemsCount === 'number' ? r.itemsCount : undefined,
+    };
+  }, [pos.tables, pos.orders]);
   const [pendingCalls, setPendingCalls] = React.useState<PendingCall[]>([]);
   const [acknowledgedCalls, setAcknowledgedCalls] = React.useState<PendingCall[]>([]);
   const refreshPendingCalls = useCallback(() => {
@@ -598,6 +656,8 @@ export default function App() {
     pos.refreshTables,
     undefined, // settings refresh handled by useServerSettings
     pos.refreshAllFromApi,
+    pos.tables,
+    pos.orders,
   );
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = React.useState(false);
   // Position + PIN switch-user screen (opened from the Exit button)
@@ -660,29 +720,24 @@ export default function App() {
     return () => { cancelled = true; };
   }, [auth.isAuthenticated]);
 
-  // ─── Token sync: API client ↔ AI client ───────────────────────
+  // ─── Token restore ──────────────────────────────────────────
   // Restore JWT from localStorage on mount
   React.useEffect(() => {
     const storedToken = localStorage.getItem('pos_access_token') || localStorage.getItem('pos_auth_token');
     if (storedToken) {
       setAuthToken(storedToken);
-      setAiToken(storedToken);
     }
   }, []);
 
   // Register API error handler + auth headers when employee changes
   React.useEffect(() => {
     if (pos.currentEmployee) {
-      setAiAuth(pos.currentEmployee.id, pos.currentEmployee.role);
-      // Sync the JWT token from API client to AI client
-      const token = getAuthToken();
-      if (token) setAiToken(token);
       // No user-facing API error toast: reads fall back to the local cache and
       // failed writes are queued by the sync engine for replay on reconnect,
       // so surfacing a toast for every offline request is pure noise.
       setOnApiError(null);
     }
-    return () => { setOnApiError(null); setAiAuth(null, null); setAiToken(null); };
+    return () => { setOnApiError(null); };
   }, [pos.currentEmployee]);
 
   // Clear JWT token on logout (when currentEmployee becomes null). Guarded on
@@ -693,7 +748,6 @@ export default function App() {
   React.useEffect(() => {
     if (!pos.currentEmployee && !auth.isAuthenticated) {
       setAuthToken(null);
-      setAiToken(null);
       localStorage.removeItem('pos_auth_token');
       localStorage.removeItem('pos_access_token');
       localStorage.removeItem('pos_refresh_token');
@@ -1382,8 +1436,12 @@ export default function App() {
   // add (simple) or the hardcoded AddOnModal (category add-ons).
   const handleOpenAddOnModal = useCallback((product: any, variant?: any) => {
     // Meal combos add their components directly — no modal, since the combo
-    // product itself never becomes a cart row.
-    if (product.isCombo || (!product.variants && !hasCustomizationOptions(product))) {
+    // product itself never becomes a cart row. Products with REAL variants
+    // (legacy product.variants array OR reusable menuConfig refs created by
+    // the registration wizard) must open their configuration modal instead of
+    // being direct-added at the base price — for variant-driven dishes the
+    // base price is 0, so a direct add would bill the item at ₹0.
+    if (product.isCombo || (!product.variants && !hasConfigSelection(product) && !hasCustomizationOptions(product))) {
       billing.handleAddProductToCart(product, variant);
       return;
     }
@@ -1924,13 +1982,6 @@ export default function App() {
     // list, not the previous tenant's staff).
     wipeForRestaurantSwitch();
     upsertLocalEmployee(employee, pin);
-    // Sync the JWT to the AI client synchronously BEFORE the Dashboard mounts.
-    // Child effects (WeatherWidget, AI summary) run before App's
-    // [pos.currentEmployee] effect, so without this the first AI calls would
-    // fire with a null token and 401. getAuthToken() is already populated by
-    // api.client.login().
-    const token = getAuthToken();
-    if (token) setAiToken(token);
     // Normalize role so every POS role check (Owner/Manager/Cashier) works
     // even when the backend returns lowercase roles.
     pos.setCurrentEmployee({ ...employee, role: normalizeRole(employee.role) });
@@ -1953,11 +2004,6 @@ export default function App() {
       status: 'Active',
     };
     upsertLocalEmployee(emp, pin);
-    // Same token-sync as handleFirstLogin — registerOwner already stored the
-    // JWT via setAuthToken(), so make it available to the AI client before the
-    // dashboard's weather/summary child effects fire.
-    const token = getAuthToken();
-    if (token) setAiToken(token);
     pos.setCurrentEmployee(emp as any);
     pos.setActiveWorkspace('Dashboard');
   }, [upsertLocalEmployee, pos.setCurrentEmployee, pos.setActiveWorkspace, wipeForRestaurantSwitch]);

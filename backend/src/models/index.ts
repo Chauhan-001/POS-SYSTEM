@@ -84,6 +84,12 @@ export { default as TicketCounter } from './TicketCounter';
 export { default as Recipe } from '../modules/recipes/models/Recipe';
 export { default as RecipeVersion } from '../modules/recipes/models/RecipeVersion';
 export { default as RecipeConsumption } from '../modules/recipes/models/RecipeConsumption';
+export { default as WhatsAppIntegration } from '../modules/whatsapp/models/WhatsAppIntegration';
+export { default as WhatsAppIntegrationHistory } from '../modules/whatsapp/models/WhatsAppIntegrationHistory';
+export { default as WhatsAppUsage } from '../modules/whatsapp/models/WhatsAppUsage';
+export type { IWhatsAppIntegration, WhatsAppIntegrationStatus } from '../modules/whatsapp/models/WhatsAppIntegration';
+export type { IWhatsAppIntegrationHistory, IntegrationHistoryStatus } from '../modules/whatsapp/models/WhatsAppIntegrationHistory';
+export type { IWhatsAppUsage, WhatsAppMessageCategory, WhatsAppMessageStatus } from '../modules/whatsapp/models/WhatsAppUsage';
 
 // Phase 2.10 — Admin Reports
 export {

@@ -5,6 +5,16 @@
  * DemandForecastingService — Statistical demand forecasting for restaurant
  * entities (restaurant, category, product, variant, time-slot).
  *
+ * LAYER: CORE / ML-READY
+ *
+ * Produces structured forecast data (entities, periods, point predictions,
+ * confidence bounds) that a future ML forecasting service can consume or
+ * replace. No model inference belongs in this module.
+ *
+ * FUTURE AI INTEGRATION POINT: AI may narrate or summarize these forecasts
+ * later, but the forecast numbers remain the authoritative output of this
+ * module.
+ *
  * Uses only deterministic, statistically defensible methods:
  * - Historical comparable periods (same day-of-week, same time-slot)
  * - Trend analysis (linear regression on recent periods)
@@ -13,6 +23,8 @@
  * - Festival/holiday effects
  *
  * No ML models. All calculations are deterministic and auditable.
+ * FUTURE ML: a trained demand model can replace the heuristics behind
+ * generateDemandForecast without changing the ForecastResult contract.
  */
 
 import mongoose from 'mongoose';

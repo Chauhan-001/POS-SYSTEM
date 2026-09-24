@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * advisorService — Business Advisor / Recommendation Engine (V1).
+ * LAYER: CORE
+ *
+ * Authoritative restaurant business logic. This module must remain independent
+ * of AI and ML: every candidate, score, and economic figure below is computed
+ * deterministically from real tenant data.
  *
  * Architecture (per the Business Advisor spec):
  *
@@ -12,9 +17,14 @@
  *     → business facts / signals
  *     → goal-based opportunity detection
  *     → deterministic scoring + economics validation
- *     → AI reasoning/explanation (enhancement ONLY — deterministic fallback)
  *     → ranked, persisted recommendations
  *     → owner action → existing POS engine executes it
+ *
+ * PHASE 2 (core extraction): the former optional AI explanation layer
+ * (enrichWithAi — an LLM rewrite of why/impact/risk copy) has been removed.
+ * The deterministic copy is authoritative; FUTURE AI INTEGRATION POINT: an AI
+ * layer may explain these results elsewhere, but must never alter the facts,
+ * scores, or ranking produced here.
  *
  * Rules honored:
  *   - The LLM never computes financial truth: every price/margin/impact number
@@ -34,7 +44,6 @@ import { buildRecommendationContext, deriveSurplusItems } from './recommendation
 import type { RecommendationContext, OfferSuggestion } from './offerEngine';
 import { generateRecommendations } from './offerEngine';
 import { getUpcomingFestivals } from './festivalService';
-import { executeAiCall, AiFeature } from '../modules/ai/services/aiService';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -795,59 +804,6 @@ async function goalCreateCombo(ctx: RecommendationContext, restaurantId: string,
   return out;
 }
 
-// ─── AI explanation layer (enhancement only) ─────────────────────────
-
-/**
- * One optional LLM call per request: given the deterministic candidates it
- * returns a concise why/impact/risk rewrite per candidate. Every number in
- * the prompt is a real fact from the context. On ANY failure the deterministic
- * copy is kept — the advisor is fully functional without the LLM.
- */
-async function enrichWithAi(
-  restaurantId: string,
-  branchId: string | undefined,
-  goal: AdvisorGoal,
-  candidates: AdvisorCandidate[],
-): Promise<void> {
-  if (candidates.length === 0) return;
-  const facts = candidates.map((c, i) => ({
-    index: i,
-    title: c.title,
-    why: c.why,
-    economics: c.economics || null,
-    expectedImpact: c.expectedImpact,
-    risk: c.risk || null,
-  }));
-  const prompt =
-    `You are a restaurant business advisor. Below are deterministic recommendations already computed from the restaurant's OWN data ` +
-    `(real sales, real inventory, real margins, real offer performance). All numbers are authoritative — never change them, never invent new ones.\n\n` +
-    `Goal: ${goal}\n\n` +
-    `Recommendations:\n${JSON.stringify(facts, null, 2)}\n\n` +
-    `For each recommendation, return valid JSON ONLY: {"explanations":[{"index":0,"why":"...","impact":"...","risk":"..."}]}\n` +
-    `Keep each field under 140 characters, owner-friendly, specific to the listed evidence. Do not mention "data" or "analysis".`;
-  try {
-    const res = await executeAiCall({
-      prompt,
-      feature: 'advisor',
-      tenantId: restaurantId,
-      branchId,
-      cacheKeyVariant: `${goal}:${candidates.length}:${facts.map((f) => f.title).join('|')}`,
-    });
-    const explanations: Array<{ index: number; why?: string; impact?: string; risk?: string }> =
-      res?.data?.explanations;
-    if (!Array.isArray(explanations)) return;
-    for (const e of explanations) {
-      const c = candidates[e.index];
-      if (!c) continue;
-      if (typeof e.why === 'string' && e.why.trim()) c.why = e.why.trim();
-      if (typeof e.impact === 'string' && e.impact.trim()) c.expectedImpact = e.impact.trim();
-      if (typeof e.risk === 'string' && e.risk.trim()) c.risk = e.risk.trim();
-    }
-  } catch {
-    // Deterministic copy already present — nothing to do.
-  }
-}
-
 // ─── Public API ─────────────────────────────────────────────────────
 
 const GOAL_GENERATORS: Record<AdvisorGoal, (ctx: RecommendationContext, rid: string, margins: Map<string, MarginInfo>) => Promise<AdvisorCandidate[]>> = {
@@ -912,8 +868,9 @@ export async function generateAdvisorRecommendations(
     };
   }
 
-  // Enrich with AI reasoning (best-effort, deterministic fallback).
-  await enrichWithAi(String(restaurantId), opts.branchId, goal, candidates);
+  // PHASE 2: the AI explanation layer was removed — deterministic copy is
+  // authoritative. FUTURE AI INTEGRATION POINT: explanations may be added as a
+  // separate layer that consumes these candidates without mutating them.
 
   candidates.sort((a, b) => b.score - a.score);
 

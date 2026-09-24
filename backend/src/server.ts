@@ -25,8 +25,7 @@
  *   1. Auth routes   (/api/auth)     — BEFORE global rate limiter (own strict limiters)
  *   2. Admin routes  (/api/auth/admin) — BEFORE global rate limiter
  *   3. Health check  (/api/health)   — PUBLIC, moderate rate limiter
- *   4. AI routes     (/api/ai)       — BEFORE global rate limiter (own strict limiters)
- *   5. Voice routes  (/api/voice-inventory) — BEFORE global rate limiter
+ *   4. Voice routes  (/api/voice-inventory) — BEFORE global rate limiter
  * Navigation:
  *   - /api/auth/*           → routes/auth.ts
  *   - /api/auth/admin/*     → routes/admin.ts
@@ -107,7 +106,6 @@ import takeawayOrdersRouter from './routes/takeawayOrders';
 import heldOrdersRouter from './routes/heldOrders';
 import reservationsRouter from './routes/reservations';
 import devicesRouter from './routes/devices';
-import aiRouter from './modules/ai/routes/ai';
 import voiceInventoryRouter from './modules/voice-inventory/routes/voiceInventory';
 import subscriptionRouter from './modules/subscription/subscriptionRoutes';
 import qrOrderingRouter from './modules/qr-ordering/routes/qrOrdering';
@@ -148,9 +146,8 @@ import { renderPublicStorePage } from './modules/public-store/publicStorePage';
 import { initSocket } from './socket';
 import { startSubscriptionScheduler } from './modules/subscription/subscriptionScheduler';
 import { subscriptionService } from './modules/subscription/subscriptionService';
-import { getSTTConfig } from './modules/voice-inventory/services/SpeechService';
-import { aiConfig } from './modules/ai/config';
-import { hydrateQuotaFromDb } from './modules/ai/services/aiQuotaTracker';
+import whatsappRouter from './modules/whatsapp/routes/whatsappRoutes';
+
 import { startCampaignWorker } from './services/campaignQueue';
 import { startMarketingScheduler } from './services/marketingScheduler';
 
@@ -278,11 +275,12 @@ app.get('/api/health', publicLimiter, (_req, res) => {
   });
 });
 
-// AI assistant routes
-app.use('/api/ai', aiRouter);
-
 // Voice inventory routes
 app.use('/api/voice-inventory', voiceInventoryRouter);
+
+// (The AI assistant routes /api/ai were removed in Phase 3 — the core app
+// does not require AI; see docs/AI_ARCHITECTURE.md for the future integration
+// point.)
 
 // Subscription & payment routes — mounted BEFORE the global apiLimiter (Group B)
 // so the shared per-IP business-request budget (consumed heavily by the running
@@ -356,6 +354,7 @@ app.use('/api/customer-reports', customerReportsRouter);
 app.use('/api', recipesRouter);
 app.use('/api', promotionsRouter);
 app.use('/api', mediaRouter);
+app.use('/api', whatsappRouter);
 
 // =============================================================================
 // ERROR HANDLING
@@ -463,20 +462,6 @@ async function start() {
   } catch (err) {
     console.warn('[QR] seat-session sweeper startup failed:', (err as Error)?.message);
   }
-
-  // ─── 3.6. Log resolved AI/STT configuration for quick misconfiguration detection ─
-  // Values here are the ones ACTUALLY used at runtime (auto-detection included),
-  // so a wrong model/provider is visible in the boot logs immediately.
-  const stt = getSTTConfig();
-  console.log(`[Config] LLM provider=${aiConfig.provider}, model=${aiConfig.model}`);
-  console.log(`[Config] STT provider=${stt.provider}, model=${stt.model || 'default'}`);
-
-  // ─── 3.6. Hydrate AI quota snapshots from MongoDB so the admin dashboard's
-  // per-key quota cards keep their rate-limit history across restarts. Best-
-  // effort: a failure here only means quota history starts empty this boot.
-  await hydrateQuotaFromDb().catch((err) =>
-    console.warn('[AiQuotaTracker] startup hydration failed:', err?.message || err),
-  );
 
   // ─── 4. Start HTTP server (with Socket.IO live layer) ─────────
   const server = http.createServer(app);

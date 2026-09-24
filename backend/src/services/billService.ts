@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Bill Service — Business logic for payment billing (immutable records).
+ *
+ * LAYER: CORE
+ *
+ * AUTHORITATIVE BUSINESS RULE: bills are computed server-side from the
+ * deterministic pricing engine; client-supplied totals are never trusted.
+ * Do not replace this calculation with client-side or LLM-generated values.
+ *
  * Bills are append-only: once created, they are never modified.
  * Line items are stored in BillItem with historical snapshots (priceAtSale).
  *
@@ -16,13 +23,14 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import { billRepo, billItemRepo, customerRepo, employeeRepo, auditLogRepo, dailySummaryRepo } from '../repositories';
-import { InvoiceCounter, DailySummary, MonthlySummary, YearlySummary, Customer } from '../models';
+import { InvoiceCounter, DailySummary, MonthlySummary, YearlySummary, Customer, Product } from '../models';
 import { stockMovementService } from './stockMovementService';
 import { loyaltyService, customerService } from './index';
 import { verifyPin } from '../utils/bcrypt';
 import { AppError } from '../utils/AppError';
 import { config } from '../config';
 import { consumptionService } from '../modules/recipes/services/consumptionService';
+import ConfigurationTemplate from '../modules/menu-config/models/ConfigurationTemplate';
 import { resolveProductConfiguration } from '../modules/menu-config/services/configurationResolver';
 import { validateProductConfigurationSelection } from '../modules/menu-config/services/configurationValidator';
 import { calculateLineItemPrice } from '../modules/menu-config/services/pricingEngine';
@@ -72,14 +80,71 @@ async function ensureReceiptToken(bill: any): Promise<void> {
  * `product.id` / `selectedVariant.name`). This is what generateForBill and the
  * active-recipe guard both read, so variant resolution and the double-deduction
  * skip stay consistent with the bill's actual line items.
+ *
+ * For CONFIGURED items (menuConfig variants) the client may omit a top-level
+ * variantName — the chosen variant only lives inside the configuration
+ * selections as an optionId. Without it, a variant-driven dish is treated as a
+ * plain sale and consumes no ingredients. As a fallback the variant name is
+ * derived from the product's VARIANT_GROUP templates (optionId → option name).
  */
-function normalizeBillItems(items: any[]): any[] {
-  return (items || []).map((item: any) => ({
+async function normalizeBillItems(items: any[]): Promise<any[]> {
+  const normalized: any[] = (items || []).map((item: any) => ({
     ...item,
     menuItemId: item?.product?.id || item?.menuItemId,
     itemName: item?.product?.name || item?.itemName,
     variantName: item?.selectedVariant?.name || item?.variantName,
   }));
+
+  // Batch-derive variant names for configured items that carry no explicit
+  // variantName (one pass per distinct product; cached).
+  const cache = new Map<string, Promise<string | undefined>>();
+  const derive = (item: any): Promise<string | undefined> => {
+    const productId = item?.menuItemId || item?.product?.id;
+    if (!productId || !mongoose.Types.ObjectId.isValid(productId)) return Promise.resolve(undefined);
+    const selections = item?.configuration?.selections || item?.configurationSnapshot?.selections;
+    if (!Array.isArray(selections) || selections.length === 0) return Promise.resolve(undefined);
+    if (!cache.has(productId)) {
+      cache.set(productId, deriveVariantNameFromConfig(String(productId), selections));
+    }
+    return cache.get(productId)!;
+  };
+
+  const out: any[] = [];
+  for (const item of normalized) {
+    if (!item?.variantName) {
+      const derived = await derive(item).catch(() => undefined);
+      if (derived) item.variantName = derived;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * Map a configured item's selections to the chosen variant name. Only groups
+ * whose templateId belongs to the product's `menuConfig.variantConfigurations`
+ * are considered (modifier/add-on selections are ignored), so a plain variant
+ * selection like `{ groupId: <variantTemplateId>, optionIds: ["g_x"] }`
+ * resolves to the option name ("less") the recipe is keyed by.
+ */
+async function deriveVariantNameFromConfig(productId: string, selections: any[]): Promise<string | undefined> {
+  const product = await Product.findById(productId).select('menuConfig').lean().exec();
+  const variantTemplateIds = new Set(
+    (product?.menuConfig?.variantConfigurations || []).map((r: any) => String(r.templateId))
+  );
+  if (variantTemplateIds.size === 0) return undefined;
+
+  for (const entry of selections) {
+    if (!variantTemplateIds.has(String(entry?.groupId))) continue;
+    const optionIds = (entry?.optionIds || []).map(String);
+    if (optionIds.length === 0) continue;
+    const template = await ConfigurationTemplate.findById(entry.groupId).lean().exec();
+    const opt = (template?.data?.options || []).find(
+      (o: any) => optionIds.includes(String(o.id)) && o.active !== false
+    );
+    if (opt?.name) return String(opt.name).trim() || undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -699,7 +764,7 @@ export class BillService {
     // without a recipe keep the legacy path unchanged.
     const restaurantId = ctx.restaurantId || billData.restaurantId;
     const branchId = ctx.branchId || billData.branchId;
-    const normalizedItems = normalizeBillItems(items);
+    const normalizedItems = await normalizeBillItems(items);
     const recipeKeys = await consumptionService.activeRecipeKeys(restaurantId, normalizedItems);
 
     // Stock engine: deduct stock for every sold item (best-effort, clamped).
@@ -916,7 +981,7 @@ export class BillService {
     // recipe deactivated after the sale must not turn the legacy restore back
     // on for a menu product that was never deducted.
     const voidRestaurantId = ctx.restaurantId || (bill as any).restaurantId;
-    const normalizedVoidItems = normalizeBillItems(items);
+    const normalizedVoidItems = await normalizeBillItems(items);
     let voidRecipeKeys = new Set<string>();
     try {
       const record = await consumptionService.getByBill(voidRestaurantId, id);

@@ -4,6 +4,12 @@
  *
  * Loyalty Service — Server-authoritative loyalty engine (Phase 1.6).
  *
+ * LAYER: CORE
+ *
+ * AUTHORITATIVE BUSINESS RULE: loyalty math is computed server-side from the
+ * append-only transaction ledger. Do not replace this with client-side or
+ * LLM-generated values.
+ *
  * The backend is the ONLY authority for loyalty math. Client-supplied points,
  * visits, tiers and spend are treated as hints and NEVER trusted. Every point
  * movement is written to the append-only LoyaltyTransaction ledger and

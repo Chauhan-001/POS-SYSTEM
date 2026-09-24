@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { debugWarn } from '../utils/debugLog';
-import { setAiToken } from '../ai/aiClient';
+import { setSharedAccessToken } from '../core/authTokenStore';
 
 const BASE = '/api';
 
@@ -17,11 +17,11 @@ let _refreshSubscribers: Array<(token: string) => void> = [];
 
 export function setAccessToken(token: string | null) {
   _accessToken = token;
-  // Keep the AI client's in-memory JWT in sync so /api/ai/* calls (which use
-  // their own token store, not axios) never keep serving an expired token
-  // after a refresh. aiClient.getEffectiveToken() prefers the in-memory value
-  // over localStorage, so without this the AI endpoints 401 while reports work.
-  setAiToken(token);
+  // Publish to the shared CORE token store so optional AI calls (which read
+  // the store instead of importing axios) never keep serving an expired token
+  // after a refresh. Keeps core auth independent of the AI layer — the AI
+  // client subscribes to the store rather than axios importing it.
+  setSharedAccessToken(token);
 }
 
 export function getAccessToken(): string | null {

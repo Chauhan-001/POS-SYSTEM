@@ -4,6 +4,12 @@
  *
  * Finance Service — Backend-generated financial engine (Phase 1.7).
  *
+ * LAYER: CORE
+ *
+ * AUTHORITATIVE BUSINESS RULE: every financial report below is computed
+ * server-side from the real ledger. Do not replace these calculations with
+ * client-side or LLM-generated values.
+ *
  * Everything is computed SERVER-side from the real ledger:
  *   - Revenue        : non-voided, non-refunded Bills (grandTotal)
  *   - Discounts/Tax  : Bill aggregates

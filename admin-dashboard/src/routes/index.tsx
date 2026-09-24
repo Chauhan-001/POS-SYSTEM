@@ -46,7 +46,7 @@ const SubscriptionPlans = lazy(() => import('../pages/SubscriptionPlans'))
 const SubscriptionRevenue = lazy(() => import('../pages/SubscriptionRevenue'))
 const Devices = lazy(() => import('../pages/Devices'))
 const Analytics = lazy(() => import('../pages/Analytics'))
-const AIUsage = lazy(() => import('../pages/AIUsage'))
+// AIUsage page removed (Phase 3 — AI-only admin page)
 const Support = lazy(() => import('../pages/Support'))
 const AuditLog = lazy(() => import('../pages/AuditLog'))
 const Security = lazy(() => import('../pages/Security'))
@@ -148,10 +148,7 @@ export const router = createBrowserRouter([
         path: 'subscription-revenue',
         element: <Suspense fallback={<LazyFallback />}><SubscriptionRevenue /></Suspense>,
       },
-      {
-        path: 'ai-usage',
-        element: <Suspense fallback={<LazyFallback />}><AIUsage /></Suspense>,
-      },
+      // 'ai-usage' route removed (Phase 3 — AI-only admin page)
       {
         path: 'audit-log',
         element: <Suspense fallback={<LazyFallback />}><AuditLog /></Suspense>,

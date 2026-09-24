@@ -13,6 +13,11 @@
  *
  * Core principle: AI discovers, explains and communicates opportunities.
  * Deterministic systems calculate and enforce them.
+ *
+ * LAYER: CORE ORCHESTRATION — every number originates from the deterministic
+ * engines it coordinates (advisor, cost, forecast, optimization). FUTURE AI
+ * INTEGRATION POINT: AI may consume this module's outputs for explanation or
+ * prioritization; it must never feed values back into the cycle.
  */
 
 import mongoose from 'mongoose';

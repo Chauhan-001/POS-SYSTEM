@@ -12,15 +12,17 @@ import {
   TrendingUp, DollarSign, ShoppingCart, Users, Clock, Star,
   ArrowRight, Activity, CreditCard, Smartphone, Wallet, Banknote,
   ChefHat, UtensilsCrossed, PieChart, BarChart3, Zap, Calendar,
-  Percent, Receipt, Package, Layers, Coffee, TrendingDown, Sparkles, RefreshCw
+  Percent, Receipt, Package, Layers, Coffee, TrendingDown, Sparkles, RefreshCw,
+  MessageCircle, CheckCircle, XCircle
 } from 'lucide-react';
 import RefreshButton from './common/RefreshButton';
 import type { DailySales, Bill, Order, TableInfo, Employee, Reservation } from '../src/types';
-import { generateDailySummary, type DailyAISummary } from '../src/ai/aiData';
 import { todayBusinessKey, isInBusinessDay, shiftDateKey, localDateKey } from '../src/data';
-import { fetchInventoryEvents, fetchInventorySummary, fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary } from '../src/api/client';
-import WeatherWidget from '../src/ai/WeatherWidget';
+import { fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary } from '../src/api/client';
+import { fetchWhatsAppStatus } from '../src/api/client';
 import DashboardStatCard from './DashboardStatCard';
+// PHASE 3: the AI Daily Summary + Weather Widget were removed with the AI
+// layer. The dashboard runs on deterministic local calculations.
 
 interface DashboardWorkspaceProps {
   dailySales: DailySales;
@@ -163,6 +165,10 @@ export default function DashboardWorkspace({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  // WhatsApp connection status (POS-safe — no secrets, no onboarding).
+  const [waStatus, setWaStatus] = useState<{ connected: boolean; status: string; phoneNumber?: string; displayName?: string } | null>(null);
+  const [waLoading, setWaLoading] = useState(false);
+
   // Fetches today's backend-computed hourly/order-type charts. Called on mount,
   // on the manual Refresh button, and by the auto-refresh timer below — the
   // getCached API client always hits the network first, so this never serves
@@ -211,6 +217,24 @@ export default function DashboardWorkspace({
     })();
     return () => { cancelled = true; };
   }, [loadBackendToday]);
+
+  // WhatsApp connection status — POS-safe read-only view.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setWaLoading(true);
+      try {
+        const data = await fetchWhatsAppStatus();
+        if (cancelled) return;
+        if (data) setWaStatus(data);
+      } catch {
+        /* offline — keep null */
+      } finally {
+        if (!cancelled) setWaLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Manual Refresh + auto-refresh: re-pull the backend values that drive the
   // dashboard (bills/orders/products/expenses via onRefreshData, plus the
@@ -318,82 +342,7 @@ export default function DashboardWorkspace({
   // Sparkline data from hourly revenue
   const sparklineData = useMemo(() => hourlyData.map(h => h.revenue), [hourlyData]);
 
-  // AI Daily Summary state — the LLM call fires ONLY on dashboard mount
-  // (fresh login) or when the user presses the dedicated refresh button on
-  // the AI card. It deliberately does NOT follow the 60s auto-refresh or
-  // the data-dependency changes, so an idle dashboard never burns LLM tokens.
-  const [aiSummary, setAiSummary] = useState<DailyAISummary | null>(null);
-  const [aiRefreshKey, setAiRefreshKey] = useState(0);
-  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    setAiSummaryLoading(true);
-    (async () => {
-      const todayKey = todayBusinessKey(settings.openingTime);
-      const yesterdayKey = shiftDateKey(todayKey, -1);
-
-      // REAL yesterday revenue — the previous BUSINESS day's sales (opening
-      // window aware: last night's post-midnight bills count toward it).
-      const yesterdayRevenue = bills
-        .filter(b => isInBusinessDay(b, yesterdayKey, settings.openingTime))
-        .reduce((s, b) => s + (b.grandTotal || 0), 0);
-
-      // REAL low-stock count — inventory items at/below their minimum threshold.
-      // Uses fetchInventorySummary (type='inventory') since pos.products is menu-only.
-      let lowStockCount = 0;
-      try {
-        const invSummary = await fetchInventorySummary();
-        if (Array.isArray(invSummary)) {
-          lowStockCount = invSummary.filter((p: any) =>
-            Number(p.currentStock) <= Number(p.minStock) && Number(p.minStock) > 0
-          ).length;
-        }
-      } catch { /* non-fatal */ }
-
-      // REAL open order count — orders still in progress (incl. Preparing).
-      const openOrderCount = orders.filter(o =>
-        ['New', 'Accepted', 'Preparing'].includes(o.status)
-      ).length;
-
-      // REAL waste today — sum of today's logged waste events (est. cost via avg price).
-      let wasteToday = 0;
-      try {
-        const wasteEvents = await fetchInventoryEvents({ type: 'waste', limit: 200 });
-        if (wasteEvents) {
-          wasteToday = wasteEvents
-            .filter(e => localDateKey(new Date(e.timestamp || Date.now())) === todayKey)
-            .reduce((s, e) => {
-              const product = products.find((p: any) => p.name === e.item);
-              return s + Math.abs(e.quantity || 0) * (Number(product?.averageCost) || 0);
-            }, 0);
-        }
-      } catch { /* offline — keep 0 */ }
-
-      if (cancelled) return;
-      const summary = await generateDailySummary(
-        dailySales.totalRevenue,
-        yesterdayRevenue,
-        lowStockCount,
-        openOrderCount,
-        wasteToday,
-        todayCustomerCount,
-        {
-          orderCount: dailySales.totalOrders,
-          itemCount: itemsSold,
-          totalDiscount: dailySales.totalDiscount,
-          totalGst: dailySales.totalGst,
-          averageOrderValue: dailySales.averageOrderValue,
-          topItems,
-          paymentMethods: dailySales.paymentBreakdown,
-          categoryBreakdown,
-        },
-        // The revenue projection needs the real open/close window.
-        { openingTime: settings.openingTime, closingTime: settings.closingTime }
-      );
-      if (!cancelled) setAiSummary(summary);
-    })().finally(() => { if (!cancelled) setAiSummaryLoading(false); });
-    return () => { cancelled = true; };
-  }, [aiRefreshKey]); // mount + explicit refresh button only — never the 60s auto-refresh
+  // PHASE 3: the AI Daily Summary effect was removed with the AI layer.
 
   // Quick action buttons (plan-gated: Kitchen & Inventory only render when the
   // subscription plan + module toggles include them)
@@ -460,81 +409,7 @@ export default function DashboardWorkspace({
           })}
         </div>
 
-        {/* ===== AI DAILY SUMMARY ===== */}
-        {moduleSettings.enableAISummary !== false && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-r from-[var(--color-purple-50)] via-[var(--color-bg-white)] to-[var(--color-blue-50)] rounded-2xl border border-[var(--color-border-default)] shadow-sm overflow-hidden"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3.5 border-b border-purple-100">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[var(--color-purple-500-solid)] flex items-center justify-center shadow-sm">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-gray-800">{aiSummary?.greeting || 'Good day'}</span>
-                <p className="text-[10px] text-gray-400">AI Daily Summary · {aiSummary?.date || new Date().toLocaleDateString()}</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 sm:ml-auto items-center">
-              <RefreshButton
-                onRefresh={() => { setAiRefreshKey(k => k + 1); return Promise.resolve(); }}
-                busy={aiSummaryLoading}
-                title="Refresh AI summary (calls the AI once)"
-                className="flex items-center gap-1 text-[10px] font-semibold text-purple-600 hover:text-purple-400 hover:bg-purple-50 border border-purple-200 rounded-full px-2.5 py-1 transition-colors"
-                iconClassName="w-3 h-3 shrink-0"
-              >
-                Refresh AI
-              </RefreshButton>
-              {(aiSummary?.alerts || []).map((alert, i) => (
-                <span key={i} className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                  alert.severity === 'critical' ? 'bg-red-50 text-red-700' :
-                  alert.severity === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
-                }`}>
-                  {alert.message}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="px-5 py-4">
-            {!aiSummary ? (
-              <div className="flex items-center gap-3 py-4 text-gray-400">
-                <Sparkles className="w-5 h-5 text-purple-300 shrink-0" />
-                <p className="text-xs">
-                  AI summary is temporarily unavailable. The dashboard is using local calculations.
-                </p>
-              </div>
-            ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
-                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Key Insight</p>
-                <p className="text-xs font-semibold text-gray-800 mt-1">{aiSummary.keyInsight}</p>
-              </div>
-              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
-                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Top Priority</p>
-                <p className="text-xs font-semibold text-gray-800 mt-1">{aiSummary.topPriority}</p>
-              </div>
-              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
-                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Revenue Projection</p>
-                <p className="text-xs font-semibold text-emerald-700 mt-1">{aiSummary.revenuePrediction}</p>
-              </div>
-              <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-3.5">
-                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Suggestions</p>
-                <ul className="mt-1 space-y-0.5">
-                  {aiSummary.itemSuggestions.map((s, i) => (
-                    <li key={i} className="text-[10px] text-gray-600 flex items-start gap-1">
-                      <span className="w-1 h-1 rounded-full bg-purple-400 mt-1.5 shrink-0" />
-                      {s}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-            )}
-          </div>
-        </motion.div>
-        )}
+        {/* ===== AI DAILY SUMMARY — removed (Phase 3, AI-only) ===== */}
 
         {/* ===== KPI CARDS (memoized) ===== */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -609,6 +484,50 @@ export default function DashboardWorkspace({
             </div>
           </DashboardStatCard>
         </div>
+
+        {/* ===== WHATSAPP STATUS ===== */}
+        {waLoading ? (
+          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-4 shadow-xs">
+            <div className="flex items-center gap-2 text-gray-400">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span className="text-xs font-semibold">Checking WhatsApp…</span>
+            </div>
+          </div>
+        ) : waStatus ? (
+          <div className={`rounded-2xl border shadow-xs p-4 flex items-center gap-3 ${waStatus.connected
+            ? 'bg-emerald-50 border-emerald-200'
+            : 'bg-gray-50 border-gray-200'
+            }`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${waStatus.connected ? 'bg-emerald-100' : 'bg-gray-200'
+              }`}>
+              {waStatus.connected ? (
+                <CheckCircle className="w-5 h-5 text-emerald-600" />
+              ) : (
+                <XCircle className="w-5 h-5 text-gray-500" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-black text-gray-900">
+                WhatsApp Business
+              </p>
+              <p className="text-[11px] font-semibold text-gray-600 truncate">
+                {waStatus.connected
+                  ? `${waStatus.displayName || 'Connected'} · ${waStatus.phoneNumber || ''}`
+                  : 'Not Connected — contact your administrator'}
+              </p>
+            </div>
+            <div className="ml-auto shrink-0">
+              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-full ${waStatus.connected
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'bg-gray-200 text-gray-600'
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${waStatus.connected ? 'bg-emerald-500' : 'bg-gray-400'
+                  }`} />
+                {waStatus.connected ? 'Active' : 'Offline'}
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         {/* ===== SECOND ROW: Top Items + Payment Breakdown ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -898,15 +817,7 @@ export default function DashboardWorkspace({
             </div>
           )}
 
-          {/* AI Weather Widget */}
-          {moduleSettings.enableAIWeather !== false && (
-            <WeatherWidget
-              menuItems={products.map((p: any) => p.name).filter(Boolean)}
-              // The inventory module tracks products as its item catalog, so the
-              // product list is the real inventory list for weather-based tips.
-              inventoryItems={products.map((p: any) => p.name).filter(Boolean)}
-            />
-          )}
+          {/* AI Weather Widget — removed (Phase 3, AI-only) */}
 
           {/* Quick Stats / Summary */}
           <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-xs">

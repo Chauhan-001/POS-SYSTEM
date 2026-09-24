@@ -29,7 +29,8 @@ import {
   CreditCard, Activity, FileText, CheckCircle, AlertTriangle, Key,
   Lock, Unlock, Plus, Trash2, Edit, Save, Clock, MapPin, Building, Building2,
   Crown, Users, ExternalLink, Search, ShieldOff, ShieldCheck, LogIn, Wallet,
-  BarChart3, Users2, Receipt, Upload, HardDrive, Image as ImageIcon, Sparkles
+  BarChart3, Users2, Receipt, Upload, HardDrive, Image as ImageIcon, Sparkles,
+  MessageCircle
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle } from '../components/ui/Card'
@@ -46,6 +47,7 @@ import { getSubscriptionByRestaurant, renewSubscription, upgradeSubscription, do
 import { getPlans } from '../api/subscriptionPlans'
 import { getBranchUsageByRestaurant } from '../api/branches'
 import UsageDashboard from '../components/UsageDashboard'
+import WhatsAppIntegration from '../components/WhatsAppIntegration'
 import { formatDate, formatDateTime, formatCurrency, formatNumber } from '../utils/format'
 import {
   getDevices, blockDevice, unblockDevice, getDeviceActivity,
@@ -206,7 +208,7 @@ export default function RestaurantDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = useState<'overview' | 'subscription' | 'branches' | 'usage' | 'settings' | 'devices' | 'security' | 'timeline' | 'notes' | 'analytics'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'subscription' | 'branches' | 'usage' | 'settings' | 'devices' | 'security' | 'timeline' | 'notes' | 'analytics' | 'whatsapp'>('overview')
   const [newNote, setNewNote] = useState('')
   const [showEditModal, setShowEditModal] = useState(false)
   const [editForm, setEditForm] = useState<any>({})
@@ -650,6 +652,7 @@ export default function RestaurantDetails() {
           { id: 'branches', label: 'Branches', icon: Building2 },
           { id: 'usage', label: 'Usage', icon: Activity },
           { id: 'settings', label: 'Restaurant Settings', icon: Settings },
+          { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
           { id: 'devices', label: 'Users & Devices', icon: Monitor },
           { id: 'security', label: 'Security & Credentials', icon: Shield },
           { id: 'timeline', label: 'Activity Timeline', icon: Clock },
@@ -1523,6 +1526,10 @@ export default function RestaurantDetails() {
               </div>
             </Card>
           </div>
+        )}
+
+        {activeTab === 'whatsapp' && (
+          <WhatsAppIntegration restaurantId={id!} />
         )}
 
         {activeTab === 'devices' && (

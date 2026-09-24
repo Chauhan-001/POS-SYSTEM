@@ -1071,46 +1071,9 @@ export async function fetchFeedback(params?: {
   return get<any>(`/marketing/feedback${q ? `?${q}` : ''}`);
 }
 
-// ─── Marketing (Create-with-AI + Automations) ──────────────────
-
-/**
- * POST /api/ai/marketing/generate — Build a full marketing plan (offer +
- * audience + messages + schedule) from the owner's natural-language goal.
- * The backend gathers trusted restaurant context server-side; the LLM is only
- * advisory and nothing is ever sent without explicit user confirmation.
- */
-export async function generateMarketingPlan(input: {
-  request: string;
-  tone?: 'friendly' | 'premium' | 'exciting' | 'simple' | 'festive';
-  language?: 'en' | 'hi' | 'hi-en';
-}) {
-  // BACKEND CALLED — AI marketing plan generation (server-side context)
-  return post<any>('/ai/marketing/generate', input);
-}
-
-/**
- * POST /api/ai/offer-copy — Generate offer title/description/messages via the
- * backend LLM (falls back to deterministic templates when AI is unavailable).
- */
-export async function generateOfferCopy(input: {
-  type: string;
-  value: number;
-  discountValue?: string;
-  applicableCategories?: string[];
-  targetAudience?: string;
-  reason?: string;
-  minOrderValue?: number;
-  durationDays?: number;
-  /** Copy style the owner picked (Studio/Create/Promote): friendly, funky, zomato, professional, premium, festive, genz, minimal. */
-  tone?: 'friendly' | 'funky' | 'zomato' | 'professional' | 'premium' | 'festive' | 'genz' | 'minimal';
-  /** Message language: English, Hindi or Hinglish. */
-  language?: 'en' | 'hi' | 'hinglish';
-  /** Explicit user action (Regenerate) → bypass the AI cache (Phase 3). */
-  bustCache?: boolean;
-}) {
-  // BACKEND CALLED — LLM offer copy generation
-  return post<any>('/ai/offer-copy', input);
-}
+// ─── Marketing (Automations) ─────────────────────────────
+// PHASE 3: the /api/ai/* client calls (marketing plan, offer copy,
+// offer recommendations) were removed with the AI layer.
 
 /** GET /api/automations — Marketing automation recipes (birthday/win-back/VIP) */
 export async function fetchAutomations() {
@@ -2895,27 +2858,6 @@ export async function fetchOfferRecommendations(limit = 10) {
   return result;
 }
 
-/**
- * POST /api/ai/offer-recommendations — call the LLM directly for fresh
- * offer suggestions (advisory only; the deterministic engine remains the
- * fallback when AI is unavailable/off-subscription).
- */
-export async function fetchAiOfferRecommendations(input: {
-  totalRevenue?: number;
-  orderCount?: number;
-  averageOrderValue?: number;
-  topSellingCategories?: Array<{ name: string; qty: number; revenue: number }>;
-  lowStockItems?: Array<{ name: string; currentStock: number; minStock: number }>;
-  currentOffers?: string[];
-  customerCount?: number;
-  weather?: any;
-  /** Explicit user refresh → bypass the AI cache (Phase 3). */
-  bustCache?: boolean;
-}) {
-  // BACKEND CALLED — LLM-powered suggestions from real tenant context.
-  return post<any>('/ai/offer-recommendations', input).catch(() => null);
-}
-
 // ─── Recipe Manager (Cost Intelligence) ───────────────────────────
 
 /** GET /api/recipes — List recipes (search/status filter). */
@@ -3622,4 +3564,11 @@ export async function sendTestMessage(params: {
   target: string; message: string; channels: string[];
 }) {
   return post<any>('/marketing/test-message', params);
+}
+
+// ─── WhatsApp Integration ────────────────────────────────────────
+
+/** GET /api/integrations/whatsapp/status — POS-safe WhatsApp connection status */
+export async function fetchWhatsAppStatus() {
+  return get<any>('/integrations/whatsapp/status');
 }

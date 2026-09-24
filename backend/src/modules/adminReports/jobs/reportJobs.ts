@@ -37,7 +37,6 @@ export async function runNightlySnapshots(): Promise<Record<string, boolean>> {
     ['growth', () => adminReportingService.growth({ period: 'this_month' })],
     ['revenue', () => adminReportingService.revenue({ period: 'this_month' })],
     ['subscription', () => adminReportingService.subscriptions({ period: 'this_month' })],
-    ['ai_revenue', () => adminReportingService.aiRevenue({ period: 'this_month' })],
     ['usage', () => adminReportingService.usage({ period: 'this_month' })],
     ['feature', () => adminReportingService.features({ period: 'this_month' })],
   ];

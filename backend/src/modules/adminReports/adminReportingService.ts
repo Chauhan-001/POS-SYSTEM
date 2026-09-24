@@ -19,8 +19,7 @@ import {
 import { getGrowthReport, GrowthReport } from './aggregations/growth';
 import { getRevenueReport, RevenueReport, recordRevenueEvent } from './aggregations/revenue';
 import { getSubscriptionReport, SubscriptionReport, recordSubscriptionHistory } from './aggregations/subscriptions';
-import { getAiRevenueReport, AiRevenueReport } from './aggregations/ai';
-import { getAiUsageMetrics, AiUsageMetricsReport } from './aggregations/aiUsage';
+// PHASE 3: AI revenue/usage aggregations removed (AI-only reports).
 import { getSupportReport, SupportReport } from './aggregations/support';
 import { getDeviceReport, DeviceReport } from './aggregations/devices';
 import { getUsageReport, UsageReport } from './aggregations/usage';
@@ -52,14 +51,9 @@ export class AdminReportingService {
     return cachedReport('subscriptions', signatureOf(options), () => getSubscriptionReport(options));
   }
 
-  async aiRevenue(options: ReportOptions = {}): Promise<AiRevenueReport> {
-    return cachedReport('ai-revenue', signatureOf(options), () => getAiRevenueReport(options));
-  }
+// PHASE 3: aiRevenue() / aiUsageMetrics() methods removed — AI-only reports.
 
   /** Phase 8 — AI usage & reliability telemetry (cache/fallback/validation/latency/cost). */
-  async aiUsageMetrics(options: ReportOptions = {}): Promise<AiUsageMetricsReport> {
-    return cachedReport('ai-usage-metrics', signatureOf(options), () => getAiUsageMetrics(options));
-  }
 
   async support(options: ReportOptions = {}): Promise<SupportReport> {
     return cachedReport('support', signatureOf(options), () => getSupportReport(options));
@@ -95,11 +89,10 @@ export class AdminReportingService {
 
   async summary(options: ReportOptions = {}): Promise<Record<string, unknown>> {
     return cachedReport('summary', signatureOf(options), async () => {
-      const [growth, revenue, subs, ai, support, devices, usage] = await Promise.all([
+      const [growth, revenue, subs, support, devices, usage] = await Promise.all([
         this.growth(options),
         this.revenue(options),
         this.subscriptions(options),
-        this.aiRevenue(options),
         this.support(options),
         this.devices(options),
         this.usage(options),
@@ -110,7 +103,6 @@ export class AdminReportingService {
         growth: growth.summary,
         revenue: revenue.summary,
         subscriptions: subs.summary,
-        aiRevenue: ai.summary,
         support: support.summary,
         devices: devices.summary,
         usage: usage.summary,

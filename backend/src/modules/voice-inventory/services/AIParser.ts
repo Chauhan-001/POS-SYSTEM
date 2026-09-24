@@ -2,82 +2,39 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * AIParser — Sends transcript to LLM, extracts structured JSON for inventory actions.
+ * VoiceParser — Deterministic transcript → structured inventory action parser.
  *
- * This is the ONLY service that talks to the LLM.
+ * PHASE 3: AI execution removed. This parser was previously LLM-backed with a
+ * keyword fallback; the deterministic keyword/rule engine (formerly the
+ * "fallback") is now the PRIMARY and ONLY parsing path. It handles English,
+ * Romanized Hinglish and Devanagari Hindi without any LLM dependency.
+ *
  * It returns structured data — it NEVER writes to the database.
  *
  * Pipeline:
- *   Transcript → Prompt Builder → LLM → JSON Parser → Structured Output
+ *   Transcript → Language detection → Keyword/rule parsing → Rate backstop
  *
- * SECURITY:
- *   - All prompts go through sanitizer to prevent injection
- *   - LLM output is validated against a Zod schema before returning
- *   - Never exposes system prompts or configuration
- *   - Never passes MongoDB data to the LLM (only item names)
+ * FUTURE AI INTEGRATION POINT: a future AI layer may re-add an LLM parse stage
+ * on top of this deterministic parser — the keyword engine below is and
+ * remains the source of truth / final fallback.
  */
 
-import { z } from 'zod';
-import { complete } from '../../ai/provider/llmProvider';
-import { aiConfig } from '../../ai/config';
-import { parseJsonResponse } from '../../ai/services/responseParser';
-import { executeAiCall } from '../../ai/services/aiService';
-import { buildVoiceParsePrompt } from '../prompts/voice';
 import type { VoiceParseOutput, ParsedItem, VoiceIntent } from '../types';
 
 // ====================================================================
-// VALIDATION SCHEMA
-// ====================================================================
-
-const parsedItemSchema = z.object({
-  item: z.string().min(1).max(200).nullable().optional(),
-  quantity: z.number().min(0).nullable().optional(),
-  unit: z.string().nullable().optional(),
-  /** Purchase rate (₹ per unit) — captured instead of discarded. */
-  rate: z.number().min(0).max(1_000_000).nullable().optional(),
-});
-
-const voiceLLMOutputSchema = z.object({
-  intent: z.enum([
-    'inventory_add',
-    'inventory_remove',
-    'inventory_adjust',
-    'inventory_waste',
-    'purchase_reminder',
-    'supplier_update',
-    'unknown',
-  ]),
-  items: z.array(parsedItemSchema).default([]),
-  confidence: z.number().min(0).max(1).default(0),
-  language: z.enum(['en', 'hi', 'hi-en']).optional().default('hi-en'),
-  originalText: z.string().optional().default(''),
-  /** Supplier/vendor name spoken in the command ("from Verka Dairy"). */
-  supplier: z.string().max(200).nullable().optional(),
-  /** Purchase date — ISO YYYY-MM-DD or a resolvable relative word (kal/aaj). */
-  date: z.string().max(40).nullable().optional(),
-  /** Brand/variant spoken in the command ("Amul brand butter"). */
-  brand: z.string().max(200).nullable().optional(),
-  /** Expiry date for the incoming batch ("expiry 31 Dec 2026"). */
-  expiryDate: z.string().max(40).nullable().optional(),
-});
-
-type VoiceLLMOutput = z.infer<typeof voiceLLMOutputSchema>;
-
-// ====================================================================
-// AI PARSER SERVICE
+// VOICE PARSER SERVICE (deterministic)
 // ====================================================================
 
 export interface ParseOptions {
-  /** Language hint */
+  /** Language hint (informational — the deterministic engine auto-detects). */
   language?: string;
-  /** Timeout for LLM call in ms */
-  timeoutMs?: number;
-  /** Known inventory items for context */
+  /** Known inventory items for context (reserved for future resolvers). */
   inventoryContext?: { name: string; unit: string }[];
 }
 
 /**
  * Parse a voice transcript into structured inventory action.
+ * Fully deterministic — no LLM, no network, no API keys required.
  *
  * @param transcript - Raw text from speech-to-text
  * @param options - Parsing options
@@ -85,10 +42,10 @@ export interface ParseOptions {
  */
 export async function parseTranscript(
   transcript: string,
-  options: ParseOptions = {}
+  _options: ParseOptions = {}
 ): Promise<VoiceParseOutput> {
   const startTime = Date.now();
-  const { language, inventoryContext = [] } = options;
+  void _options;
 
   if (!transcript || transcript.trim().length === 0) {
     return {
@@ -102,267 +59,18 @@ export async function parseTranscript(
 
   // Auto-detect language (covers Devanagari Hindi AND Romanized Hinglish)
   const detectedLang = detectLanguage(transcript);
-  const effectiveLanguage = language || detectedLang;
+  console.log(`[VoiceParser] Transcript: "${transcript}" (lang=${detectedLang})`);
 
-  // Provide default inventory context if none given (helps LLM understand
-  // Hinglish inputs like "beesh litre doodh" even without inventory data)
-  const effectiveInventoryContext = inventoryContext.length === 0 && detectedLang === 'hi-en'
-    ? [
-        { name: 'Fresh Milk', unit: 'L' },
-        { name: 'Flour', unit: 'kg' },
-        { name: 'Cooking Oil', unit: 'L' },
-        { name: 'Rice', unit: 'kg' },
-        { name: 'Paneer', unit: 'kg' },
-        { name: 'Potato', unit: 'kg' },
-        { name: 'Onion', unit: 'kg' },
-        { name: 'Tomato', unit: 'kg' },
-        { name: 'Butter', unit: 'kg' },
-        { name: 'Sugar', unit: 'kg' },
-        { name: 'Salt', unit: 'kg' },
-        { name: 'Spices', unit: 'kg' },
-      ]
-    : inventoryContext;
-
-  // Build the prompt with detected language and effective context
-  const prompt = buildVoiceParsePrompt(transcript, effectiveInventoryContext, effectiveLanguage);
-
-  // LOG: transcript + LLM prompt (audit trail)
-  console.log(`[AIParser] Transcript: "${transcript}" (lang=${effectiveLanguage})`);
-  console.log(`[AIParser] LLM prompt (${prompt.length} chars): ${prompt}`);
-
-  try {
-    // First try: Use the existing AI service with retry/caching
-    const aiResult = await executeAiCall({
-      prompt,
-      feature: 'voice',
-    });
-
-    if (aiResult.success && aiResult.data) {
-      const validated = validateLLMOutput(aiResult.data, transcript);
-      const elapsed = Date.now() - startTime;
-      // LOG: LLM JSON (raw + validated)
-      console.log(
-        `[AIParser] LLM raw JSON: ${JSON.stringify(aiResult.data)}`
-      );
-      console.log(
-        `[AIParser] Structured JSON returned in ${elapsed}ms: ${JSON.stringify({
-          intent: validated.intent,
-          items: validated.items,
-          confidence: validated.confidence,
-          error: validated.error,
-        })}`
-      );
-      // Only accept the AI service result when validation actually passed.
-      // If the LLM was unavailable (circuit-breaker fallback) or the output
-      // failed schema validation, fall through to the direct LLM call and the
-      // keyword fallback so voice input keeps working even without the LLM.
-      if (!validated.error) {
-        return applyRateBackstop(validated, transcript);
-      }
-      console.warn('[AIParser] AI service output failed validation — falling through');
-    }
-
-    // Second try: Direct LLM call with stricter timeout
-    console.warn(
-      '[AIParser] AI service returned fallback, trying direct LLM call'
-    );
-    try {
-      const llmResponse = await complete(
-        [
-          {
-            role: 'system',
-            content:
-              'You are a restaurant voice parser. Output ONLY valid JSON with no markdown or extra text.',
-          },
-          { role: 'user', content: prompt },
-        ],
-        { timeout: options.timeoutMs || 10000, maxTokens: 512, model: aiConfig.reasoningModel }
-      );
-
-      const parsed = parseJsonResponse(llmResponse.content);
-      const validated = validateLLMOutput(parsed, transcript);
-
-      const elapsed = Date.now() - startTime;
-      console.log(
-        `[AIParser] Direct LLM parsed in ${elapsed}ms: intent=${validated.intent}, items=${validated.items.length}`
-      );
-
-      // Only return if LLM succeeded with confidence > 0
-      if (validated.confidence > 0) {
-        return applyRateBackstop(validated, transcript);
-      }
-    } catch {
-      console.warn('[AIParser] Direct LLM call also failed, using keyword fallback');
-    }
-
-    // Third try: Keyword-based rule parsing as ultimate fallback
-    console.warn('[AIParser] LLM failed, applying keyword-based Hinglish parsing');
-    const keywordParsed = applyRateBackstop(
-      keywordFallbackParse(transcript),
-      transcript
-    );
-    const elapsed = Date.now() - startTime;
-    console.log(
-      `[AIParser] Keyword fallback in ${elapsed}ms: intent=${keywordParsed.intent}, items=${keywordParsed.items.length}`
-    );
-    return keywordParsed;
-  } catch (error: any) {
-    const elapsed = Date.now() - startTime;
-    console.error(`[AIParser] Failed after ${elapsed}ms:`, error.message);
-
-    return {
-      intent: 'unknown',
-      items: [],
-      confidence: 0,
-      originalText: transcript,
-      error: `AI parsing failed: ${error.message}`,
-    };
-  }
+  // Deterministic keyword/rule parsing (the former fallback, now the only path)
+  const parsed = applyRateBackstop(keywordFallbackParse(transcript), transcript);
+  const elapsed = Date.now() - startTime;
+  console.log(
+    `[VoiceParser] Parsed in ${elapsed}ms: intent=${parsed.intent}, items=${parsed.items.length}`
+  );
+  return parsed;
 }
 
-/**
- * Validate and sanitize LLM output against the expected schema.
- * This is the safety layer — never trust raw LLM output.
- */
-function validateLLMOutput(
-  raw: any,
-  originalText: string
-): VoiceParseOutput {
-  try {
-    const result = voiceLLMOutputSchema.parse(raw);
-
-    // Sanitize item names (trim, remove control chars).
-    // IMPORTANT: null fields are PRESERVED as null (never guessed). Only
-    // items with a non-null empty-string name are dropped.
-    const sanitizedItems: ParsedItem[] = result.items
-      .filter((item) => item.item == null || (item.item && item.item.trim().length > 0))
-      .map((item) => ({
-        item: item.item == null ? null : item.item.trim().slice(0, 200),
-        quantity: item.quantity == null ? 0 : Math.max(0, item.quantity),
-        unit: item.unit || 'pcs',
-        // Sanitize the spoken rate — never trust the LLM's raw number.
-        rate:
-          item.rate == null || !isFinite(item.rate) || item.rate <= 0
-            ? undefined
-            : Math.min(Math.round(item.rate * 100) / 100, 1_000_000),
-      }));
-
-    // CRITICAL: If the LLM returned a non-product token as the item name
-    // (e.g. "10" or "दस" for "Add 10 kg of mushroom"), recover the actual
-    // product name from the transcript. The LLM sometimes confuses the
-    // quantity for the item.
-    const recoveredItems = sanitizedItems.map((item) => {
-      if (item.item) {
-        const trimmed = item.item.trim();
-        const isNumeric = /^\d+(\.\d+)?$/.test(trimmed);
-        const isHindiNumber = HINDI_NUMBERS[trimmed.toLowerCase()] !== undefined;
-        // Devanagari numerals: ०-९ (U+0966-U+096F)
-        const isDevanagariNumeral = /^[०१२३४५६७८९]+$/.test(trimmed);
-        const isUnit = /^(kg|kilo|kilos|kilogram|kilograms|gram|grams|gm|g|ml|millilitre|l|litre|litres|liter|liters|ltr|pcs|piece|pieces|packet|packets|bottle|bottles|crate|dozen|sack|bori|bag|carton|किलो|केजी|ग्राम|लीटर|मिलीलीटर|पैकेट|बोरी)$/i.test(trimmed);
-        const isActionWord = /^(add|remove|waste|log|daal|daalo|dal|dalo|lao|laao|daal do|daal de|डालो|डाल दो|करो|कर दो|nikalo|hatao|kam|ghatao|में|मैं)$/i.test(trimmed);
-
-        if (isNumeric || isHindiNumber || isDevanagariNumeral || isUnit || isActionWord) {
-          const recovered = recoverProductName(originalText, item.quantity, item.unit || 'pcs');
-          if (recovered) {
-            console.log(`[AIParser] LLM returned non-product token "${item.item}" (${isHindiNumber ? 'hindi_number' : isDevanagariNumeral ? 'devanagari_numeral' : isNumeric ? 'numeric' : isUnit ? 'unit' : 'action'}) — recovered "${recovered}" from transcript`);
-            return { ...item, item: recovered };
-          }
-        }
-      }
-      return item;
-    });
-
-    // Auto-detect language from original text
-    const detectedLanguage = detectLanguage(originalText);
-
-    return {
-      intent: result.intent,
-      items: recoveredItems,
-      confidence: result.confidence,
-      originalText: originalText,
-      language: detectedLanguage,
-      // Supplier — the LLM's clean structured value wins; scan the raw
-      // transcript when the LLM dropped the field entirely.
-      supplier: extractSpokenSupplier(String(result.supplier || '')) || extractSpokenSupplier(originalText),
-      // Date — the DETERMINISTIC transcript extraction wins. LLMs routinely
-      // hallucinate "today" ("aaj") into a wrong year, and only the raw
-      // transcript is ground truth for relative words like kal/aaj/parso.
-      // The LLM's value is used only as a fallback for absolute dates.
-      date: extractSpokenDate(originalText) || extractSpokenDate(String(result.date || '')),
-      // Brand — the LLM's clean structured value wins; fall back to explicit
-      // "X brand"/"brand X" markers in the transcript when the LLM dropped it.
-      brand: extractSpokenBrand(String(result.brand || '')) || extractSpokenBrand(originalText),
-      // Expiry date — the DETERMINISTIC marker-based transcript extraction wins
-      // (only after an explicit "expiry/exp/expires" marker), so a purchase
-      // date or quantity is never mistaken for an expiry. The LLM's ISO value
-      // is used as a fallback when the transcript has no marker.
-      expiryDate: extractSpokenExpiry(originalText) || extractSpokenExpiry(String(result.expiryDate || '')),
-    };
-  } catch (validationError: any) {
-    console.warn(
-      '[AIParser] LLM output validation failed:',
-      validationError.message
-    );
-
-    // Attempt partial recovery: extract whatever we can
-    const items = extractItemsFromRaw(raw);
-
-    return {
-      intent: raw?.intent || 'unknown',
-      items,
-      confidence: Math.min(raw?.confidence || 0, 0.5), // Penalize confidence for invalid output
-      originalText,
-      supplier: extractSpokenSupplier(raw?.supplier ? String(raw.supplier) : originalText),
-      date: extractSpokenDate(originalText) || extractSpokenDate(raw?.date ? String(raw.date) : ''),
-      brand: extractSpokenBrand(raw?.brand ? String(raw.brand) : originalText),
-      expiryDate: extractSpokenExpiry(originalText) || extractSpokenExpiry(raw?.expiryDate ? String(raw.expiryDate) : ''),
-      error: 'Output validation failed, partial extraction used',
-    };
-  }
-}
-
-/**
- * Attempt to extract items from malformed LLM output.
- */
-function extractItemsFromRaw(raw: any): ParsedItem[] {
-  try {
-    if (raw?.items && Array.isArray(raw.items)) {
-      return raw.items
-        .filter(
-          (i: any) => i && typeof i.item === 'string' && i.item.trim()
-        )
-        .map((i: any) => ({
-          item: String(i.item || '').trim().slice(0, 200),
-          quantity: Math.max(0, Number(i.quantity) || 0),
-          unit: String(i.unit || 'pcs').trim() || 'pcs',
-          rate:
-            i.rate != null && isFinite(Number(i.rate)) && Number(i.rate) > 0
-              ? Math.min(Math.round(Number(i.rate) * 100) / 100, 1_000_000)
-              : undefined,
-        }));
-    }
-    // Single item at top level
-    if (raw?.item) {
-      return [
-        {
-          item: String(raw.item).trim().slice(0, 200),
-          quantity: Math.max(0, Number(raw.quantity) || 0),
-          unit: String(raw.unit || 'pcs').trim() || 'pcs',
-          rate:
-            raw.rate != null && isFinite(Number(raw.rate)) && Number(raw.rate) > 0
-              ? Math.min(Math.round(Number(raw.rate) * 100) / 100, 1_000_000)
-              : undefined,
-        },
-      ];
-    }
-  } catch {
-    // Silently ignore extraction failures
-  }
-  return [];
-}
-
-// ─── Keyword-based Hinglish Fallback Parser ───────────────────────────
-// Activated when the LLM fails to parse Hinglish input.
+// ─── Keyword-based Hinglish Parser (deterministic) ─────────────────────
 // Uses pattern matching for common Indian number words, items, and intents.
 
 /**
@@ -525,8 +233,8 @@ function extractQuantity(text: string): number {
 }
 
 /**
- * Recover the actual product name from a transcript when the LLM returned
- * a numeric string as the item name.
+ * Recover the actual product name from a transcript when a non-product token
+ * (e.g. a numeric string) was extracted as the item name.
  *
  * Strategy: remove the action verb, quantity, unit, and grammatical filler
  * ("of") from the transcript. What remains is the product name.
@@ -577,7 +285,7 @@ function recoverProductName(
     removeSet.add(String(d));
   }
 
-  // Remove the unit (English from LLM + Devanagari from transcript)
+  // Remove the unit (English + Devanagari from transcript)
   if (unit) removeSet.add(unit.toLowerCase());
   // Also remove common unit variations (English + Devanagari)
   const unitVariations: Record<string, string[]> = {
@@ -683,10 +391,8 @@ function extractUnit(text: string): string {
 }
 
 /**
- * Deterministic purchase-rate backstop, applied to the FINAL parse result
- * regardless of which path produced it (LLM service, direct LLM, keyword
- * fallback). Many LLMs drop the optional "rate" field even when told to
- * extract it, so we recover it straight from the raw transcript — a spoken
+ * Deterministic purchase-rate backstop, applied to the FINAL parse result.
+ * The rate is recovered straight from the raw transcript — a spoken
  * rate is never silently lost.
  *
  * Phrasing rules:
@@ -778,8 +484,7 @@ function extractRate(text: string): number | null {
 }
 
 /**
- * Keyword-based Hinglish fallback parser.
- * Used when the LLM fails to parse Hinglish input.
+ * Keyword-based Hinglish parser (deterministic, primary path).
  * Handles common patterns like:
  *   - "beesh litre doodh add kardo"
  *   - "20 kg flour add karo"
@@ -949,13 +654,25 @@ function extractSpokenExpiry(text: string): string | undefined {
 }
 
 /**
+ * Command-grammar tokens — if a transcript contains any of these it is a
+ * SENTENCE (an inventory command), never a bare brand/supplier value.
+ * Previously the LLM's structured output gated this; with the deterministic
+ * parser the transcript itself must be checked (Phase 4 regression fix:
+ * "beesh litre doodh add kardo" was being captured whole as the supplier).
+ */
+const COMMAND_GRAMMAR_RE =
+  /\b(?:add|remove|waste|log|kardo|karo|kar|daalo|daal|dalo|lao|aaya|aaye|nikalo|nikal|hatao|kam|ghatao|chahiye|mangao|kg|kilo|litre|liter|ltr|ml|gram|gm|pcs|packet|bottle|crate|dozen|sack|bori|carton|rate|rupaye|rupees|rs)\b/i;
+
+/**
  * A short (≤60 char), digit-free, letters/spaces/punctuation-only name — the
- * shape of a bare brand/supplier value returned by the LLM. Guards against a
+ * shape of a bare brand/supplier value. Guards against a
  * quantity or a full sentence ever being captured as a name.
  */
 function extractBareName(text: string): string | undefined {
   const t = (text || '').trim();
   if (!t || t.length > 60 || /\d/.test(t)) return undefined;
+  // A bare name never contains command grammar ("... add kardo" is a command).
+  if (COMMAND_GRAMMAR_RE.test(t)) return undefined;
   return /^[A-Za-z][A-Za-z0-9 .'&-]{0,59}$/.test(t)
     ? t.slice(0, 200)
     : undefined;
@@ -966,7 +683,7 @@ function extractBareName(text: string): string | undefined {
  *
  * Conservative by design — a brand is only captured when the speaker makes it
  * explicit, so "5 kg paneer" can never be mistaken for a brand:
- *   - Bare brand name (what the LLM returns for "brand"): short, no digits.
+ *   - Bare brand name (short, no digits).
  *   - "X brand" ("Amul brand butter") / "brand X" ("brand Amul") markers,
  *     English or Devanagari (ब्रांड).
  */
@@ -1005,8 +722,8 @@ function extractSpokenSupplier(text: string): string | undefined {
   const t = (text || '').trim();
   if (!t) return undefined;
 
-  // 1. Bare vendor name — this is what the LLM returns for "supplier"
-  //    ("Verka Dairy"). Short, no digits, letters/spaces/punctuation only,
+  // 1. Bare vendor name — a standalone "Verka Dairy"-style value.
+  //    Short, no digits, letters/spaces/punctuation only,
   //    so a quantity or a full sentence can never sneak through.
   const bare = extractBareName(t);
   if (bare) return bare;

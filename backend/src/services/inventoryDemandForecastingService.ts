@@ -5,6 +5,11 @@
  * InventoryDemandForecastingService — Connects demand forecasts to
  * ingredient consumption through recipes.
  *
+ * LAYER: CORE / ML-READY — deterministic consumption math (forecast units ×
+ * recipe quantities → stockout/overstock/expiry risk). A future ML demand
+ * model slots in upstream via demandForecastingService without changing
+ * this contract. No model inference belongs in this module.
+ *
  * Flow:
  * 1. Get demand forecast for menu items
  * 2. For each menu item, get its recipe

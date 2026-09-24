@@ -28,7 +28,6 @@
  */
 
 import { resolveProduct } from './ProductResolutionEngine';
-import { semanticMatchWithPrefilter } from './SemanticMatcher';
 import { fuzzySimilarity, normalizeForFuzzy } from './FuzzyMatcher';
 import type { ResolutionStage } from '../types';
 
@@ -55,7 +54,7 @@ export interface ResolvedMenuProduct {
 }
 
 export interface ResolveOptions {
-  /** Allow the semantic (LLM) stage when deterministic stages fail. Default false. */
+  /** Legacy flag (Phase 3: the LLM semantic stage was removed; no-op). */
   allowSemantic?: boolean;
 }
 
@@ -87,19 +86,13 @@ const STAGE_TO_MATCH: Record<ResolutionStage, MatchBy> = {
 
 /** Lower bound a match must reach to count (same value the engine uses). */
 const FUZZY_MIN_SCORE = 0.62;
-/**
- * Lower bound for accepting a SEMANTIC (LLM) pick. The LLM is the last resort
- * and never authoritative: below this it is a coin flip, so the resolver stays
- * `unresolved` (with ranked alternatives) instead of confirming a guess.
- */
-const SEMANTIC_MIN_CONFIDENCE = 0.5;
 
 // ─── DB path — tenant-scoped, delegates to the existing engine ───────
 
 /**
  * Resolve a typed/query string against the restaurant's real product catalog
- * (tenant-scoped). Deterministic stages run first; the LLM semantic stage only
- * runs when `allowSemantic` is true and every deterministic stage missed.
+ * (tenant-scoped). Fully deterministic (Phase 3 — the retired semantic stage
+ * never runs; `allowSemantic` is a no-op kept for API compatibility).
  */
 export async function resolveMenuProduct(
   restaurantId: string,
@@ -251,43 +244,10 @@ export async function resolveFromCandidates(
     };
   }
 
-  // 6. SEMANTIC — LAST RESORT, only when the caller opted in.
-  if (options.allowSemantic && query.trim().length >= 2) {
-    const ranked = await semanticMatchWithPrefilter(
-      {
-        transcript: query,
-        spokenName: query,
-        restaurantId: '',
-        candidates: candidates.slice(0, 50).map((c) => ({ id: c.id, name: c.name, category: c.category || '', unit: 'pcs' })),
-      },
-      50,
-    );
-    // Validate: only ids present in the supplied candidate set are trusted.
-    const idSet = new Set(candidates.map((c) => c.id));
-    const valid = ranked.filter((r) => idSet.has(r.productId));
-    if (valid.length > 0) {
-      const top = valid[0];
-      const name = candidates.find((c) => c.id === top.productId)?.name || top.productName;
-      const alternatives = valid.slice(0, 5).map((a) => ({
-        productId: a.productId,
-        productName: candidates.find((c) => c.id === a.productId)?.name || a.productName || '',
-        confidence: a.confidence,
-      }));
-      // 11.5 — a semantic pick below the floor is a guess, not a match: surface
-      // the ranked alternatives but never confirm a low-confidence selection.
-      if (top.confidence < SEMANTIC_MIN_CONFIDENCE) {
-        return { confidence: top.confidence, decision: 'unresolved', alternatives };
-      }
-      return {
-        productId: top.productId,
-        productName: name,
-        matchedBy: 'SEMANTIC',
-        confidence: top.confidence,
-        decision: top.confidence >= 0.9 ? 'auto_select' : 'confirm',
-        alternatives,
-      };
-    }
-  }
+  // 6. SEMANTIC — REMOVED (Phase 3)
+  // The LLM semantic ranker was removed with the AI execution layer. This
+  // resolver is now fully deterministic: exact → normalized → alias → SKU →
+  // fuzzy → unresolved.
 
   return { confidence: 0, decision: 'unresolved', alternatives: [] };
 }

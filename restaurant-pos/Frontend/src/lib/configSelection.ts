@@ -184,7 +184,11 @@ export function hasConfigSelection(product: { menuConfig?: { variantConfiguratio
 export interface ConfiguredCartItem {
   id: string;
   product: any;
-  selectedVariant?: any;
+  /** The variant chosen through the configuration modal (single VARIANT_GROUP
+   *  selection). Kept as `selectedVariant` so the bill item carries a
+   *  variantName — the recipe consumption engine resolves the per-variant
+   *  recipe by that name, and KOT/receipts display it like a legacy variant. */
+  selectedVariant?: { name: string; price: number };
   quantity: number;
   notes?: string;
   price: number; // unit price (grossItemPrice)
@@ -257,11 +261,31 @@ export function buildConfiguredCartItem(
   const price = calculateLineItemPrice(resolved, selection, quantity);
   const productId = resolved.product.id;
   const summary = summarizeSelection(resolved, selection);
+
+  // Derive the chosen variant so the cart row, bill line (variantName) and
+  // recipe consumption all agree on the variant identity. A configured sale
+  // WITHOUT a variantName is treated as a plain sale server-side and consumes
+  // no ingredients for variant-driven dishes.
+  let selectedVariant: { name: string; price: number } | undefined;
+  for (const entry of selection?.selections ?? []) {
+    const group = resolved.variantGroups.find((g) => g.id === entry.groupId);
+    if (!group) continue;
+    const opt = (entry.optionIds ?? [])
+      .map((id) => group.options.find((o) => o.id === id))
+      .find((o): o is ResolvedConfigOption => !!o && o.active !== false);
+    if (opt) {
+      const base = Number(resolved.product.baseProductPrice) || 0;
+      selectedVariant = { name: opt.name, price: Number(opt.priceDelta ?? 0) + base };
+      break;
+    }
+  }
+
   return {
     id: existingId || `${productId}_cfg_${configFingerprint(resolved, selection)}`,
     // Keep the FULL product so the cart row (image), tax calc (gstPercent),
     // KOT and receipt all behave exactly like a legacy item.
     product: fullProduct ?? { id: productId, name: resolved.product.name, category: resolved.product.category },
+    selectedVariant,
     quantity,
     price: price.grossItemPrice,
     configuration: selection,

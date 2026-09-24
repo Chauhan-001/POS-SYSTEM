@@ -12,6 +12,7 @@ export interface IQRRequest {
   branchId?: string;
   orderType: 'TABLE' | 'CAR' | 'TAKEAWAY' | 'PICKUP';
   tableId?: string;
+  tableNumber?: number | string;
   carId?: string;
   customer?: {
     name?: string;

@@ -175,8 +175,8 @@ describe('Resolution priority — exact > alias > fuzzy > semantic', () => {
   it('TEST 9: "paneer" with only Kadhai Paneer + Paneer Tikka (both menu) → no inventory match', () => {
     // If no exact "Paneer" inventory product exists, only menu items remain
     const menuOnlyProducts = [
-      { id: 'p2', name: 'Kadhai Paneer', availability: true },
-      { id: 'p3', name: 'Paneer Tikka', availability: true },
+      { id: 'p2', name: 'Kadhai Paneer', availability: true, type: 'menu' },
+      { id: 'p3', name: 'Paneer Tikka', availability: true, type: 'menu' },
     ];
     const inventoryOnly = true;
     const candidates = inventoryOnly

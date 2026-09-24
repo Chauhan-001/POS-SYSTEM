@@ -6,15 +6,65 @@
  * Handles product CRUD with branch-specific pricing overrides.
  * Variants are managed in a separate ProductVariant collection.
  *
- * On product creation, the service fires fire-and-forget AI alias generation
- * so the merchant NEVER manually creates voice aliases for new products.
+ * On product creation, the service seeds deterministic voice/search aliases
+ * (name variants + Hinglish mappings) so the merchant never manually creates
+ * voice aliases for new products. Phase 3: the LLM alias generator was removed.
  */
 
 import mongoose from 'mongoose';
 import { productRepo, productVariantRepo } from '../repositories';
-import { generateAndApplyAliases } from '../modules/voice-inventory/services/AliasGeneratorService';
 import { AppError } from '../utils/AppError';
 import Offer from '../models/Offer';
+
+/**
+ * Deterministic alias seeding for a new product (Phase 3 — replaces the LLM
+ * AliasGeneratorService hook). Derives name variants and well-known
+ * Hinglish/Devanagari kitchen-item aliases fully offline.
+ */
+function seedProductAliases(name: string, category?: string): string[] {
+  const clean = String(name || '').trim();
+  if (!clean) return [];
+
+  const aliases = new Set<string>();
+  const lower = clean.toLowerCase();
+
+  aliases.add(clean);
+  if (lower.endsWith('s') && lower.length > 3) aliases.add(clean.slice(0, -1));
+  else aliases.add(`${clean}s`);
+
+  if (category && category.trim() && category.trim().toLowerCase() !== lower) {
+    aliases.add(category.trim());
+  }
+
+  const HINGLISH_MAP: Record<string, string[]> = {
+    'milk': ['doodh', 'dudh', 'दूध'],
+    'flour': ['atta', 'aata', 'आटा'],
+    'rice': ['chawal', 'चावल'],
+    'oil': ['tel', 'तेल'],
+    'paneer': ['पनीर'],
+    'butter': ['makkhan', 'मक्खन'],
+    'ghee': ['घी'],
+    'yogurt': ['dahi', 'दही'],
+    'curd': ['dahi', 'दही'],
+    'potato': ['aloo', 'आलू'],
+    'onion': ['pyaaz', 'प्याज'],
+    'tomato': ['tamatar', 'टमाटर'],
+    'sugar': ['chini', 'cheeni', 'चीनी'],
+    'salt': ['namak', 'नमक'],
+    'egg': ['anda', 'अंडा'],
+    'chicken': ['murghi', 'चिकन'],
+    'lentils': ['daal', 'दाल'],
+    'chickpeas': ['chana', 'चना'],
+    'spices': ['masala', 'मसाला'],
+  };
+
+  for (const mapped of HINGLISH_MAP[lower] || []) aliases.add(mapped);
+  for (const word of lower.split(/[\s-]+/)) {
+    for (const mapped of HINGLISH_MAP[word] || []) aliases.add(mapped);
+  }
+
+  return [...aliases].filter((a) => a.length >= 2).slice(0, 20);
+}
 
 /**
  * ─── Meal Combo support ─────────────────────────────────────────────
@@ -301,14 +351,20 @@ export class ProductService {
       await productVariantRepo.bulkCreate(variantDocs as any);
     }
 
-    // Fire-and-forget: generate multilingual aliases in the background.
+    // Deterministically seed voice/search aliases (Phase 3: replaced the LLM
+    // alias generator — fully offline, same purpose).
     // The merchant NEVER manually creates aliases.
-    generateAndApplyAliases(product._id.toString(), {
-      productName: productData.name || '',
-      category: productData.category,
-    }).catch((err) =>
-      console.warn('[ProductService] Background alias generation failed:', err.message)
-    );
+    try {
+      const aliasSeed = seedProductAliases(productData.name || '', productData.category);
+      if (aliasSeed.length > 0) {
+        await productRepo.update(product._id.toString(), {
+          voiceAliases: aliasSeed,
+          searchAliases: aliasSeed,
+        } as any);
+      }
+    } catch (err: any) {
+      console.warn('[ProductService] Alias seeding failed:', err.message);
+    }
 
     return this.getById(product._id.toString());
   }

@@ -4,6 +4,12 @@
  *
  * StockMovementService — THE single centralized stock movement engine.
  *
+ * LAYER: CORE
+ *
+ * AUTHORITATIVE BUSINESS RULE: stock levels are computed server-side through
+ * applyMovement(). Do not mutate Product.currentStock directly or replace
+ * this with client-side or LLM-generated values.
+ *
  * Every stock change in the POS (purchase, sale, waste, manual adjustment,
  * opening/closing, correction, return) MUST flow through applyMovement().
  * It guarantees:

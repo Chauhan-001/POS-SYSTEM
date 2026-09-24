@@ -2,38 +2,17 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Phases 7–9 tests:
- *   Phase 7 — deterministic LLM fact-consistency validation (numeric claims,
- *             unsupported comparisons, entity checks, inventory claims,
- *             severity levels, fallback on INVALID)
- *   Phase 8 — AI telemetry: prompt version, privacy-safe prompt hash, cache-bust
- *             flag, and validation outcome surfaced through executeAiCall
- *   Phase 9 — branch-scoped cache isolation (Branch A ≠ Branch B ≠ tenant-wide)
- *             and branchId accepted by the recommendation schema
+ * factConsistencyService tests — deterministic fact validation.
  *
- * Deterministic engines remain the financial source of truth; the LLM is only
- * checked against facts — it never computes them.
+ * PHASE 3: this file was split from factConsistencyTelemetryBranch.test.ts.
+ * The deterministic fact-consistency engine (numeric claims, unsupported
+ * comparisons, entity checks, inventory claims, severity levels, fallback on
+ * INVALID) is fully preserved; the AI telemetry / LLM-cache sections of the
+ * old file were removed together with the AI execution layer.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-// ─── Mocks: LLM provider + AI-enabled flag (before importing modules) ──
-const completeMock = vi.hoisted(() => vi.fn());
-vi.mock('../../modules/ai/provider/llmProvider', () => ({
-  complete: completeMock,
-}));
-vi.mock('../../modules/ai/config', () => ({
-  isAiEnabled: vi.fn(() => true),
-  aiConfig: { apiKeys: ['test-key'] },
-}));
-
-import { validateFactConsistency, normalizeNumber, extractAmountClaims } from '../factConsistencyService';
-import { executeAiCall, PROMPT_VERSIONS } from '../../modules/ai/services/aiService';
-import { offerRecommendationsSchema } from '../../modules/ai/validators/ai';
-
-const TENANT_A = '507f1f77bcf86cd799439011';
-const TENANT_B = '507f191e810c19729de860ea';
-const BRANCH_A = '507f1f77bcf86cd799439021';
-const BRANCH_B = '507f1f77bcf86cd799439022';
+import { validateFactConsistency, normalizeNumber } from '../factConsistencyService';
 
 function bundle(overrides: Record<string, any> = {}) {
   return {
@@ -47,9 +26,9 @@ function bundle(overrides: Record<string, any> = {}) {
   };
 }
 
-// ─── PHASE 7 — FACT CONSISTENCY ───────────────────────────────────────
+// ─── Numeric claim validation ─────────────────────────────────────────
 
-describe('Phase 7 — numeric claim validation', () => {
+describe('numeric claim validation', () => {
   it('normalizes currency formats: ₹, commas, lakh', () => {
     expect(normalizeNumber('₹125,000')).toBe(125000);
     expect(normalizeNumber('Rs. 1.25 lakh')).toBe(125000);
@@ -99,7 +78,9 @@ describe('Phase 7 — numeric claim validation', () => {
   });
 });
 
-describe('Phase 7 — entity validation', () => {
+// ─── Entity validation ────────────────────────────────────────────────
+
+describe('entity validation', () => {
   it('flags a claim about an unknown product', () => {
     const r = validateFactConsistency('Sandwich sales are falling this week.', bundle());
     expect(r.status).toBe('INVALID');
@@ -117,7 +98,9 @@ describe('Phase 7 — entity validation', () => {
   });
 });
 
-describe('Phase 7 — inventory claims', () => {
+// ─── Inventory claims ─────────────────────────────────────────────────
+
+describe('inventory claims', () => {
   it('flags overstock claims when the deterministic surplus list is empty', () => {
     const r = validateFactConsistency('Paneer is overstocked — push a discount.', bundle({ surplusStockItems: [] }));
     expect(r.status).toBe('INVALID');
@@ -164,8 +147,10 @@ describe('Phase 7 — inventory claims', () => {
   });
 });
 
-describe('Phase 7 — output quality & fallback', () => {
-  it('flags malformed/empty AI output', () => {
+// ─── Output quality & fallback ────────────────────────────────────────
+
+describe('output quality & fallback', () => {
+  it('flags malformed/empty output', () => {
     const r = validateFactConsistency('', bundle());
     expect(r.status).toBe('INVALID');
     expect(r.violations.some((v) => v.code === 'malformed_output')).toBe(true);
@@ -176,106 +161,8 @@ describe('Phase 7 — output quality & fallback', () => {
     expect(r.status).toBe('VALID');
   });
 
-  it('never crashes on non-string AI output', () => {
+  it('never crashes on non-string input', () => {
     const r = validateFactConsistency(null, bundle());
     expect(r.status).toBe('INVALID');
-  });
-});
-
-// ─── PHASE 8 — AI TELEMETRY ───────────────────────────────────────────
-
-describe('Phase 8 — telemetry surfaced through executeAiCall', () => {
-  it('records prompt version, privacy-safe prompt hash and cacheBust flag', async () => {
-    completeMock.mockResolvedValueOnce({
-      content: JSON.stringify({ suggestions: [], summaryInsight: 'ok', trendNote: 'note' }),
-    });
-    const r = await executeAiCall({
-      prompt: 'Factual revenue 125000.',
-      feature: 'offers',
-      tenantId: TENANT_A,
-      bustCache: true,
-    });
-    expect(r.promptVersion).toBe(PROMPT_VERSIONS['offers']);
-    expect(r.promptVersion).toBe('offers-v3');
-    expect(r.promptHash).toBeTypeOf('string');
-    expect(r.promptHash).not.toContain('125000'); // never the full prompt
-    expect(r.cacheBust).toBe(true);
-  });
-
-  it('reports cacheBust=false on a normal request', async () => {
-    completeMock.mockResolvedValueOnce({
-      content: JSON.stringify({ suggestions: [], summaryInsight: 'ok', trendNote: 'note' }),
-    });
-    const r = await executeAiCall({ prompt: 'Normal request.', feature: 'offers', tenantId: TENANT_A });
-    expect(r.cacheBust).toBe(false);
-  });
-
-  it('cached responses carry prompt version metadata too', async () => {
-    completeMock.mockResolvedValueOnce({
-      content: JSON.stringify({ suggestions: [], summaryInsight: 'ok', trendNote: 'note' }),
-    });
-    await executeAiCall({ prompt: 'Cache me.', feature: 'offers', tenantId: TENANT_A });
-    const hit = await executeAiCall({ prompt: 'Cache me.', feature: 'offers', tenantId: TENANT_A });
-    expect(hit.cached).toBe(true);
-    expect(hit.promptVersion).toBe(PROMPT_VERSIONS['offers']);
-  });
-
-  it('a cache-busted call replaces the cached entry', async () => {
-    completeMock.mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [], summaryInsight: 'old', trendNote: 'old' }) });
-    await executeAiCall({ prompt: 'Refresh me.', feature: 'offers', tenantId: TENANT_A });
-    completeMock.mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [], summaryInsight: 'new', trendNote: 'new' }) });
-    const fresh = await executeAiCall({ prompt: 'Refresh me.', feature: 'offers', tenantId: TENANT_A, bustCache: true });
-    expect(fresh.cached).toBe(false);
-    expect(fresh.data.summaryInsight).toBe('new');
-    expect(fresh.cacheBust).toBe(true);
-  });
-});
-
-// ─── PHASE 9 — BRANCH-SCOPED CACHE ISOLATION ──────────────────────────
-
-describe('Phase 9 — branch-scoped cache isolation', () => {
-  it('Branch A, Branch B and tenant-wide calls never share a cache entry', async () => {
-    completeMock
-      .mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [{ title: 'BranchA plan' }], summaryInsight: 'A', trendNote: '' }) })
-      .mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [{ title: 'BranchB plan' }], summaryInsight: 'B', trendNote: '' }) })
-      .mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [{ title: 'Tenant plan' }], summaryInsight: 'T', trendNote: '' }) });
-    const prompt = 'Same contextual prompt text across scopes.';
-
-    const a = await executeAiCall({ prompt, feature: 'offers', tenantId: TENANT_A, branchId: BRANCH_A });
-    const b = await executeAiCall({ prompt, feature: 'offers', tenantId: TENANT_A, branchId: BRANCH_B });
-    const t = await executeAiCall({ prompt, feature: 'offers', tenantId: TENANT_A });
-
-    expect(a.cached).toBe(false);
-    expect(b.cached).toBe(false);
-    expect(t.cached).toBe(false);
-    expect(a.data.summaryInsight).toBe('A');
-    expect(b.data.summaryInsight).toBe('B');
-    expect(t.data.summaryInsight).toBe('T');
-
-    // Repeating Branch A must hit Branch A's own cache — not B's or tenant's.
-    const aAgain = await executeAiCall({ prompt, feature: 'offers', tenantId: TENANT_A, branchId: BRANCH_A });
-    expect(aAgain.cached).toBe(true);
-    expect(aAgain.data.summaryInsight).toBe('A');
-  });
-
-  it('keeps tenants isolated within the same branch scope', async () => {
-    completeMock
-      .mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [], summaryInsight: 'TenantA', trendNote: '' }) })
-      .mockResolvedValueOnce({ content: JSON.stringify({ suggestions: [], summaryInsight: 'TenantB', trendNote: '' }) });
-    const prompt = 'Cross-tenant branch check.';
-    const a = await executeAiCall({ prompt, feature: 'offers', tenantId: TENANT_A, branchId: BRANCH_A });
-    const b = await executeAiCall({ prompt, feature: 'offers', tenantId: TENANT_B, branchId: BRANCH_A });
-    expect(a.cached).toBe(false);
-    expect(b.cached).toBe(false);
-    expect(b.data.summaryInsight).toBe('TenantB');
-  });
-});
-
-describe('Phase 9 — branchId accepted by the recommendation schema', () => {
-  it('accepts an optional branchId and rejects unknown keys', () => {
-    const ok = offerRecommendationsSchema.safeParse({ branchId: BRANCH_A, bustCache: true });
-    expect(ok.success).toBe(true);
-    const bad = offerRecommendationsSchema.safeParse({ branchId: BRANCH_A, madeUpKey: 1 });
-    expect(bad.success).toBe(false);
   });
 });

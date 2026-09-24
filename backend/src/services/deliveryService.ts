@@ -21,6 +21,9 @@ import mongoose from 'mongoose';
 import { createHmac } from 'node:crypto';
 import { URL } from 'node:url';
 import Restaurant from '../models/Restaurant';
+import WhatsAppIntegration from '../modules/whatsapp/models/WhatsAppIntegration';
+import { decrypt } from '../modules/whatsapp/services/credentialCrypto';
+import { whatsappMessageService } from '../modules/whatsapp/services/whatsappMessageService';
 
 export type DeliveryChannel = 'whatsapp' | 'sms' | 'email' | 'app_notification' | 'webhook';
 
@@ -45,6 +48,55 @@ export interface DeliveryProvider {
   isConfigured(): boolean;
   send(payload: DeliveryPayload): Promise<DeliveryResult>;
 }
+
+// ─── WhatsApp adapter ──────────────────────────────────────────────────────────
+
+async function resolveWhatsAppConfig(restaurantId?: string): Promise<{ phoneNumberId?: string; accessToken?: string } | null> {
+  if (!restaurantId) return null;
+  try {
+    const integration = await WhatsAppIntegration.findOne({
+      restaurantId: new mongoose.Types.ObjectId(restaurantId),
+      provider: 'whatsapp',
+      status: 'active',
+    }).lean().exec();
+    if (!integration) return null;
+    return { phoneNumberId: integration.phoneNumberId, accessToken: integration.credentialReference };
+  } catch {
+    return null;
+  }
+}
+
+const whatsappProvider: DeliveryProvider = {
+  channel: 'whatsapp',
+  isConfigured() {
+    return true;
+  },
+  async send(payload: DeliveryPayload): Promise<DeliveryResult> {
+    const integration = await WhatsAppIntegration.findOne({
+      restaurantId: new mongoose.Types.ObjectId(payload.restaurantId),
+      provider: 'whatsapp',
+      status: 'active',
+    }).lean().exec();
+    if (!integration) {
+      return { ok: false, error: 'whatsapp channel is not configured (Settings → Integrations)' };
+    }
+
+    const result = await whatsappMessageService.send({
+      restaurantId: payload.restaurantId || '',
+      to: payload.to,
+      body: payload.message || '',
+      category: 'marketing',
+      campaignId: payload.campaignId,
+      campaignHistoryId: payload.historyId,
+    });
+
+    if (!result.accepted) {
+      return { ok: false, error: result.error || 'Failed to send WhatsApp message' };
+    }
+
+    return { ok: true, deliveredAt: new Date().toISOString(), messageId: result.messageId };
+  },
+};
 
 // ─── Webhook adapter ─────────────────────────────────────────────────────────
 
@@ -187,7 +239,7 @@ function notConfigured(channel: DeliveryChannel): DeliveryProvider {
 }
 
 const NOT_CONFIGURED: Record<DeliveryChannel, DeliveryProvider> = {
-  whatsapp: notConfigured('whatsapp'),
+  whatsapp: whatsappProvider,
   sms: notConfigured('sms'),
   email: notConfigured('email'),
   app_notification: notConfigured('app_notification'),
@@ -206,18 +258,23 @@ export async function availableChannels(restaurantId?: string): Promise<Delivery
   const { url } = await resolveWebhookConfig(restaurantId);
   const configured: DeliveryChannel[] = [];
   if (url) configured.push('webhook');
+  const wa = await resolveWhatsAppConfig(restaurantId);
+  if (wa) configured.push('whatsapp');
   return configured;
 }
 
 /**
  * True when a channel has a usable provider configuration for THIS restaurant.
- * Webhook configuration can come from restaurant settings (Settings →
- * Integrations) OR the server env — checking only env would wrongly declare a
- * Settings-configured webhook "not configured" during queue processing.
  */
 export async function channelConfigured(channel: DeliveryChannel, restaurantId?: string): Promise<boolean> {
-  if (channel !== 'webhook') return false; // only webhook is a real adapter today
-  const { url } = await resolveWebhookConfig(restaurantId);
-  if (!url) return false;
-  return isSafeWebhookUrl(url) === null;
+  if (channel === 'webhook') {
+    const { url } = await resolveWebhookConfig(restaurantId);
+    if (!url) return false;
+    return isSafeWebhookUrl(url) === null;
+  }
+  if (channel === 'whatsapp') {
+    const wa = await resolveWhatsAppConfig(restaurantId);
+    return !!wa;
+  }
+  return false;
 }

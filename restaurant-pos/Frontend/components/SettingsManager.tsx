@@ -69,9 +69,11 @@ const DEFAULT_MODULES: ModuleSettings = {
   enableProducts: true, enableStaff: true, enableOffers: true,
   autoMarkSoldOutFromOrder: false, enableMenuAvailability: true,
   callReminderIntervalSec: 15,
-  enableAISummary: true, enableAIInventoryHealth: true, enableAIPurchaseRecs: true,
-  enableAILowStock: true, enableAIWasteAnalysis: true, enableAIVoiceEntry: true,
-  enableAIWeather: true, enableAIClosingAssistant: true,
+  // Phase 3/4: AI-only module flags removed (summary / voice entry / weather /
+  // closing assistant). The remaining AI-prefixed toggles gate cards that run
+  // on the deterministic core engine.
+  enableAIInventoryHealth: true, enableAIPurchaseRecs: true,
+  enableAILowStock: true, enableAIWasteAnalysis: true,
 };
 
 /**
@@ -105,14 +107,10 @@ const MODULE_INFO: Record<string, { label: string; desc: string }> = {
   enableOffers: { label: 'Offers', desc: 'Create and manage promotional offers to drive repeat business.' },
   autoMarkSoldOutFromOrder: { label: 'Auto Mark Sold-Out', desc: 'Automatically mark an item sold out when an order brings its stock to zero.' },
   enableMenuAvailability: { label: 'Menu Availability', desc: 'Control which items are available per day/period and mark items unavailable.' },
-  enableAISummary: { label: 'AI Summary', desc: 'AI-generated end-of-day sales summary built from your real billing data.' },
-  enableAIInventoryHealth: { label: 'AI Inventory Health', desc: 'AI analysis of inventory health — over/under-stock and wastage insights.' },
-  enableAIPurchaseRecs: { label: 'AI Purchase Recommendations', desc: 'AI-suggested purchase quantities based on consumption and stock trends.' },
-  enableAILowStock: { label: 'AI Low Stock', desc: 'AI alerts and restocking suggestions when items are running low.' },
-  enableAIWasteAnalysis: { label: 'AI Waste Analysis', desc: 'AI breakdown of wastage by item, with cost and usage-variance insights.' },
-  enableAIVoiceEntry: { label: 'AI Voice Entry', desc: 'Add inventory items by voice — speak the item name instead of typing it.' },
-  enableAIWeather: { label: 'AI Weather', desc: 'Weather-aware suggestions (e.g. hot-day offers) from the live forecast.' },
-  enableAIClosingAssistant: { label: 'AI Closing Assistant', desc: 'AI-assisted day-closing — reconciliation help and an end-of-day checklist.' },
+  enableAIInventoryHealth: { label: 'Inventory Health', desc: 'Deterministic analysis of inventory health — over/under-stock and wastage insights, computed on-device.' },
+  enableAIPurchaseRecs: { label: 'Purchase Recommendations', desc: 'Purchase quantities suggested from consumption and stock trends — computed on-device.' },
+  enableAILowStock: { label: 'Low Stock Alerts', desc: 'Alerts and restocking suggestions when items are running low — computed on-device.' },
+  enableAIWasteAnalysis: { label: 'Waste Analysis', desc: 'Breakdown of wastage by item, with cost and usage-variance insights — computed on-device.' },
 };
 
 const NOTIFICATION_EVENTS: Array<{ key: keyof NonNullable<SystemSettings['notifications']>; label: string; desc: string }> = [

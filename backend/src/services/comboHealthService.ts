@@ -26,7 +26,7 @@
 import OfferModel from '../models/Offer';
 import ProductModel from '../models/Product';
 import { getComboAnalytics, classifyCombo, type ComboAnalyticsSummary } from './offerAnalyticsService';
-import { costIntelligenceService } from '../modules/recipes/services/costIntelligenceService';
+import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
 import { resolveMenuProductScope } from './productService';
 
 // ─── Central, documented thresholds ───────────────────────────────────
@@ -127,7 +127,7 @@ export async function getComboHealth(
     const c = catById.get(pid);
     if (c?.category) componentCats.add(c.category);
   }
-  const metrics = await costIntelligenceService
+  const metrics = await costIntelligenceCore
     .metrics(String(restaurantId), { days: 60 })
     .catch(() => null);
   const profitById = new Map<string, any>(

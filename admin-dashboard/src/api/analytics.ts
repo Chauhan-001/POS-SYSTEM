@@ -45,12 +45,8 @@ export async function getSubscriptionRevenue(filters?: { startDate?: string; end
 }
 
 // ─── Phase 2.6 New Analytics Endpoints ───────────────────────
-
-export async function getAIAnalytics(days?: number): Promise<any> {
-  const params = days ? { days } : {}
-  const { data } = await apiClient.get('/api/admin/analytics/ai', { params })
-  return data
-}
+// getAIAnalytics removed (Phase 3 — the /admin/analytics/ai endpoint was
+// removed server-side with the AI execution layer).
 
 export async function getDeviceAnalytics(): Promise<any> {
   const { data } = await apiClient.get('/api/admin/analytics/devices')

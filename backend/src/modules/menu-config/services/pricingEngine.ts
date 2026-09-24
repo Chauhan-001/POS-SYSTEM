@@ -4,6 +4,12 @@
  *
  * pricingEngine — ONE deterministic pricing rule for configured products.
  *
+ * LAYER: CORE
+ *
+ * AUTHORITATIVE BUSINESS RULE: the server-side result of this engine is the
+ * source of truth for every configured line item. Do not replace this with
+ * client-side or LLM-generated values.
+ *
  *   ResolvedProductConfiguration + Selection → LineItemPrice
  *
  * The engine is PURE (no DB, no I/O) so it can run anywhere: backend bill

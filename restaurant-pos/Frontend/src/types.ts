@@ -702,14 +702,13 @@ export interface ModuleSettings {
   enableStaff?: boolean;
   enableOffers?: boolean;
   // ─── AI Feature Toggles ──────────────────────────────
-  enableAISummary?: boolean;       // Dashboard AI Daily Summary
-  enableAIInventoryHealth?: boolean; // Inventory Health Score
-  enableAIPurchaseRecs?: boolean;   // Smart Purchase Recommendations
-  enableAILowStock?: boolean;       // Low Stock Predictions
-  enableAIWasteAnalysis?: boolean;  // AI Waste Analysis
-  enableAIVoiceEntry?: boolean;     // Voice Inventory Entry
-  enableAIWeather?: boolean;        // Weather-Based Recommendations
-  enableAIClosingAssistant?: boolean; // Closing Time Assistant
+  // (Phase 3/4: enableAISummary / enableAIVoiceEntry / enableAIWeather /
+  // enableAIClosingAssistant removed — those AI features no longer exist.
+  // The flags below gate cards that now run on the deterministic core.)
+  enableAIInventoryHealth?: boolean; // Inventory Health Score (deterministic)
+  enableAIPurchaseRecs?: boolean;   // Smart Purchase Recommendations (deterministic)
+  enableAILowStock?: boolean;       // Low Stock Predictions (deterministic)
+  enableAIWasteAnalysis?: boolean;  // Waste Analysis (deterministic)
   // ─── Online Ordering ────────────────────────────────────
   /** When a cashier marks an item unavailable from an incoming order, also
    *  block it for NEW online orders (explicit opt-in, default OFF). */

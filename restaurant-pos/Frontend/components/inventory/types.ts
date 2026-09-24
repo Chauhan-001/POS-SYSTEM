@@ -131,7 +131,7 @@ export type InventoryPage =
   | 'analytics'
   | 'expiry'
   | 'settings'
-  | 'voice'
+  // 'voice' removed in Phase 3 (AI-only voice entry)
   | 'stock-adjustment'
   | 'timeline'
   | 'recipes'
