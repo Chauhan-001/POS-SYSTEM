@@ -704,11 +704,9 @@ export interface ModuleSettings {
   // ─── AI Feature Toggles ──────────────────────────────
   // (Phase 3/4: enableAISummary / enableAIVoiceEntry / enableAIWeather /
   // enableAIClosingAssistant removed — those AI features no longer exist.
-  // The flags below gate cards that now run on the deterministic core.)
-  enableAIInventoryHealth?: boolean; // Inventory Health Score (deterministic)
-  enableAIPurchaseRecs?: boolean;   // Smart Purchase Recommendations (deterministic)
-  enableAILowStock?: boolean;       // Low Stock Predictions (deterministic)
-  enableAIWasteAnalysis?: boolean;  // Waste Analysis (deterministic)
+  // enableAIInventoryHealth / enableAIPurchaseRecs / enableAILowStock /
+  // enableAIWasteAnalysis were removed too: their cards relied on the
+  // uncommitted inventoryIntelligence engine deleted with the AI layer.)
   // ─── Online Ordering ────────────────────────────────────
   /** When a cashier marks an item unavailable from an incoming order, also
    *  block it for NEW online orders (explicit opt-in, default OFF). */

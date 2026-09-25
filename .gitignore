@@ -19,6 +19,7 @@ Thumbs.db
 
 # ─── Agent tool runtime state ───────────────────────────────────
 .freebuff/
+.kilo/
 
 # ─── One-off scripts / data backups ─────────────────────────────
 backend/scripts/*backup*/

@@ -12,7 +12,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Order, KOTRecord } from '../types';
-import ThermalKOT from '../../components/ThermalKOT';
+import ThermalKOT from '../components/orders/ThermalKOT';
 
 /** Build the KOT ticket HTML (used by the print iframe) — same markup as the Settings preview. */
 function buildKotHtml(order: Order, kot: KOTRecord, settings?: any): string {

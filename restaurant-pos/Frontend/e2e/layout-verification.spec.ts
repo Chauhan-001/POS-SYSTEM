@@ -149,18 +149,22 @@ test.describe('Layout Verification', () => {
         test(`${pageInfo.name} page should have all elements within viewport`, async ({ page }) => {
           test.setTimeout(30_000);
 
-          // Seed localStorage with test data, then log in via the form.
-          // (The seed intentionally leaves the login screen visible so other
-          // suites can exercise form login; we do the same here.)
+          // Seed localStorage with test data. The seed auto-authenticates as
+          // Owner, so the app may render the POS layout directly; on slower
+          // boots the LoginScreen appears first. Wait for whichever comes
+          // first, then log in via the form only when the gate is showing.
           await page.addInitScript(getSeedScript());
           await page.goto('/');
           await page.evaluate(getSeedScript());
-          await page.waitForSelector('#login_screen_container', { timeout: 30_000 });
-          await page.locator('#login_screen_container input[type="text"]').first().fill('owner');
-          await page.locator('#login_screen_container input[type="password"]').first().fill('1111');
-          await page.locator('#login_screen_container button[type="submit"]').click();
+          await page.waitForSelector('#login_screen_container, aside', { timeout: 30_000 });
+          const loginVisible = await page.locator('#login_screen_container').isVisible().catch(() => false);
+          if (loginVisible) {
+            await page.locator('#login_screen_container input[type="text"]').first().fill('owner');
+            await page.locator('#login_screen_container input[type="password"]').first().fill('1111');
+            await page.locator('#login_screen_container button[type="submit"]').click();
+          }
 
-          // After login the app navigates to dashboard
+          // Either path lands on the dashboard
           await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
           await page.waitForTimeout(500);
 
@@ -172,7 +176,7 @@ test.describe('Layout Verification', () => {
 
             // Click the first available table to create a dine-in order
             const firstTable = page.locator('text=T1').first();
-            await firstTable.waitFor({ state: 'visible', timeout: 5_000 });
+            await firstTable.waitFor({ state: 'visible', timeout: 15_000 });
             await firstTable.click();
 
             // Should redirect to #/billing

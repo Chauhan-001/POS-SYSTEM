@@ -31,17 +31,43 @@ npm run dev:electron
 
 ---
 
-## 📁 Documentation Map
+## 📁 Repository Structure
 
-- 🏗️ **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Authoritative system architecture (all applications).
-- 🏪 **[POS_ARCHITECTURE.md](docs/POS_ARCHITECTURE.md)**: POS terminal, billing, orders, KDS.
-- 🤖 **[AI_ARCHITECTURE.md](docs/AI_ARCHITECTURE.md)**: AI, voice, recommendations, deterministic engines.
-- 📊 **[ADMIN_DASHBOARD.md](docs/ADMIN_DASHBOARD.md)**: Admin web portal & Electron shell.
-- 🌐 **[CUSTOMER_WEBSITE.md](docs/CUSTOMER_WEBSITE.md)**: Customer QR ordering & loyalty portal.
-- 🔌 **[API_REFERENCE.md](docs/API_REFERENCE.md)**: Express REST API endpoints.
-- 🗄️ **[DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)**: MongoDB collections & models.
-- 🖥️ **[ELECTRON.md](docs/ELECTRON.md)**: Desktop process lifecycle & IPC channels.
-- 📄 **Per-app docs**: `restaurant-pos/docs/`, `admin-dashboard/docs/`, `backend/CONTRIBUTING.md`, `customer-site/README.md`.
+```
+loyalty-pos-system/
+├── backend/                 # Express REST API (routes → controllers → services → models)
+│   ├── src/
+│   │   ├── routes/          # Endpoint definitions (one file per domain)
+│   │   ├── controllers/     # Request handlers
+│   │   ├── services/        # Business logic
+│   │   ├── models/          # Mongoose schemas
+│   │   ├── middleware/      # Auth, rate-limit, validation, errors
+│   │   ├── validation/      # Zod schemas
+│   │   ├── modules/         # Feature modules (menu-config, qr-ordering, promotions, …)
+│   │   └── utils/           # Shared helpers
+│   ├── scripts/             # Migrations, seeding, backup/restore drills
+│   └── docs/                # Backend-specific docs (e.g. formulasThresholds.md)
+├── restaurant-pos/          # Desktop POS terminal
+│   ├── Frontend/
+│   │   └── src/
+│   │       ├── components/  # Feature-grouped UI (auth, billing, orders, floor,
+│   │       │                # customers, catalog, inventory, marketing, analytics,
+│   │       │                # settings, qr, dashboard, layout, modals, shared)
+│   │       ├── hooks/       # React hooks (POS state, auth, billing, …)
+│   │       ├── lib/         # Engines (pricing, sync, tax)
+│   │       ├── utils/       # Pure helpers (KOT delta, order merge, …)
+│   │       ├── api/         # Backend client + axios instance
+│   │       ├── core/        # Cross-cutting stores (auth token store)
+│   │       ├── qr/          # QR generation/rendering
+│   │       └── demo/        # Guided-tour/demo engine
+│   └── electron/            # Desktop shell (main.ts, preload.ts → compiled locally)
+├── admin-dashboard/         # Multi-tenant admin portal (React + Electron shell)
+│   └── src/                 # pages/ + components/ + api/ + context/ …
+└── customer-site/           # Public QR ordering & loyalty portal (React + Vite, JSX)
+    └── src/                 # pages/ + components/ + context/ + lib/
+```
+
+Per-app docs: [`restaurant-pos/README.md`](restaurant-pos/README.md), [`admin-dashboard/README.md`](admin-dashboard/README.md), [`customer-site/README.md`](customer-site/README.md), [`backend/CONTRIBUTING.md`](backend/CONTRIBUTING.md).
 
 ---
 
@@ -62,5 +88,3 @@ npm run dev:electron
 - **Multi-tenant**: resources are scoped by `restaurantId` (+ optional `branchId`).
 - **Configured ordering**: reusable variant / add-on / customization groups (`menu-config` module) are consumed identically by product registration and billing.
 - **Tax**: per-product `gstPercent` with classification-based automatic recommendation; bills snapshot per-line tax so historical receipts stay correct; multi-slab receipts show a grouped GST SUMMARY.
-
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.

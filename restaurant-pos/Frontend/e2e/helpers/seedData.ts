@@ -135,21 +135,50 @@ export function getSeedScript(): string {
       storage.setItem('pos_branches', JSON.stringify(branches));
       storage.setItem('pos_current_branch_id', JSON.stringify('branch_main'));
 
+      // ── Cache schema version ─────────────────────────────────
+      // data.ts runCacheSchemaMigration() purges pos_products (+ branch price
+      // maps) at module init when this key doesn't match its
+      // CACHE_SCHEMA_VERSION — which would wipe the seeded menu before React
+      // hydrates (billing grid would show "No products found"). Stamp the
+      // current version so the migration no-ops.
+      // KEEP IN SYNC with CACHE_SCHEMA_VERSION in src/data.ts.
+      storage.setItem('pos_cache_schema_version', 'products_variants_v2');
+
       // ── App Initialization Flag ────────────────────────────
       storage.setItem('pos_initialized_clean_v5', 'true');
 
       // ── Onboarding ─────────────────────────────────────────
       storage.setItem('pos_onboarding_done', 'true');
 
+      // ── Legal consent (per-account, device-level) ───────────
+      // The LoginScreen gates every login path behind the Terms &
+      // Conditions consent checkbox. On a device where an account has
+      // previously signed in and accepted, the checkbox is auto-resolved
+      // from this map — seed it so form logins (owner/cashier/manager)
+      // are not blocked by the disabled submit button.
+      storage.setItem('pos_legal_consent', JSON.stringify({
+        owner: true,
+        manager: true,
+        cashier: true,
+        priya: true,
+      }));
+
       // ── Subscription features (legacy keys — read even without a JWT) ─
       // Phase 1.10: usePOSState reads the non-namespaced cache when no JWT
       // restaurantId is present, so seeding these keys makes plan-gated UI
-      // (AI card, Branches, Reports…) render deterministically after a normal
-      // form login (which runs in offline fallback mode with no token).
+      // render deterministically after a normal form login (which runs in
+      // offline fallback mode with no token).
+      // IMPORTANT: strict plan enforcement clamps module toggles OFF when the
+      // enabling feature is missing (MODULE_FEATURE_MAP) — the list below must
+      // include every feature the specs exercise (table_service, takeaway,
+      // online_ordering, …) or the Tables/Takeaway/Online tabs vanish.
       storage.setItem('pos_subscription_status', JSON.stringify('trial'));
       storage.setItem('pos_subscription_features', JSON.stringify([
-        'core_pos', 'basic_reports', 'inventory', 'loyalty', 'multi_branch',
-        'analytics', 'expense_tracking', 'ai', 'advanced_reports',
+        'core_pos', 'basic_reports', 'advanced_reports', 'analytics', 'inventory',
+        'loyalty', 'multi_branch', 'expense_tracking', 'table_service', 'takeaway',
+        'delivery', 'online_ordering', 'qr_ordering', 'waiter_management',
+        'reservations', 'discounts', 'guest_checkout', 'order_notes',
+        'kitchen_display', 'offers', 'marketing', 'products', 'staff',
       ]));
 
       // ── Current Employee (auto-login as Owner) ────────────────
@@ -233,10 +262,14 @@ export function getMultiBranchSeedScript(): string {
       // Phase 1.10: the multi-branch tests log in through the form (offline
       // fallback, no token), so plan-gated UI (Branches entry) reads the
       // non-namespaced feature cache. Seeding these keys makes it render.
+      // Keep in sync with the single-branch seed (see comment there).
       storage.setItem('pos_subscription_status', JSON.stringify('trial'));
       storage.setItem('pos_subscription_features', JSON.stringify([
-        'core_pos', 'basic_reports', 'inventory', 'loyalty', 'multi_branch',
-        'analytics', 'expense_tracking', 'ai', 'advanced_reports',
+        'core_pos', 'basic_reports', 'advanced_reports', 'analytics', 'inventory',
+        'loyalty', 'multi_branch', 'expense_tracking', 'table_service', 'takeaway',
+        'delivery', 'online_ordering', 'qr_ordering', 'waiter_management',
+        'reservations', 'discounts', 'guest_checkout', 'order_notes',
+        'kitchen_display', 'offers', 'marketing', 'products', 'staff',
       ]));
 
       // ── Settings (multi-branch enabled) ────────────────────
@@ -311,9 +344,23 @@ export function getMultiBranchSeedScript(): string {
         branch_downtown: { p1: 299, p2: 199 }, // Margherita Pizza ₹299, Classic Burger ₹199 at Downtown
       }));
 
+      // ── Cache schema version (see single-branch seed comment) ─
+      storage.setItem('pos_cache_schema_version', 'products_variants_v2');
+
       // ── Flags ───────────────────────────────────────────────
       storage.setItem('pos_initialized_clean_v5', 'true');
       storage.setItem('pos_onboarding_done', 'true');
+
+      // ── Legal consent (per-account, device-level) ───────────
+      // Same as the single-branch seed: resolves the consent gate for
+      // form logins used by the multi-branch specs.
+      storage.setItem('pos_legal_consent', JSON.stringify({
+        owner: true,
+        manager: true,
+        cashier: true,
+        priya: true,
+        dtcashier: true,
+      }));
       // ── Current Employee (auto-login as Owner) ────────────────
       storage.setItem('pos_current_employee', JSON.stringify({
         id: 'emp_owner',

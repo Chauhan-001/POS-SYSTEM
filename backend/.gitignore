@@ -8,10 +8,12 @@ node_modules/
 # ─── Build outputs ──────────────────────────────────────────────
 dist/
 build/
+uploads/
 
-# ─── Logs ───────────────────────────────────────────────────────
+# ─── Logs / tool output ─────────────────────────────────────────
 *.log
 logs/
+typecheck-output.txt
 
 # ─── Debug auth tokens (never commit JWTs) ─────────────────────
 *_token*.txt

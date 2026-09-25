@@ -1,15 +1,17 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getSeedScript } from './helpers/seedData';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SCREENSHOT_DIR = path.resolve(__dirname, '../test-results/tour-screenshots');
 
+// Must match src/demo/tourSteps.ts exactly
 const STEP_TITLES = [
   'Welcome!',
   'Pick a Table',
-  'Add Items to Order',
+  'Add Items',
   'Find a Member',
   'Apply a Reward',
   'Send to Kitchen',
@@ -19,69 +21,29 @@ const STEP_TITLES = [
 ];
 
 async function login(page: any) {
-  // Check if login screen is showing
+  // Seed auto-authenticates as Owner, so the app may already be past login.
   const loginForm = page.locator('#login_screen_container').first();
   if (!(await loginForm.isVisible({ timeout: 3000 }).catch(() => false))) {
     return; // Already logged in
   }
 
-  // Use quick login buttons with robust selector
-  // Quick login buttons are type="button" with specific PIN text
-  const cashierPinBtn = page.locator('button:has(div:has-text("PIN: 3333"))').first();
-  const cashierLabelBtn = page.locator('button[type="button"]:has-text("Cashier")').first();
+  // Form login as owner (seed provides the per-account consent entry).
+  await loginForm.locator('input[type="text"]').first().fill('owner');
+  await loginForm.locator('input[type="password"]').first().fill('1111');
+  await loginForm.locator('button[type="submit"]').click();
 
-  if (await cashierPinBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await cashierPinBtn.click({ force: true });
-    console.log('Logged in via quick login (PIN: 3333)');
-  } else if (await cashierLabelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await cashierLabelBtn.click({ force: true });
-    console.log('Logged in via quick login (Cashier label)');
-  } else {
-    // Manual login fallback
-    await page.fill('input[placeholder*="cashier"]', 'cashier');
-    await page.fill('input[placeholder*="PIN"]', '3333');
-    const submitBtn = page.locator('button[type="submit"]').first();
-    await submitBtn.click({ force: true });
-    console.log('Logged in via manual credentials');
-  }
+  // Wait for the POS layout to replace the login gate
+  await page.locator('aside').waitFor({ state: 'visible', timeout: 15_000 });
+}async function startTour(page: any) {
+  // Navigate to Orders workspace (hash routing is more reliable than the
+  // sidebar tooltip, which may be hidden on small viewports)
+  await page.evaluate(() => { window.location.hash = '#/orders'; });
+  await page.waitForTimeout(500);
 
-  // Wait for login to complete and dashboard to render
-  await page.waitForTimeout(2000);
-  // Verify we're past login screen
-  const stillOnLogin = await page.locator('#login_screen_container').isVisible({ timeout: 1000 }).catch(() => false);
-  if (stillOnLogin) {
-    console.log('Still on login screen after attempt, trying again...');
-    // Try the fallback approach
-    await page.fill('input[placeholder*="cashier"]', 'cashier');
-    await page.fill('input[placeholder*="PIN"]', '3333');
-    await page.locator('button[type="submit"]').first().click({ force: true });
-    await page.waitForTimeout(2000);
-  }
-}
-
-async function startTour(page: any) {
-  // Navigate to Orders workspace
-  const ordersNav = page.locator('button[title*="Orders"]').first();
-  if (await ordersNav.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await ordersNav.click();
-    await page.waitForTimeout(1000);
-  }
-
-  // Click the Tour button in sidebar
+  // Click the Tour button in the sidebar (title="Restart Guided Tour")
   const tourBtn = page.locator('button[title="Restart Guided Tour"]').first();
-  if (await tourBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await tourBtn.click();
-    console.log('Tour started via Restart Guided Tour button');
-  } else {
-    // Fallback: any button containing "Tour" text
-    const fallback = page.locator('button:has-text("Tour"), button:has-text("tour")').first();
-    if (await fallback.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await fallback.click();
-      console.log('Tour started via fallback button');
-    } else {
-      console.log('⚠️ Could not find tour button!');
-    }
-  }
+  await tourBtn.waitFor({ state: 'visible', timeout: 10_000 });
+  await tourBtn.click({ force: true });
 }
 
 test.describe('Guided Tour Visual Verification', () => {
@@ -89,8 +51,13 @@ test.describe('Guided Tour Visual Verification', () => {
   test.setTimeout(120_000);
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(2000);
+    // Seed localStorage (also provides the per-account consent entry the
+    // login gate requires) and land on the app. Avoid waitUntil:'networkidle'
+    // — the app's API retry polling keeps the network busy forever.
+    await page.addInitScript(getSeedScript());
+    await page.goto('/');
+    await page.evaluate(getSeedScript());
+    await page.waitForSelector('#login_screen_container, aside', { timeout: 30_000 });
     await login(page);
     await page.waitForTimeout(1000);
   });

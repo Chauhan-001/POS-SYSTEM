@@ -30,6 +30,7 @@ lerna-debug.log*
 coverage/
 test-results/
 playwright-report/
+e2e/screenshots/
 
 # ─── IDE / editor ───────────────────────────────────────────────
 .vscode/*

@@ -85,16 +85,59 @@ async function addBurger(page: Page) {
   await expect(page.locator('[data-tour="cart-items-area"]')).toContainText('Classic Burger', { timeout: 5_000 });
 }
 
-/** Click the Close button and confirm in the dialog. */
+/** Send the current cart to the kitchen (KOT). This is what BIRTHS the order
+ * for a tapped table — billing alone leaves the table untouched. The KOT
+ * records modal opens after sending; close it to continue. */
+async function sendKOT(page: Page) {
+  const kotBtn = page.locator('[data-tour="kot-btn"]');
+  await expect(kotBtn).toBeEnabled({ timeout: 5_000 });
+  await kotBtn.click();
+  const confirmKot = page.getByRole('button', { name: /Send to Kitchen/ });
+  await expect(confirmKot).toBeVisible({ timeout: 5_000 });
+  await confirmKot.click();
+  // The KOT records modal opens over the Orders dashboard — dismiss it.
+  const kotModalClose = page.getByRole('button', { name: 'Close', exact: true });
+  await expect(kotModalClose).toBeVisible({ timeout: 8_000 });
+  await kotModalClose.click();
+  await page.waitForTimeout(300);
+}
+
+/** Complete the order via the payment flow. Two paths exist:
+ *  1. No KOT sent: CLOSE BILL → "Confirm Payment" modal → "Close Bill ₹…" →
+ *     receipt modal → "New POS Order" (returns to Orders).
+ *  2. KOT sent with unserved items: CLOSE BILL → unserved-items warning →
+ *     "Proceed to Pay" force-closes the bill and stays on Billing; navigate
+ *     back to Orders explicitly.
+ * Either way the table/takeaway row is freed by the payment. */
 async function closeOrderAndConfirm(page: Page) {
-  const closeBtn = page.locator('[data-tour="close-order-btn"]');
-  await expect(closeBtn).toBeVisible({ timeout: 5_000 });
-  await closeBtn.click();
-  // Confirmation dialog ("Close this order?") → Confirm
-  await expect(page.getByText('Close this order?')).toBeVisible({ timeout: 5_000 });
-  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  const payBtn = page.locator('[data-tour="pay-btn"]');
+  await expect(payBtn).toBeVisible({ timeout: 5_000 });
+  await expect(payBtn).toBeEnabled({ timeout: 5_000 });
+  await payBtn.click();
+  // If kitchen items are unserved (a KOT was sent), the unserved-items
+  // warning appears first — "Proceed to Pay" pays the bill immediately
+  // (no confirmation modal, no receipt) and keeps the workspace on Billing.
+  const unservedProceed = page.getByRole('button', { name: 'Proceed to Pay' });
+  if (await unservedProceed.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await unservedProceed.click();
+    await page.locator('[data-tour="pay-btn"]').waitFor({ state: 'visible', timeout: 15_000 });
+    await page.waitForTimeout(500);
+    await page.locator('button[title="Back to Orders"]').first().click();
+    await expect(page).toHaveURL(/\/orders/, { timeout: 15_000 });
+    return;
+  }
+  // Payment confirmation modal → Close Bill (processes the payment)
+  const confirmPay = page.locator('[data-tour="pay-print-btn"]');
+  await expect(confirmPay).toBeVisible({ timeout: 5_000 });
+  await expect(confirmPay).toBeEnabled({ timeout: 5_000 });
+  await confirmPay.click();
+  // Success opens the receipt modal — "New POS Order" closes it and
+  // navigates back to Orders (freeing the table/row in the process).
+  const newOrderBtn = page.getByRole('button', { name: 'New POS Order' });
+  await expect(newOrderBtn).toBeVisible({ timeout: 15_000 });
+  await newOrderBtn.click();
   // Redirect back to Orders
-  await expect(page).toHaveURL(/\/orders/, { timeout: 8_000 });
+  await expect(page).toHaveURL(/\/orders/, { timeout: 15_000 });
 }
 
 test.describe('Close-order redirect + card state integrity', () => {
@@ -162,9 +205,20 @@ test.describe('Close-order redirect + card state integrity', () => {
     await closeOrderAndConfirm(page);
     await shot(page, '13-after-close-redirected-to-orders');
 
-    // The Takeaway tab must still be active (restored) and the row removed.
+    // The Takeaway tab must still be active (restored). Payment advances the
+    // row to Ready/Paid (the cashier taps "Collected" on handover); the row
+    // stays listed under completed until "Clear Completed" removes it.
     await expect(page.locator('button', { hasText: 'New Takeaway' })).toBeVisible({ timeout: 5_000 });
+    const paidRow = page.locator('div.rounded-xl').filter({ hasText: 'Ready' }).first();
+    await expect(paidRow).toBeVisible({ timeout: 5_000 });
+    await expect(paidRow).toContainText('Paid');
+    await shot(page, '13b-takeaway-row-paid-ready');
+
+    // Complete the lifecycle: mark Collected, then clear completed rows.
+    await paidRow.locator('button', { hasText: 'Collected' }).first().click();
+    await page.locator('button', { hasText: 'Clear Completed' }).first().click();
     await expect(page.getByText('No takeaway orders')).toBeVisible({ timeout: 5_000 });
+    await shot(page, '13c-takeaway-row-cleaned-up');
 
     // Tables tab unaffected — all still Available.
     await page.getByRole('button', { name: /^Tables/ }).click();
@@ -178,15 +232,22 @@ test.describe('Close-order redirect + card state integrity', () => {
     await loginAsOwner(page);
     await goToOrders(page);
 
-    // Occupy T1 and T2 (two separate orders).
+    // Occupy T1 and T2 (two separate orders). A table order is BORN on the
+    // first KOT — billing alone leaves the table Available — so send the
+    // burger to the kitchen for T1 before opening T2.
     await openTableOrder(page, 'T1');
     await addBurger(page);
+    await sendKOT(page);
     await goToOrders(page);
     await openTableOrder(page, 'T2');
     await addBurger(page);
+    await sendKOT(page);
     await shot(page, '30-two-tables-occupied-billing');
 
-    // Close ONLY the T2 order.
+    // Sending the KOT returns to the Orders dashboard — reopen T2's live
+    // order in billing to pay it.
+    await openTableOrder(page, 'T2');
+    // Close ONLY the T2 order (pay its bill).
     await closeOrderAndConfirm(page);
     await shot(page, '31-after-closing-T2-only');
 
@@ -220,6 +281,8 @@ test.describe('Close-order redirect + card state integrity', () => {
     await expect(page).toHaveURL(/\/billing/, { timeout: 8_000 });
     await expect(page.locator('[data-tour="product-grid"]')).toBeVisible({ timeout: 8_000 });
 
+    // CLOSE BILL stays disabled on an empty cart — add an item, then pay.
+    await addBurger(page);
     await closeOrderAndConfirm(page);
 
     // Back on Orders, the grid view remains the only view — still no toggle.

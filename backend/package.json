@@ -13,10 +13,6 @@
     "audit:fact-consistency:live": "npx tsx scripts/audit-fact-consistency.ts --live",
     "audit:security": "npm audit --audit-level=high",
     "typecheck": "tsc --noEmit",
-    "seed:demo": "npx tsx scripts/seed-demo.ts",
-    "seed:demo:reset": "npx tsx scripts/seed-demo.ts --reset",
-    "seed:demo:clean": "npx tsx scripts/seed-demo.ts --clean",
-    "seed:demo:report": "npx tsx scripts/seed-demo.ts --report",
     "backup": "bash scripts/mongodb-backup.sh",
     "backup:drill": "bash scripts/mongodb-restore-drill.sh"
   },
