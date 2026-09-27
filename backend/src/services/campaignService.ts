@@ -21,7 +21,14 @@ import mongoose from 'mongoose';
 import Customer from '../models/Customer';
 import CustomerSegment from '../models/CustomerSegment';
 import Campaign from '../models/Campaign';
-import CampaignProposal from '../models/CampaignProposal';
+import CampaignProposal, {
+  canApproveTransition as canProposalApproveTransition,
+  canExecuteTransition as canProposalExecuteTransition,
+} from '../models/CampaignProposal';
+import type {
+  CampaignProposalApprovalStatus,
+  CampaignProposalExecutionStatus,
+} from '../models/CampaignProposal';
 import CampaignHistory from '../models/CampaignHistory';
 import Offer from '../models/Offer';
 import Product from '../models/Product';
@@ -67,6 +74,28 @@ export interface AutomationGuardrails {
 }
 
 export class CampaignService {
+  /**
+   * Whether an approval-status transition is allowed for a campaign proposal.
+   * Delegates to the canonical state machine in models/CampaignProposal.ts.
+   */
+  canApproveTransition(
+    from: CampaignProposalApprovalStatus,
+    to: CampaignProposalApprovalStatus,
+  ): boolean {
+    return canProposalApproveTransition(from, to);
+  }
+
+  /**
+   * Whether an execution-status transition is allowed for a campaign proposal.
+   * Delegates to the canonical state machine in models/CampaignProposal.ts.
+   */
+  canExecuteTransition(
+    from: CampaignProposalExecutionStatus,
+    to: CampaignProposalExecutionStatus,
+  ): boolean {
+    return canProposalExecuteTransition(from, to);
+  }
+
   async list(restaurantId: string, params: { page?: number; limit?: number; status?: string } = {}): Promise<any> {
     const query: any = {};
     if (params.status) query.status = params.status;
@@ -495,9 +524,21 @@ export class CampaignService {
     // Get phones from segments if provided
     let allPhones: string[] = [...phones];
     if (segmentIds.length > 0) {
+      // Segment references may be ObjectIds or human-readable names (e.g.
+      // 'dormant_30d'). Only cast valid ObjectIds — a name would crash the
+      // ObjectId constructor (BSONError) and take down the whole check.
+      const validObjectIds = segmentIds.filter((s) => /^[0-9a-fA-F]{24}$/.test(s));
+      const segmentNames = segmentIds.filter((s) => !/^[0-9a-fA-F]{24}$/.test(s));
       const segments = await CustomerSegment.find({
         restaurantId: objectId(restaurantId),
-        _id: { $in: segmentIds.map(objectId) },
+        ...(validObjectIds.length > 0 || segmentNames.length > 0
+          ? {
+              $or: [
+                ...(validObjectIds.length > 0 ? [{ _id: { $in: validObjectIds.map(objectId) } }] : []),
+                ...(segmentNames.length > 0 ? [{ name: { $in: segmentNames } }] : []),
+              ],
+            }
+          : {}),
         isDeleted: { $ne: true },
       }).lean().exec();
 
@@ -550,7 +591,7 @@ export class CampaignService {
     costBreakdown: { discountCost: number; communicationCost: number; freeItemCost: number };
     meetsBudget: boolean;
   }> {
-    const { budgetLimits, financialModel, expectedImpact, strategy, offerId, channels } = proposalData;
+    const { budgetLimits, financialModel, expectedImpact, strategy, offerId, channels, audience } = proposalData;
 
     // Default values
     let communicationCost = 0;
@@ -561,7 +602,7 @@ export class CampaignService {
 
     // ─── Communication cost ───
     // Estimate based on channel and audience size
-    const audienceCount = audience?.customerPhones?.length || 0 || 100; // fallback
+    const audienceCount = audience?.customerPhones?.length || 100; // fallback
     const channelCostMap: Record<string, number> = {
       sms: 1,      // ₹1 per message (approximate)
       whatsapp: 2, // ₹2 per message template
@@ -584,7 +625,6 @@ export class CampaignService {
     if (offerId) {
       const offer = await Offer.findById(offerId);
       if (offer) {
-        const audienceCount = audience?.customerPhones?.length || 0 || 100;
         let discountPerOrder = 0;
 
         if (offer.type === 'percentage') {
@@ -681,7 +721,7 @@ export class CampaignService {
         }
       } else {
         // Wrap-around case: 10 PM to 9 AM
-        if (currentTimeInMinutes >= startHour * 60 || currentTimeInMinute < endHour * 60) {
+        if (currentTimeInMinutes >= startHour * 60 || currentTimeInMinutes < endHour * 60) {
           return true;
         }
       }
@@ -788,6 +828,9 @@ export class CampaignService {
       'slow hours': 'FILL_SLOW_HOURS',
       'repeat visits': 'INCREASE_REPEAT_VISITS',
       'reactivate': 'REACTIVATE_CUSTOMERS',
+      'inactive customers': 'REACTIVATE_CUSTOMERS',
+      'inactive': 'REACTIVATE_CUSTOMERS',
+      'win back': 'REACTIVATE_CUSTOMERS',
       'new item': 'PROMOTE_NEW_ITEM',
       'addon': 'INCREASE_ADDON_ATTACHMENT',
       'inventory': 'REDUCE_EXCESS_INVENTORY',
@@ -804,7 +847,7 @@ export class CampaignService {
     }
 
     if (!parsed.objective) {
-      errors.push('Could not determine campaign objective from command');
+      errors.push('Could not determine campaign objective');
     }
 
     // Parse strategy
@@ -928,11 +971,11 @@ export class CampaignService {
   ): Promise<{
     proposal: ICampaignProposal | null;
     validation: { valid: boolean; errors: string[]; warnings: string[] };
-    naturalLanguageValidation: ReturnType<typeof validateNaturalLanguageCommand>;
+    naturalLanguageValidation: Awaited<ReturnType<CampaignService['validateNaturalLanguageCommand']>>;
     message: string;
   }> {
     // Step 1: Parse the natural language command
-    const nlpValidation = await validateNaturalLanguageCommand(restaurantId, command, ctx);
+    const nlpValidation = await this.validateNaturalLanguageCommand(restaurantId, command, ctx);
 
     if (!nlpValidation.valid) {
       return {

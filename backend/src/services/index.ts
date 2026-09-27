@@ -92,7 +92,9 @@ export { refundService } from './refundService';
 export { recordOwnerFeedback, getFeedbackSummary, shouldSuppressStrategy, getStrategyPreferenceTrends } from './recommendationFeedbackService';
 export { runWeeklyLearningCycle, getRestaurantsNeedingProcessing, getLearningSummary } from './learningScheduler';
 
-export type {
+// Value re-export (not `export type`) so consumers can instantiate classes
+// imported from the barrel — e.g. `new CampaignService()` in tests.
+export {
   AuthService,
   ProductService,
   OrderService,

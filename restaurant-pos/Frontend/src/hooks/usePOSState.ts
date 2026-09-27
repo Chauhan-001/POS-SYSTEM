@@ -820,7 +820,10 @@ export function usePOSState() {
   // rows into the current local state and persist the merged result.
   const refreshTables = useCallback(() => {
     return api.fetchTables().then((incoming: any) => {
-      if (!incoming || !Array.isArray(incoming)) return;
+      // { ok, tables } — ok:false = request failed (offline/401); never merge
+      // a failed fetch (an empty list would wipe locally-cached tables).
+      if (!incoming?.ok || !Array.isArray(incoming.tables)) return;
+      const incomingTables = incoming.tables;
       // Table ids bound to a live (non-terminal) local order. Tables with a
       // live order keep their local lifecycle status; every other table is
       // reconciled against the authoritative backend status so stale
@@ -840,7 +843,7 @@ export function usePOSState() {
         }
       }
       setTables((prev: any[]) => {
-        const merged = mergeTablesById(prev, incoming, liveOrderTableIds);
+        const merged = mergeTablesById(prev, incomingTables, liveOrderTableIds);
         setCachedData(CK.TABLES, merged);
         return merged;
       });
@@ -865,7 +868,7 @@ export function usePOSState() {
       // be healed (ids differ → write).
       setBranchTables((prevBt: Record<string, TableInfo[]>) => {
         const byBranch = new Map<string, any[]>();
-        for (const t of incoming) {
+        for (const t of incomingTables) {
           const bid = t.branchId;
           if (!bid) continue;
           const arr = byBranch.get(bid) || [];

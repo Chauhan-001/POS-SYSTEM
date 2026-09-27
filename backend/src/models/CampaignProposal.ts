@@ -174,6 +174,12 @@ export interface ICampaignProposal extends Document {
     categories?: ('too_expensive' | 'already_tried' | 'not_useful' | 'good_idea' | 'other')[];
     recordedAt: Date;
   };
+  /** Message template used for channel delivery (subject/body per channel). */
+  template?: {
+    channel?: CampaignProposalChannel;
+    subject?: string;
+    message?: string;
+  };
   createdBy?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -222,6 +228,14 @@ const campaignProposalSchema = new Schema<ICampaignProposal>(
         },
       }, { _id: false }),
       default: () => ({ mode: 'immediate', scheduledAt: undefined, startDate: undefined, endDate: undefined, daysOfWeek: [], startHour: undefined, endHour: undefined, quietPeriods: [] }),
+    },
+    template: {
+      type: new Schema({
+        channel: { type: String, enum: ['sms', 'whatsapp', 'email', 'app_notification', 'webhook'] },
+        subject: { type: String, trim: true },
+        message: { type: String, trim: true },
+      }, { _id: false }),
+      default: undefined,
     },
     channels: [{ type: String, enum: ['sms', 'whatsapp', 'email', 'app_notification', 'webhook'] }],
     budgetLimits: {
@@ -473,9 +487,18 @@ campaignProposalSchema.methods.validateCampaignProposal = async function thisFun
   const errors: string[] = [];
   const warnings: string[] = [];
 
+  // ─── Core fields ───
+  if (!proposal.objective) {
+    errors.push('Objective is required');
+  }
+
   // ─── Offer validation ───
+  // NOTE: offerId is OPTIONAL at draft stage — the AI Campaign Creator flow
+  // (createProposalFromCommand) builds a proposal before an offer is attached
+  // (step 5 of 10). A missing offer blocks approval, not creation, so it is a
+  // warning here and enforced again at approval time.
   if (!proposal.offerId) {
-    errors.push('Offer is required');
+    warnings.push('No offer attached — an offer must be linked before approval');
   } else {
     const Offer = (await import('../models/Offer')).default;
     const offer = await Offer.findById(proposal.offerId);
@@ -547,7 +570,14 @@ campaignProposalSchema.methods.validateCampaignProposal = async function thisFun
   // ─── Audience validation ───
   const audience = proposal.audience;
   if (audience.customerPhones.length === 0 && audience.segmentIds.length === 0) {
-    errors.push('Audience must have at least one segment or customer phone');
+    // A proposal created from a natural-language command legitimately has no
+    // audience yet (resolved at step 6 of 10) — as long as an estimated reach
+    // exists, treat the missing audience as a warning instead of an error.
+    if (proposal.expectedImpact?.expectedReach) {
+      warnings.push('Audience is empty — customers will be resolved before dispatch');
+    } else {
+      errors.push('Audience must have at least one segment or customer phone');
+    }
   }
 
   // Check for conflicting exclusions
@@ -585,23 +615,25 @@ campaignProposalSchema.methods.validateCampaignProposal = async function thisFun
     errors.push('At least one communication channel must be selected');
   } else {
     for (const channel of proposal.channels) {
+      // Template copy is generated later in the creation flow (step 8 of 10),
+      // so a missing template is a warning at draft stage — not a hard error.
       switch (channel) {
         case 'whatsapp':
           if (!proposal.template?.message) {
-            errors.push('WhatsApp template message is required');
+            warnings.push('WhatsApp template message is not set yet');
           }
           break;
         case 'sms':
           if (!proposal.template?.message) {
-            errors.push('SMS template message is required');
+            warnings.push('SMS template message is not set yet');
           }
           break;
         case 'email':
           if (!proposal.template?.subject) {
-            errors.push('Email subject is required');
+            warnings.push('Email subject is not set yet');
           }
           if (!proposal.template?.message) {
-            errors.push('Email body/message is required');
+            warnings.push('Email body/message is not set yet');
           }
           break;
       }

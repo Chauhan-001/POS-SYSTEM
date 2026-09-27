@@ -5,6 +5,7 @@ import { motion } from 'motion/react';
 import { daysUntilExpiry } from '../expiryUtils';
 import type { InventoryPage, InventoryAlert } from '../types';
 import type { InventoryHealthScore, PurchaseRecommendation, LowStockPrediction, AiSource } from '../../../src/core/inventoryIntelligence';
+import { computeHealthScoreLocal, generatePurchaseRecsLocal, predictLowStockLocal, computeInventoryCardsLocal } from '../../../src/core/inventoryIntelligence';
 import { useInventory } from '../InventoryManager';
 import { usePurchases } from '../usePurchases';
 import { usePageRefresh } from '../usePageRefresh';
@@ -223,9 +224,83 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
 
   const healthColor = !healthScore ? '#f59e0b' : healthScore.overall >= 80 ? '#10b981' : healthScore.overall >= 50 ? '#f59e0b' : '#ef4444';
 
+  // ═══ LAYOUT: fixed, logical order — every section labelled ═══
+  //  1. Header      — page title + sync badge
+  //  2. KPI strip   — the three numbers that define the state of stock
+  //  3. Actions     — the two things you do from here
+  //  4. Health      — score card + what needs attention today
+  //  5. Insights    — what to buy now + what will run out
+  //  6. Catalog     — full item status list
   return (
-    <div className="p-6 md:p-8 space-y-8 max-w-6xl mx-auto">
-      {/* Top row: AI Health Score + Quick actions */}
+    <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
+      {/* ── 1. PAGE HEADER ────────────────────────────── */}
+      <div className="flex items-center gap-3">
+        <h1 className="text-xl font-bold">Overview</h1>
+        {itemsSynced ? (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-semibold">Synced</span>
+        ) : (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 font-semibold" title="Live data unavailable — values shown are from the last known sync">Offline</span>
+        )}
+      </div>
+
+      {/* ── 2. KPI STRIP — the state of stock at a glance ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Stock Value</p>
+          <p className="text-2xl font-bold font-mono">₹{totalValue.toLocaleString('en-IN')}</p>
+          <div className="flex items-center gap-1 mt-1.5">
+            {synced && purchaseTrend !== null ? (
+              <>
+                <TrendingUp className={`w-3 h-3 ${purchaseTrend >= 0 ? 'text-emerald-500' : 'text-red-500'}`} />
+                <span className={`text-[10px] font-semibold ${purchaseTrend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {purchaseTrend >= 0 ? '+' : ''}{purchaseTrend}% this week
+                </span>
+              </>
+            ) : synced ? (
+              <span className="text-[10px] text-gray-400 font-semibold" title="No purchase history on this device yet">
+                No trend data yet
+              </span>
+            ) : (
+              <span className="text-[10px] text-gray-400 font-semibold" title="Live purchase data unavailable — showing local values">
+                Offline — no live trend
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Low Items</p>
+          <p className="text-2xl font-bold font-mono">{lowItems.length}</p>
+          <div className="flex items-center gap-1 mt-1.5">
+            <AlertTriangle className={`w-3 h-3 ${lowItems.length > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
+            <span className={`text-[10px] font-semibold ${lowItems.length > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+              {lowItems.length > 0 ? 'Need attention' : 'All good'}
+            </span>
+          </div>
+        </div>
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Items</p>
+          <p className="text-2xl font-bold font-mono">{items.length}</p>
+          <p className="text-[10px] text-gray-400 mt-1.5">{new Set(items.map(i => i.category)).size} categories</p>
+        </div>
+      </div>
+
+      {/* ── 3. ACTIONS — the two things you do from here ── */}
+      <div className="flex gap-3">
+        <button onClick={() => onNavigate('items')}
+          className="flex-1 py-3.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+        >
+          <ShoppingCart className="w-5 h-5" />
+          Add Stock
+        </button>
+        <button onClick={() => onNavigate('items')}
+          className="flex-1 py-3.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-gray-700 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+        >
+          <Package className="w-5 h-5" />
+          View Items
+        </button>
+      </div>
+
+      {/* ── 4. HEALTH — score + what needs attention today ── */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {moduleSettings?.enableAIInventoryHealth !== false && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}
@@ -320,72 +395,43 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
         </motion.div>
         )}
 
-        {/* Quick stats + actions */}
+        {/* 4b. Alerts — what needs attention today */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }}
-          className="lg:col-span-3 space-y-4"
+          className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm lg:col-span-3 flex flex-col"
         >
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
-              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Stock Value</p>
-              <p className="text-2xl font-bold font-mono">₹{totalValue.toLocaleString('en-IN')}</p>
-              <div className="flex items-center gap-1 mt-1.5">
-                {synced && purchaseTrend !== null ? (
-                  <>
-                    <TrendingUp className={`w-3 h-3 ${purchaseTrend >= 0 ? 'text-emerald-500' : 'text-red-500'}`} />
-                    <span className={`text-[10px] font-semibold ${purchaseTrend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                      {purchaseTrend >= 0 ? '+' : ''}{purchaseTrend}% this week
-                    </span>
-                  </>
-                ) : synced ? (
-                  // Online but no purchase history — honest label, not a fake %.
-                  <span className="text-[10px] text-gray-400 font-semibold" title="No purchase history on this device yet">
-                    No trend data yet
-                  </span>
-                ) : (
-                  // No live purchase data (offline) — honest placeholder instead
-                  // of a fake trend percentage.
-                  <span className="text-[10px] text-gray-400 font-semibold" title="Live purchase data unavailable — showing local values">
-                    Offline — no live trend
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
-              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Low Items</p>
-              <p className="text-2xl font-bold font-mono">{lowItems.length}</p>
-              <div className="flex items-center gap-1 mt-1.5">
-                <AlertTriangle className={`w-3 h-3 ${lowItems.length > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
-                <span className={`text-[10px] font-semibold ${lowItems.length > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                  {lowItems.length > 0 ? 'Need attention' : 'All good'}
-                </span>
-              </div>
-            </div>
-            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
-              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Items</p>
-              <p className="text-2xl font-bold font-mono">{items.length}</p>
-              <p className="text-[10px] text-gray-400 mt-1.5">{new Set(items.map(i => i.category)).size} categories</p>
-            </div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold">Alerts</h2>
+            <AlertTriangle className={`w-4 h-4 ${realAlerts.length > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
           </div>
-
-          <div className="flex gap-3">
-            <button onClick={() => onNavigate('items')}
-              className="flex-1 py-3.5 bg-[var(--brand-color)] text-white rounded-2xl text-sm font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
-            >
-              <ShoppingCart className="w-5 h-5" />
-              Add Stock
-            </button>
-            <button onClick={() => onNavigate('items')}
-              className="flex-1 py-3.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-gray-700 rounded-2xl text-sm font-bold hover:border-[var(--brand-color)]/30 hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
-            >
-              <Package className="w-5 h-5" />
-              View Items
-            </button>
+          <div className="space-y-3 flex-1">
+            {realAlerts.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center py-6 text-gray-400">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-40" />
+                <p className="text-xs font-medium">No alerts — all stock is healthy</p>
+              </div>
+            ) : (
+              realAlerts.map(alert => {
+                const severityColor = alert.severity === 'critical' ? 'border-red-200 bg-red-50' : alert.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50';
+                const dotColor = alert.severity === 'critical' ? 'bg-[var(--color-red-500-solid)]' : alert.severity === 'warning' ? 'bg-[var(--color-amber-500-solid)]' : 'bg-[var(--color-blue-500-solid)]';
+                return (
+                  <div key={alert.id} className={`rounded-xl border ${severityColor} p-3`}>
+                    <div className="flex items-start gap-2.5">
+                      <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${dotColor}`} />
+                      <div>
+                        <p className="text-xs font-bold">{alert.item}</p>
+                        <p className="text-[10px] mt-0.5 opacity-75">{alert.message}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </motion.div>
       </div>
 
-      {/* Bottom grid: AI Purchase Recommendations + Low Stock Predictions + Weather+Alerts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ── 5. INSIGHTS — what to buy now + what will run out ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {moduleSettings?.enableAIPurchaseRecs !== false && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.1 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm flex flex-col"
@@ -476,47 +522,10 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
         </motion.div>
         )}
 
-        {/* Weather Recommendation + Alerts combined */}
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.15 }}
-          className="space-y-3"
-        >
-          {/* Weather widget — removed (Phase 3, AI-only) */}
-          <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-bold">Alerts</h2>
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
-            </div>
-            <div className="space-y-3">
-              {realAlerts.length === 0 ? (
-                <div className="text-center py-6 text-gray-400">
-                  <AlertTriangle className="w-6 h-6 mx-auto mb-2 opacity-40" />
-                  <p className="text-xs font-medium">No alerts — all stock is healthy</p>
-                </div>
-              ) : (
-                realAlerts.map(alert => {
-                  const severityColor = alert.severity === 'critical' ? 'border-red-200 bg-red-50' : alert.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50';
-                  const dotColor = alert.severity === 'critical' ? 'bg-[var(--color-red-500-solid)]' : alert.severity === 'warning' ? 'bg-[var(--color-amber-500-solid)]' : 'bg-[var(--color-blue-500-solid)]';
-                  return (
-                    <div key={alert.id} className={`rounded-xl border ${severityColor} p-3`}>
-                      <div className="flex items-start gap-2.5">
-                        <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${dotColor}`} />
-                        <div>
-                          <p className="text-xs font-bold">{alert.item}</p>
-                          <p className="text-[10px] mt-0.5 opacity-75">{alert.message}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </motion.div>
-
       </div>
 
-        {/* Item health checklist — full width row */}
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.2 }}
+      {/* ── 6. CATALOG — full item status list ────────────── */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.2 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4">

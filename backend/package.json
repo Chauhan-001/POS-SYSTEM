@@ -32,6 +32,7 @@
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
+    "loyalty-pos-system": "file:..",
     "mongoose": "^9.8.0",
     "multer": "^2.2.0",
     "pdfkit": "^0.19.1",

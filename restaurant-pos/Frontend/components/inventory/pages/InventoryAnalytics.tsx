@@ -347,7 +347,7 @@ export default function InventoryAnalytics() {
         ))}
       </div>
 
-      {/* Charts */}
+      {/* ── TRENDS — how stock moves (spend, consumption, movement, categories) ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
@@ -435,7 +435,10 @@ export default function InventoryAnalytics() {
             </ResponsiveContainer>
           )}
         </motion.div>
+      </div>
 
+      {/* ── WATCHLIST — what needs attention (suppliers, low stock, expiry) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.2 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"
         >
@@ -510,6 +513,10 @@ export default function InventoryAnalytics() {
           )}
         </motion.div>
 
+      </div>
+
+      {/* ── WATCHLIST — what needs attention (suppliers, low stock, expiry) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Expiry Alerts — items expired or expiring within the lookahead window (server-computed from product expiryDate) */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.3 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm"

@@ -15,6 +15,8 @@
  *  - Secret-bearing fields (password, PIN, tokens, keys) are redacted.
  *  - Audit entries are only written when an authenticated tenant context
  *    exists; public/unauth'd mutation attempts log to the console only.
+ *  - Request lines are FILE-ONLY (see utils/logger.ts): the central logger
+ *    mirrors them into backend/logs/ keeping the terminal free of noise.
  */
 
 import { NextFunction, Request, Response } from 'express';
@@ -97,6 +99,11 @@ export function requestLogger(options: { auditMutations?: boolean } = {}) {
 
   return (req: Request, res: Response, next: NextFunction) => {
     const startedAt = Date.now();
+    // Snapshot the FULL request path NOW — req.url/req.path are REWRITTEN by
+    // every mounted router (Express strips the mount prefix, so by the time
+    // res.on('finish') fires, /api/qr-ordering/requests logs as just
+    // "/requests"), which made log greps and AuditLog entityTypes wrong.
+    const fullPath = String(req.originalUrl || req.url || req.path || '').split('?')[0] || req.path;
     res.on('finish', () => {
       const durationMs = Date.now() - startedAt;
       const auth = (req as any).user as
@@ -106,7 +113,7 @@ export function requestLogger(options: { auditMutations?: boolean } = {}) {
       const entry = {
         ts: new Date().toISOString(),
         method: req.method,
-        path: req.path,
+        path: fullPath,
         status: res.statusCode,
         durationMs,
         userId: auth?.userId || null,
@@ -122,20 +129,20 @@ export function requestLogger(options: { auditMutations?: boolean } = {}) {
 
       if (!auditMutations || !MUTATING_METHODS.has(req.method)) return;
       // Skip auth-replay and pre-auth paths — no stable tenant context yet.
-      if (NO_AUDIT_PREFIXES.some((p) => req.path.startsWith(p))) return;
+      if (NO_AUDIT_PREFIXES.some((p) => fullPath.startsWith(p))) return;
       // Only attributable mutations become audit entries (tenant context).
       if (!auth?.restaurantId) return;
 
       const auditEntry: Record<string, unknown> = {
-        action: `${req.method}_${entityTypeFromPath(req.path).toUpperCase()}`,
-        entityType: entityTypeFromPath(req.path),
+        action: `${req.method}_${entityTypeFromPath(fullPath).toUpperCase()}`,
+        entityType: entityTypeFromPath(fullPath),
         performedBy: auth.name || 'System',
         performedById: auth.userId || auth.employeeId,
         restaurantId: auth.restaurantId,
         ipAddress: ipFrom(req),
         details: {
           deviceId: deviceFrom(req),
-          path: req.path,
+          path: fullPath,
           status: res.statusCode,
           body: req.body ? sanitizeForLog(req.body) : undefined,
         },

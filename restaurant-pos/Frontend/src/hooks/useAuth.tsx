@@ -86,7 +86,15 @@ function hasPersistedSession(): boolean {
     const accessToken = localStorage.getItem('pos_access_token');
     const refreshToken = localStorage.getItem('pos_refresh_token');
     const sessionMode = localStorage.getItem('pos_session_mode');
-    return !!(accessToken || refreshToken) || sessionMode === 'persisted' || sessionMode === 'offline';
+    // A real persisted session ALWAYS has tokens: login writes tokens + the
+    // 'persisted' marker together and every refresh rotates the access token.
+    // Treating a tokenless 'persisted' marker as a session (the old behavior)
+    // booted the terminal as an authenticated ZOMBIE — every API call 401'd,
+    // reads silently fell back to the localStorage cache (tables/orders looked
+    // fine) and live-only screens like QR Studio appeared broken.
+    // 'offline' stays valid without tokens by design: offline login/boot keeps
+    // the cached session working until the backend is reachable again.
+    return !!(accessToken || refreshToken) || sessionMode === 'offline';
   } catch {
     return false;
   }
@@ -237,6 +245,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
         });
     } else {
+      // No tokens to restore. If the employee record and a 'persisted' marker
+      // somehow survive without tokens (App.tsx's logout backstop wipes the
+      // three token keys on a transient null-employee render), clear the stale
+      // marker so the next boot doesn't see a half-erased session and the
+      // terminal lands on the login screen instead of a tokenless zombie.
+      const storedEmployee = getDBData<any>('pos_current_employee', null);
+      if (storedEmployee && localStorage.getItem('pos_session_mode') === 'persisted') {
+        localStorage.removeItem('pos_session_mode');
+      }
       setState(prev => ({ ...prev, isLoading: false }));
     }
   }, []);

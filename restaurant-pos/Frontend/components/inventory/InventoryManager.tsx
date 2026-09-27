@@ -768,7 +768,11 @@ export default function InventoryManager({ onBack, moduleSettings, products }: I
               {page === 'analytics' && <InventoryAnalytics />}
               {page === 'recipes' && <RecipesPage />}
               {page === 'cost' && (
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 p-4">
+                <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
+                  <div>
+                    <h1 className="text-xl font-bold">Cost Intelligence</h1>
+                    <p className="text-xs text-gray-400 mt-0.5">Recipe costs, product margins and the assumptions behind them</p>
+                  </div>
                   <CostIntelligencePanel />
                   <CostSettingsPanel />
                 </div>

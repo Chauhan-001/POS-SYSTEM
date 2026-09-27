@@ -1373,15 +1373,24 @@ export async function fetchOrderRefunds(id: string) {
 
 // ─── QR Studio: printable QR stickers + service requests ──────────
 
+/** Result of a live QR-sticker list fetch — ok:false means the REQUEST failed
+ * (offline / 401), not that the restaurant has no stickers. */
+export interface TokenListResult {
+  ok: boolean;
+  tokens: any[];
+}
+
 /** GET /api/qr-tokens — list the restaurant's QR stickers (QR Studio). */
-export async function fetchQrTokens(params?: { branchId?: string }) {
-  // BACKEND CALLED — load QR stickers
+export async function fetchQrTokens(params?: { branchId?: string }): Promise<TokenListResult> {
+  // BACKEND CALLED — load QR stickers. Returns ok:false (NOT an empty list)
+  // when the request fails (offline / 401) — QR Studio must show an error
+  // + Retry instead of mistaking a failed fetch for "no stickers yet".
   const qs = new URLSearchParams();
   if (params?.branchId) qs.set('branchId', params.branchId);
   const query = qs.toString();
   const res = await get<any>(`/qr-tokens${query ? '?' + query : ''}`);
-  if (!res) return [];
-  return res.tokens || res.data || [];
+  if (!res) return { ok: false, tokens: [] };
+  return { ok: true, tokens: res.tokens || res.data || [] };
 }
 
 /** POST /api/qr-tokens — generate a table / car / pickup sticker. */
@@ -2275,40 +2284,52 @@ export async function pullSync() {
 
 // ─── Tables ─────────────────────────────────────────────────────
 
+/** Result of a live tables fetch — ok:false means the REQUEST failed
+ * (offline / 401), not that the restaurant has no tables. */
+export interface TableListResult {
+  ok: boolean;
+  tables: any[];
+}
+
 /** GET /api/tables — Fetch all tables */
-export async function fetchTables(params?: { branchId?: string }) {
+export async function fetchTables(params?: { branchId?: string }): Promise<TableListResult> {
   const qs = new URLSearchParams();
   if (params?.branchId) qs.set('branchId', params.branchId);
   const query = qs.toString();
   const tables = await get<any[]>(`/tables${query ? '?' + query : ''}`);
-  if (!tables) return null;
+  // ok:false (NOT []) when the request failed — callers (QR Studio) must be
+  // able to tell "backend unreachable" apart from "no tables created yet".
+  if (!tables) return { ok: false, tables: [] };
   // Normalize Mongo docs → frontend TableInfo shape: map _id→id and keep the
   // optional layout fields (x/y/width/height/shape) the backend Table stores.
-  return tables.map((t: any) => ({
-    id: t._id || t.id,
-    number: t.number ?? 0,
-    capacity: t.capacity ?? 4,
-    status: t.status || 'Available',
-    section: t.section,
-    branchId: t.branchId,
-    floorId: t.floorId,
-    x: t.x,
-    y: t.y,
-    width: t.width,
-    height: t.height,
-    rotation: t.rotation ?? 0,
-    shape: t.shape,
-    isLocked: t.isLocked ?? false,
-    waiterId: t.waiterId,
-    waiterName: t.waiterName,
-    occupiedSince: t.occupiedSince,
-    reservationName: t.reservationName,
-    reservationTime: t.reservationTime,
-    // Customer's ACTIVE table-QR seat session (attached by the server). Used
-    // by the floor plan + grid to show "session active" and let the cashier
-    // end the session (never the QR itself).
-    activeSession: t.activeSession || null,
-  }));
+  return {
+    ok: true,
+    tables: tables.map((t: any) => ({
+      id: t._id || t.id,
+      number: t.number ?? 0,
+      capacity: t.capacity ?? 4,
+      status: t.status || 'Available',
+      section: t.section,
+      branchId: t.branchId,
+      floorId: t.floorId,
+      x: t.x,
+      y: t.y,
+      width: t.width,
+      height: t.height,
+      rotation: t.rotation ?? 0,
+      shape: t.shape,
+      isLocked: t.isLocked ?? false,
+      waiterId: t.waiterId,
+      waiterName: t.waiterName,
+      occupiedSince: t.occupiedSince,
+      reservationName: t.reservationName,
+      reservationTime: t.reservationTime,
+      // Customer's ACTIVE table-QR seat session (attached by the server). Used
+      // by the floor plan + grid to show "session active" and let the cashier
+      // end the session (never the QR itself).
+      activeSession: t.activeSession || null,
+    })),
+  };
 }
 
 /**

@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Request, Response } from 'express';
-import { requireSubscription, requireFeature } from '../subscriptionMiddleware';
+import { requireSubscription, requireFeature, clearFeatureCache } from '../subscriptionMiddleware';
 
 vi.mock('../../models/Subscription', () => {
   const Subscription = { findOne: vi.fn() };
@@ -103,7 +103,13 @@ describe('requireSubscription', () => {
 });
 
 describe('requireFeature', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The middleware memoizes feature checks per tenant — clear it so each
+    // test starts with a cold cache and actually exercises the subscription
+    // lookup that the test mocks.
+    clearFeatureCache();
+  });
 
   it('passes for admins / no restaurant context', async () => {
     const next = vi.fn();

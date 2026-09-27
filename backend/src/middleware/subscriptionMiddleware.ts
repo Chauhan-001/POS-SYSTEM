@@ -90,6 +90,11 @@ function writeFeatureCache(key: string, allowed: boolean): void {
   }
 }
 
+/** Test hook: clear the in-memory feature-check cache (used between tests). */
+export function clearFeatureCache(): void {
+  featureCheckCache.clear();
+}
+
 export function requireFeature(feature: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

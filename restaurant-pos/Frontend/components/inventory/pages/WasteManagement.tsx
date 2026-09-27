@@ -6,6 +6,8 @@ import { useNotify, useInventory, useInventoryEventsCtx } from '../InventoryMana
 import type { WasteEntry } from '../types';
 // PHASE 3: the AI waste analysis (aiData live fetch) was removed with the AI
 // layer; the analysis card runs on the deterministic core engine.
+import { analyzeWasteLocal } from '../../../src/core/inventoryIntelligence';
+import type { WasteAnalysis } from '../../../src/core/inventoryIntelligence';
 
 const WASTE_REASONS = ['spoiled', 'burnt', 'expired', 'dropped', 'other'] as const;
 
@@ -73,6 +75,10 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
   const wasteAnalysis: AiAnalysisView | null = wasteLog.length > 0
     ? { data: analyzeWasteLocal(wasteLog) }
     : null;
+  // At-a-glance summary: this-month cost + the single biggest offender.
+  const monthStartStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const monthWaste = wasteLog.filter(w => String(w.date).startsWith(monthStartStr)).reduce((s, w) => s + w.cost, 0);
+  const topWasteItem = wasteAnalysis?.data.topWasteItems[0];
 
   const handleSubmit = async () => {
     const item = items.find(i => i.name === formItem);
@@ -109,6 +115,34 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         >
           <Plus className="w-4 h-4" /> Log Waste
         </button>
+      </div>
+
+      {/* At-a-glance summary — read the state of waste before touching the log */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Total Waste Cost</p>
+          <p className="text-2xl font-bold font-mono text-red-600">₹{Number(totalWaste || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p className="text-[10px] text-gray-400 mt-1.5">across {wasteLog.length} logged {wasteLog.length === 1 ? 'entry' : 'entries'}</p>
+        </div>
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">This Month</p>
+          <p className="text-2xl font-bold font-mono">₹{Number(monthWaste || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p className="text-[10px] text-gray-400 mt-1.5">logged so far</p>
+        </div>
+        <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5 shadow-sm">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1">Top Offender</p>
+          {topWasteItem ? (
+            <>
+              <p className="text-2xl font-bold truncate">{topWasteItem.name}</p>
+              <p className="text-[10px] text-gray-400 mt-1.5">{topWasteItem.percentage}% of total waste cost</p>
+            </>
+          ) : (
+            <>
+              <p className="text-2xl font-bold text-gray-300">—</p>
+              <p className="text-[10px] text-gray-400 mt-1.5">no waste logged yet</p>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Add waste form */}
@@ -162,7 +196,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         )}
       </AnimatePresence>
 
-      {/* Waste Analysis (deterministic) */}
+      {/* Waste Analysis (deterministic) — why waste happens */}
       {moduleSettings?.enableAIWasteAnalysis !== false && wasteLog.length > 0 && wasteAnalysis && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
           className="bg-[var(--color-bg-white)] rounded-2xl border border-purple-200 shadow-sm overflow-hidden"
@@ -232,7 +266,7 @@ export default function WasteManagement({ moduleSettings }: { moduleSettings?: R
         </motion.div>
       )}
 
-      {/* Waste entries as cards — every row comes from the backend feed */}
+      {/* Waste log — every row comes from the backend feed */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}
         className="space-y-3"
       >

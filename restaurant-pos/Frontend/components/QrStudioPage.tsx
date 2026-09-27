@@ -54,6 +54,10 @@ export default function QrStudioPage({
 }) {
   const [tokens, setTokens] = useState<TokenRow[]>([]);
   const [tables, setTables] = useState<TableRow[]>([]);
+  /** True when the tables/tokens fetch FAILED (offline / 401) — distinct from
+   *  "no tables exist", so the page shows an error + Retry instead of the
+   *  misleading "Add tables in the floor plan first" empty state. */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [qrData, setQrData] = useState<Record<string, string>>({});
   /** urls whose QR generation failed (renders an error + Retry instead of a stuck spinner). */
   const [qrErrors, setQrErrors] = useState<Record<string, boolean>>({});
@@ -77,15 +81,17 @@ export default function QrStudioPage({
   const [isRegenerating, setIsRegenerating] = useState(false);
 
   const loadTokens = useCallback(async () => {
-    const list = await fetchQrTokens();
-    setTokens(list || []);
+    const res = await fetchQrTokens();
+    setTokens(res.tokens || []);
+    setLoadFailed(!res.ok);
     setLoading(false);
-    return list || [];
+    return res;
   }, []);
 
   const loadTables = useCallback(async () => {
-    const list = await fetchTables();
-    setTables(list || []);
+    const res = await fetchTables();
+    setTables(res.tables || []);
+    if (!res.ok) setLoadFailed(true);
   }, []);
 
   useEffect(() => {
@@ -212,7 +218,9 @@ export default function QrStudioPage({
   const seedKeyRef = useRef<string | null>(null);
   const seedBusyRef = useRef(false);
   useEffect(() => {
-    if (loading || seedBusyRef.current) return;
+    // Never auto-seed on a failed load — tokens/tables are unknown, and the
+    // seed would fire blindly every retry until the request succeeds.
+    if (loading || loadFailed || seedBusyRef.current) return;
     const missing = tableRows.some((r) => !r.token);
     if (!missing) return;
     const key = `${currentBranchId ?? 'all'}:${tableRows.map((r) => r.id).sort().join(',')}`;
@@ -338,6 +346,21 @@ export default function QrStudioPage({
 
           {loading ? (
             <div className="flex items-center justify-center py-12 text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /></div>
+          ) : loadFailed ? (
+            <div className="bg-[var(--color-bg-white)] rounded-2xl border border-dashed border-rose-200 p-8 text-center">
+              <AlertTriangle className="w-7 h-7 text-rose-400 mx-auto" />
+              <p className="text-sm font-bold text-[var(--color-text-primary)] mt-2">Couldn't load tables & QR stickers</p>
+              <p className="text-xs text-gray-400 mt-1">
+                The backend didn't respond (offline, or your session needs a re-login).
+                Your tables are safe — reconnect and retry.
+              </p>
+              <button
+                onClick={() => { setLoading(true); setLoadFailed(false); Promise.all([loadTokens(), loadTables()]).catch(() => setLoading(false)); }}
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--brand-color)] text-white text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Retry
+              </button>
+            </div>
           ) : tableRows.length === 0 ? (
             <div className="bg-[var(--color-bg-white)] rounded-2xl border border-dashed border-[var(--color-border-default)] p-8 text-center">
               <span className="text-2xl">🪑</span>

@@ -8,6 +8,8 @@
  */
 
 import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { beforeAll as viBeforeAll, afterAll as viAfterAll } from 'vitest';
 import { objectId } from '../validation/common';
 import { CampaignProposal, CampaignProposalObjective, CampaignProposalStrategy, CampaignProposalApprovalStatus, CampaignProposalExecutionStatus } from '../../models/CampaignProposal';
 import { CampaignService } from '../../services';
@@ -19,6 +21,22 @@ const restaurantId = new mongoose.Types.ObjectId();
 
 let campaignService: CampaignService;
 let restaurant: any;
+
+let mongod: MongoMemoryServer;
+
+// The suite persists models (Restaurant, CustomerSegment, Offer, CampaignProposal)
+// via Mongoose but never opened a connection — every operation buffered until the
+// 10s driver timeout. Spin up an in-memory MongoDB for the file, mirroring the
+// pattern used by tenantIsolation.test.ts and the other integration suites.
+viBeforeAll(async () => {
+  mongod = await MongoMemoryServer.create();
+  await mongoose.connect(mongod.getUri());
+}, 60_000);
+
+viAfterAll(async () => {
+  await mongoose.disconnect();
+  await mongod.stop();
+}, 60_000);
 
 beforeAll(async () => {
   // Create a test restaurant

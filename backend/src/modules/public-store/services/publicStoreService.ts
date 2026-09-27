@@ -22,8 +22,11 @@ import Reward from '../../../models/Reward';
 import Offer from '../../../models/Offer';
 import LoyaltyTier from '../../../models/LoyaltyTier';
 import LoyaltySettings from '../../../models/LoyaltySettings';
+import QrToken from '../../qr-ordering/models/QrToken';
 
 const TOKEN_PATTERN = /^pbl_[A-Za-z0-9]{10,64}$/;
+/** Sticker token minted by QR Studio (`qr_…`) — shown on the studio card. */
+const STICKER_TOKEN_PATTERN = /^qr_[A-Za-z0-9]{8,64}$/;
 
 function todayStamp(): string {
   return new Date().toISOString().slice(0, 10);
@@ -33,9 +36,36 @@ function todayStamp(): string {
  * Resolve a live restaurant by its public token. Shared by the loyalty
  * storefront and the menu/ordering endpoints so tenant resolution is
  * identical everywhere. Throws 404 for unknown/inactive stores.
+ *
+ * Accepts BOTH capability kinds printed by QR Studio:
+ *   - `pbl_…`  — the restaurant-level public store token (baked into the
+ *     sticker URL after /#/)
+ *   - `qr_…`   — a per-sticker token (the value displayed on the QR Studio
+ *     card). Entering/scanning it resolves through the QrToken row to the
+ *     owning restaurant, so pasting what the studio SHOWS works exactly like
+ *     pasting what the QR ENCODES.
  */
 export async function resolveRestaurantByToken(publicToken: string): Promise<any> {
-  if (!publicToken || !TOKEN_PATTERN.test(publicToken)) {
+  if (!publicToken) throw new AppError(404, 'Store not found');
+
+  // Sticker token → its owning restaurant (must still be live).
+  if (STICKER_TOKEN_PATTERN.test(publicToken)) {
+    const sticker = await QrToken.findOne({ token: publicToken })
+      .select('restaurantId')
+      .lean()
+      .exec();
+    if (!sticker) throw new AppError(404, 'Store not found');
+    const restaurant = await Restaurant.findOne({
+      _id: sticker.restaurantId,
+      isActive: true,
+      isDeleted: { $ne: true },
+    }).lean().exec();
+    if (!restaurant) throw new AppError(404, 'Store not found');
+    return restaurant;
+  }
+
+  // Store token (the URL capability).
+  if (!TOKEN_PATTERN.test(publicToken)) {
     throw new AppError(404, 'Store not found');
   }
   const restaurant = await Restaurant.findOne({

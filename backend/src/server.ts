@@ -54,6 +54,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { initFileLogging, logFatal } from './utils/logger';
 import { config } from './config';
 import { connectDB, isConnected } from './db';
 import { apiLimiter, publicLimiter, adminApiLimiter } from './middleware/rateLimiter';
@@ -70,6 +71,13 @@ import { RedisAdapter } from './cache/adapters';
 const __dirname = path.dirname(
   typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url)
 );
+
+// ─── File Logging (install FIRST — before any module can console.log) ───
+// Every console.* call in the backend is mirrored into backend/logs/
+// (app-<date>.log = everything, error-<date>.log = errors+warnings).
+// The terminal stays quiet: only warnings and errors are echoed.
+initFileLogging();
+console.error(`[Logger] Terminal shows warnings/errors only — full logs in backend/logs/ (started ${new Date().toISOString()})`);
 
 /**
  * Server version reported by /api/health — read from backend/package.json
@@ -365,15 +373,14 @@ app.use(errorHandler);
 
 // ─── Process-level Error Handlers — prevent silent crashes ──────
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught exception:', err);
+  logFatal('[FATAL] Uncaught exception:', err);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] Unhandled rejection:', reason);
+  logFatal('[FATAL] Unhandled rejection:', reason);
   process.exit(1);
 });
-
 // =============================================================================
 // STATIC FILE SERVING (Production Only)
 // =============================================================================
@@ -493,6 +500,6 @@ async function start() {
 }
 
 start().catch((err) => {
-  console.error('Failed to start server:', err);
+  logFatal('Failed to start server:', err);
   process.exit(1);
 });

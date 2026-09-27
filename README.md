@@ -15,8 +15,14 @@ npm run install:all
 ### 2. Running Dev Environment
 Start all services in development mode:
 ```bash
-# Run web dev servers concurrently (Backend + Admin Portal + POS Frontend)
+# Run all web dev servers concurrently (Backend + Admin Portal + POS Frontend + Customer Site)
 npm run dev
+
+# Or run individual services:
+npm run dev:backend     # http://localhost:3002/api
+npm run dev:admin       # http://localhost:5174
+npm run dev:pos         # http://localhost:5175
+npm run dev:customer    # http://localhost:5177
 
 # Run Electron Desktop environment concurrently (Backend + Admin Portal + Desktop POS)
 npm run dev:electron
@@ -53,6 +59,17 @@ npm run dev:electron
 - **Desktop Shell**: Electron (POS + Admin)
 - **Backend**: Node.js, Express, TypeScript, MongoDB / Mongoose, Socket.IO
 - **Tooling**: Concurrently, Cross-Env, Vitest, Playwright, ESLint
+
+---
+
+## 📜 Backend Logging
+
+All backend output is written to dedicated log files — the terminal stays quiet:
+
+- `backend/logs/app-<YYYY-MM-DD>.log` — every log line (requests, cache, seed, etc.)
+- `backend/logs/error-<YYYY-MM-DD>.log` — warnings and errors only
+
+The terminal echoes **only warnings and errors**; per-request noise goes to the files. Day-scoped files rotate automatically at midnight (local time). Set `LOG_DIR` to override the directory.
 
 ---
 
