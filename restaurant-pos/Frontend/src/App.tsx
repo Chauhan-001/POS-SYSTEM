@@ -2043,7 +2043,7 @@ export default function App() {
   if (auth.isLoading || setupState === 'loading') {
     return (
       <div className="h-full flex items-center justify-center bg-[var(--color-bg-page)]">
-        <ReceiptLoader label="Initializing POS Terminal…" />
+        <ReceiptLoader label="Initializing ChitKuber POS…" />
       </div>
     );
   }

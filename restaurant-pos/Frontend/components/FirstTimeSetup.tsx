@@ -21,6 +21,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldCheck, User, Phone, Mail, Lock, Eye, EyeOff, Store, AlertTriangle, CheckCircle, RefreshCw, ArrowLeft } from 'lucide-react';
 import * as api from '../src/api/client';
+import brandLogo from '../src/assets/brand-logo.png';
 
 interface FirstTimeSetupProps {
   onSetupComplete: (employee: any, pin?: string) => void;
@@ -163,8 +164,8 @@ export default function FirstTimeSetup({ onSetupComplete, onAlreadyHaveAccount }
       {/* Top bar */}
       <div className="bg-[var(--color-sidebar-bg)] text-white px-4 py-2 flex justify-between items-center text-xs select-none border-b border-[var(--color-sidebar-border)]">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-[#2563eb]" />
-          <span className="font-semibold tracking-wider">RESTAURANT POS TERMINAL v1.4.2</span>
+          <img src={brandLogo} alt="ChitKuber" className="w-4 h-4 rounded object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+          <span className="font-semibold tracking-wider">CHITKUBER POS v1.4.2</span>
         </div>
         <div className="flex items-center gap-4 text-gray-400">
           <span>{currentTime.toLocaleDateString()}</span>
@@ -515,7 +516,7 @@ export default function FirstTimeSetup({ onSetupComplete, onAlreadyHaveAccount }
 
       {/* Footer */}
       <div className="bg-[var(--color-bg-white)] text-gray-500 text-center py-3 text-xs border-t border-[var(--color-border-default)]">
-        Powered by Restaurant POS Terminal. One-time setup for first-time restaurant owners.
+        Powered by ChitKuber POS. One-time setup for first-time restaurant owners.
       </div>
     </div>
   );

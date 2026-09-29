@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.posterminal.app",
-  "productName": "POS Terminal",
+  "appId": "com.chitkuber.pos",
+  "productName": "ChitKuber POS",
   "copyright": "Copyright © 2026",
 
   "directories": {
@@ -28,7 +28,8 @@
         "arch": ["x64"]
       }
     ],
+    "icon": "build/icon.ico",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "sign": false
-  },
+  }
 }

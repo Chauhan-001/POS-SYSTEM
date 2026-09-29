@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Electron Main Process — POS Terminal
+ * Electron Main Process — ChitKuber POS
  *
  * Architecture ported from admin-dashboard (gold standard).
  * Key differences from source:
@@ -21,6 +21,9 @@
 const path = require('path');
 const os = require('os');
 const { createRequire } = require('module');
+// ChitKuber turtle brand icon — window/taskbar icon at runtime (the packaged
+// exe icon comes from build/icon.ico via electron-builder).
+const APP_ICON = path.join(__dirname, 'build', 'icon.ico');
 const electronBin = path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'electron.exe');
 const electronRequire = createRequire(electronBin);
 const electron = electronRequire('electron');
@@ -29,7 +32,7 @@ const { app, BrowserWindow, screen, ipcMain, shell, dialog, session } = electron
 // ─── Environment ────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
 const DEV_SERVER_URL = process.env.VITE_DEV_URL || 'http://localhost:5175';
-const APP_TITLE = 'POS Terminal — Restaurant Management System';
+const APP_TITLE = 'ChitKuber POS';
 
 // ─── Prevent multiple instances ──────────────────────────────────
 const gotTheLock = app.requestSingleInstanceLock();
@@ -82,6 +85,7 @@ function createWindow(): Electron.BrowserWindow {
     show: false,
     backgroundColor: '#faf8ff',
     title: APP_TITLE,
+    icon: APP_ICON,
     fullscreenable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -158,7 +162,7 @@ function createWindow(): Electron.BrowserWindow {
     // on top of an imminent reload.
     if (pendingSelfHealReload) return;
     dialog.showErrorBox(
-      'POS Terminal Error',
+      'ChitKuber POS Error',
       'The application encountered an unexpected error.\n\n' +
       `Reason: ${details.reason}\n\n` +
       'Please restart the application.'
@@ -232,7 +236,7 @@ function createWindow(): Electron.BrowserWindow {
       console.error(`[Electron] Failed to load: ${errorDescription} (code: ${errorCode})`);
       mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
         <!DOCTYPE html>
-        <html><head><meta charset="utf-8"><title>POS Terminal</title>
+        <html><head><meta charset="utf-8"><title>ChitKuber POS</title>
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                  display: flex; align-items: center; justify-content: center;
@@ -250,7 +254,7 @@ function createWindow(): Electron.BrowserWindow {
         <body>
           <div class="error">
             <h1>Failed to Load Application</h1>
-            <p>The POS Terminal could not connect to the application server.</p>
+            <p>ChitKuber POS could not connect to the application server.</p>
             <code>${errorDescription} (code: ${errorCode})</code>
             <p style="margin-top: 1rem;">Please ensure the backend and frontend servers are running.</p>
             <button class="retry" onclick="window.location.href='${DEV_SERVER_URL}'">Retry</button>

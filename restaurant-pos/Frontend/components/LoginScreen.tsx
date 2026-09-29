@@ -3,6 +3,7 @@ import { ShieldCheck, Eye, EyeOff, Lock, User, RefreshCw, AlertTriangle, Crown, 
 import { useAuth } from '../src/hooks/useAuth';
 import { normalizeRole, type Employee } from '../src/types';
 import { getSavedAccounts, removeAccount, type SavedAccount } from '../src/savedAccounts';
+import brandLogo from '../src/assets/brand-logo.png';
 
 export type LoginMethod = 'password' | 'role_pin' | 'pin' | 'tap_only';
 
@@ -27,7 +28,7 @@ const POSITIONS: Array<{ role: Employee['role']; label: string; icon: any; color
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'back'];
 
 const METHOD_META: Record<LoginMethod, { title: string; subtitle: string }> = {
-  password: { title: 'POS Terminal Sign In', subtitle: 'Enter your admin-generated User ID and Password.' },
+  password: { title: 'ChitKuber POS Sign In', subtitle: 'Enter your admin-generated User ID and Password.' },
   role_pin: { title: 'Sign In — Role & PIN', subtitle: 'Pick your position then enter your 4-digit PIN.' },
   pin: { title: 'Sign In — PIN', subtitle: 'Enter your 4-digit PIN. Your role is detected automatically.' },
   tap_only: { title: 'Tap to Open', subtitle: 'Tap your name to open the terminal. No PIN required.' },
@@ -206,8 +207,8 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
     <div id="login_screen_container" className="fixed inset-0 bg-[var(--color-bg-page)] text-[var(--color-text-primary)] flex flex-col font-sans">
       <div className="bg-[var(--color-sidebar-bg)] text-white px-4 py-2 flex justify-between items-center text-xs select-none border-b border-[var(--color-sidebar-border)]">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-[#2563eb]" />
-          <span className="font-semibold tracking-wider">POS TERMINAL v1.0.0</span>
+          <img src={brandLogo} alt="ChitKuber" className="w-4 h-4 rounded object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+          <span className="font-semibold tracking-wider">CHITKUBER POS v1.0.0</span>
         </div>
         <div className="flex items-center gap-4 text-gray-400">
           <span className="text-[#2563eb]">● {method === 'tap_only' ? 'QUICK OPEN' : method === 'password' ? 'PASSWORD MODE' : 'PIN MODE'}</span>
@@ -218,8 +219,8 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
         <div className="w-full max-w-md my-auto mx-auto bg-[var(--color-bg-white)] rounded-xl shadow-lg overflow-hidden border border-[var(--color-border-default)]">
           <div className="p-8">
             <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-[var(--brand-color)] text-white rounded-xl flex items-center justify-center font-bold text-xl mx-auto mb-4 shadow-md">
-                {method === 'tap_only' ? <Fingerprint className="w-8 h-8" /> : <ShieldCheck className="w-8 h-8" />}
+              <div className="w-16 h-16 rounded-xl overflow-hidden mx-auto mb-4 shadow-md bg-[var(--brand-color)]">
+                <img src={brandLogo} alt="ChitKuber POS" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-[var(--color-text-primary)]">{METHOD_META[method].title}</h1>
               <p className="text-xs text-gray-500 mt-1">{METHOD_META[method].subtitle}</p>
@@ -569,7 +570,7 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
       </div>
 
       <div className="bg-[var(--color-bg-white)] text-gray-500 text-center py-4 text-xs border-t border-[var(--color-border-default)]">
-        POS Terminal — Secure Access. Press <strong className="text-gray-700">F11</strong> for Fullscreen.
+        ChitKuber POS — Secure Access. Press <strong className="text-gray-700">F11</strong> for Fullscreen.
       </div>
     </div>
   );

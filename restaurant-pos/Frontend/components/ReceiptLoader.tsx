@@ -15,7 +15,7 @@
 const LINE_WIDTHS = ['72%', '88%', '60%', '78%', '90%', '64%', '48%'];
 
 export default function ReceiptLoader({
-  label = 'Initializing POS Terminal…',
+  label = 'Initializing ChitKuber POS…',
   size = 'md',
 }: {
   label?: string;

@@ -1,8 +1,8 @@
 {
   "name": "pos-terminal",
   "version": "1.0.0",
-  "description": "Restaurant POS Terminal — Order management, billing, inventory & kitchen display",
-  "author": "POS Terminal Team",
+  "description": "ChitKuber POS — Order management, billing, inventory & kitchen display",
+  "author": "ChitKuber POS Team",
   "private": true,
   "scripts": {
     "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm --prefix ../backend run dev\" \"npm --prefix Frontend run dev\"",
