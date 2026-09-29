@@ -32,6 +32,8 @@ export interface ILoyaltySettings extends Document {
   expiryReminderDays: number[];  // notify N days before expiry
   // ── Bonuses ────────────────────────────────────────────────
   welcomePoints: number;
+  /** Master switch for new-customer welcome points (amount 0 also disables). */
+  welcomePointsEnabled: boolean;
   birthdayBonusPoints: number;
   anniversaryBonusPoints: number;
   // ── Referral ───────────────────────────────────────────────
@@ -63,6 +65,8 @@ const LoyaltySettingsSchema = new Schema<ILoyaltySettings>(
     fixedExpiryDate: { type: String, trim: true },
     expiryReminderDays: [{ type: Number, min: 1 }],
     welcomePoints: { type: Number, default: 50, min: 0 },
+    /** Master switch for new-customer welcome points (0 also disables). */
+    welcomePointsEnabled: { type: Boolean, default: true },
     birthdayBonusPoints: { type: Number, default: 100, min: 0 },
     anniversaryBonusPoints: { type: Number, default: 100, min: 0 },
     referralEnabled: { type: Boolean, default: true },

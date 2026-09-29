@@ -33,6 +33,7 @@ import QROrderingSession from '../../qr-ordering/models/QROrderingSession';
 // re-exports model types like IPrinter as values, which blows up the ESM
 // boot under tsx with "does not provide an export named 'IPrinter'").
 import { settingsService } from '../../settings/services/settingsService';
+import { isOnlineOrderingOpen, OnlineOrderingHoursConfig } from './onlineOrderingHours';
 import { resolveRestaurantByToken } from './publicStoreService';
 import { availabilityService } from '../../../services/availabilityService';
 import { resolveMenuProductScope } from '../../../services/productService';
@@ -206,6 +207,9 @@ export class PublicStoreOrderService {
     const restaurant = await resolveRestaurantByToken(publicToken);
     const rid = restaurant._id;
     const branchOid = await this.resolveBranch(rid, options.branchId);
+    // Pause/resume status for the customer site banner (compute AFTER the
+    // branch toggle above — the site renders a closed overlay when false).
+    const orderingOpen = isOnlineOrderingOpen(await this.onlineOrderingHours(rid));
 
     // Own products only; shared/global catalog only as fresh-account fallback
     // when the restaurant owns zero products (never another tenant's rows).
@@ -267,6 +271,9 @@ export class PublicStoreOrderService {
         currency: restaurant.currency || 'INR',
         currencySymbol: '₹',
       },
+      /** Online-ordering schedule status — false means new orders are rejected
+       *  server-side (STORE_CLOSED); the site shows a closed banner. */
+      orderingOpen,
       categories: Array.from(byCategory.entries()).map(([name, items]) => ({ name, items })),
       // Only count items actually listed (hidden products are excluded).
       totalItems: Array.from(byCategory.values()).reduce((n, items) => n + items.length, 0),
@@ -517,10 +524,40 @@ export class PublicStoreOrderService {
    * Validate a cart WITHOUT creating anything. Used by the customer site
    * before submission so a stale cart surfaces immediately.
    */
+  /**
+   * Online-ordering pause/resume schedule (edited from the POS Menu
+   * Availability screen). Loaded per request — it changes rarely and the read
+   * is a single indexed settings doc; correctness beats a stale cache here.
+   * Missing/invalid settings → storefront open (fail-open, same as before).
+   */
+  private async onlineOrderingHours(rid: mongoose.Types.ObjectId): Promise<OnlineOrderingHoursConfig | null> {
+    try {
+      const effective = await settingsService.getEffective(String(rid));
+      return (effective.settings?.onlineOrderingHours as OnlineOrderingHoursConfig) || null;
+    } catch {
+      return null; // fail-open — a settings read failure never blocks orders
+    }
+  }
+
+  /**
+   * Guard: throw STORE_CLOSED (403) when the restaurant's online-ordering
+   * schedule says the storefront is paused. Called by precheck and createOrder
+   * so a paused store rejects new website orders deterministically.
+   */
+  private async assertOrderingOpen(rid: mongoose.Types.ObjectId): Promise<void> {
+    const cfg = await this.onlineOrderingHours(rid);
+    if (isOnlineOrderingOpen(cfg)) return;
+    const err: any = new AppError(403, 'Online ordering is currently closed — the restaurant is not accepting online orders right now.');
+    err.code = 'STORE_CLOSED';
+    err.unavailableItems = undefined;
+    throw err;
+  }
+
   async precheck(publicToken: string, items: PublicCartItem[], options: { branchId?: string } = {}) {
     const restaurant = await resolveRestaurantByToken(publicToken);
     const rid = restaurant._id;
     const branchOid = await this.resolveBranch(rid, options.branchId);
+    await this.assertOrderingOpen(rid);
     const validated = await this.validateCart(rid, branchOid, items);
 
     return {
@@ -801,6 +838,11 @@ export class PublicStoreOrderService {
     const restaurant = await resolveRestaurantByToken(publicToken);
     const rid = restaurant._id;
     const branchOid = await this.resolveBranch(rid, body.branchId);
+    // Online-ordering schedule guard — a paused storefront (Menu Availability
+    // hours) rejects the order BEFORE any cart work. The idempotent-replay
+    // path below still works: a customer retrying an already-placed order
+    // during closing time gets their original order back, not a 403.
+    await this.assertOrderingOpen(rid);
     const tip = Math.max(0, Number(body.tip) || 0);
     const mode = body.mode || null;
 

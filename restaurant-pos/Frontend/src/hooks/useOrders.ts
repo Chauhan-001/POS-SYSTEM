@@ -398,9 +398,17 @@ export function useOrders(config: OrdersConfig) {
     setCartItems(rebuiltCartItems);
     setActiveOrder(normalizedOrder);
     setPendingTableId(null);
+    // REPORTING INTEGRITY: the bill created at checkout stamps orderType from
+    // the billing selector. Opening an online (Website / Swiggy / Zomato /
+    // Uber Eats / Phone) order without aligning the selector left it at its
+    // previous value (default 'Dine In') — the website order's VALUE then
+    // landed under the wrong type in /reports/sales/order-types, the
+    // dashboard type mix and the platform split. Sync the selector to the
+    // order's own type so every source is counted where it belongs.
+    if (order.type) setOrderType(order.type);
     setActiveWorkspace('Billing');
     showToast(`Opened Order #${order.orderNumber}`, 'info');
-  }, [setActiveOrder, setCartItems, setPendingTableId, setActiveWorkspace, showToast]);
+  }, [setActiveOrder, setCartItems, setPendingTableId, setActiveWorkspace, setOrderType, showToast]);
 
   /**
    * Close the active order WITHOUT payment — the undo for an accidental table

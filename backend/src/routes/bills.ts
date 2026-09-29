@@ -17,6 +17,7 @@ import {
 } from '../controllers/billsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireSubscription } from '../middleware/subscriptionMiddleware';
+import { invalidateCacheTags } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import { createBillSchema, billQuerySchema, billParamsSchema, voidBillSchema } from '../validation';
 
@@ -33,12 +34,18 @@ router.get('/next-invoice', requireAuth, requireSubscription, getNextInvoice);
 router.get('/invoice-range', requireAuth, requireSubscription, reserveInvoiceRange);
 
 router.get('/:id', requireAuth, requireSubscription, validate({ params: billParamsSchema }), getBill);
-router.post('/', requireAuth, requireSubscription, validate({ body: createBillSchema }), createBill);
+// Create a bill — invalidate the server-side reports cache so the Reports
+// module reflects the sale immediately (reports are cached 30–60s under the
+// 'reports' tag; without this the just-completed sale was invisible to every
+// report until the TTL expired).
+router.post('/', requireAuth, requireSubscription, validate({ body: createBillSchema }), createBill, invalidateCacheTags(['reports']));
 
 // Batch-fetch line items for multiple bills (dashboard data integrity fallback)
 router.post('/items-batch', requireAuth, requireSubscription, getBillItems);
 
 // Only Owner and Manager can void bills
-router.delete('/:id', requireRole('Owner', 'Manager'), requireSubscription, validate({ body: voidBillSchema, params: billParamsSchema }), deleteBill);
+// Void a bill — same reports invalidation as a create (voids change revenue,
+// order counts, payment breakdowns, top products …).
+router.delete('/:id', requireRole('Owner', 'Manager'), requireSubscription, validate({ body: voidBillSchema, params: billParamsSchema }), deleteBill, invalidateCacheTags(['reports']));
 
 export default router;

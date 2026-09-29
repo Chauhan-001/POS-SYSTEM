@@ -2,9 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { UtensilsCrossed, Wifi, WifiOff, Building2, ChevronDown, Crown, Store, RefreshCw } from 'lucide-react';
 import type { Branch } from '../src/types';
 import { useCurrentTime } from '../src/hooks/useCurrentTime';
+// Built-in brand mark — shown at the top left whenever the restaurant has not
+// uploaded its own logo in Settings → Brand Logo.
+import brandLogo from '../src/assets/brand-logo.png';
 
 interface AppTitleBarProps {
   restaurantName: string;
+  /** Restaurant logo (data URL from Settings → Brand Logo). When present it
+   *  replaces the default fork-and-knife icon at the top left. */
+  logoUrl?: string;
   isOnline: boolean;
   /** Number of queued offline writes (bills/orders) awaiting sync. */
   pendingSyncCount?: number;
@@ -15,7 +21,7 @@ interface AppTitleBarProps {
 }
 
 export default function AppTitleBar({
-  restaurantName, isOnline, pendingSyncCount = 0,
+  restaurantName, logoUrl, isOnline, pendingSyncCount = 0,
   branches, currentBranchId, onSetCurrentBranch,
   showBranchSelector
 }: AppTitleBarProps) {
@@ -42,11 +48,19 @@ export default function AppTitleBar({
       {/* Left: brand + branch selector */}
       <div className="flex items-center gap-2.5 min-w-0">
         <div className="flex items-center gap-2 pr-2.5 border-r border-[var(--color-sidebar-border)]">
-          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#2563eb] to-[var(--brand-color)] flex items-center justify-center shadow-sm shrink-0">
-            <UtensilsCrossed className="w-3.5 h-3.5 text-white" />
+          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#2563eb] to-[var(--brand-color)] flex items-center justify-center shadow-sm shrink-0 overflow-hidden">
+            <img
+              src={logoUrl || brandLogo}
+              alt="Logo"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
           </div>
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="font-bold tracking-wide text-white truncate max-w-[180px]">{restaurantName || "RESTAURANT POS"}</span>
+            {/* Fixed product brand — always "ChitKuber POS" at the top left,
+                regardless of the signed-in restaurant's name. */}
+            <span className="font-bold tracking-wide text-white truncate max-w-[180px]">ChitKuber POS</span>
             <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-sidebar-border)] text-gray-400 uppercase tracking-wider shrink-0">
               v1.4.2
             </span>

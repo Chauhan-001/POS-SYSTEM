@@ -10,10 +10,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, ArrowLeft, WifiOff, Check, Loader2, ToggleLeft } from 'lucide-react';
+import { Search, ArrowLeft, WifiOff, Check, Loader2, ToggleLeft, Clock, CalendarClock, AlertCircle, Info } from 'lucide-react';
 import * as api from '../src/api/client';
 import { syncEngine } from '../src/lib/syncEngine';
 import type { Product, Branch, MenuAvailabilityState } from '../src/types';
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface MenuAvailabilityPageProps {
   products: Product[];
@@ -61,6 +63,60 @@ export default function MenuAvailabilityPage({
   const [draftPreset, setDraftPreset] = useState<PresetKey>('indefinite');
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState<string | null>(null);
+
+  // ── Online-ordering hours (moved here from Settings) ─────────────
+  // One schedule controls the whole customer website: when enabled and the
+  // current time is OUTSIDE the window (or the day is unchecked), the backend
+  // rejects new online orders (STORE_CLOSED) and the site shows a closed
+  // banner. Disabled ⇒ storefront accepts orders 24/7 (the default, so
+  // enabling this screen never silently pauses a live restaurant).
+  const [hours, setHours] = useState<api.OnlineOrderingHours>(api.DEFAULT_ONLINE_ORDERING_HOURS);
+  const [hoursLoaded, setHoursLoaded] = useState(false);
+  const [hoursSaving, setHoursSaving] = useState(false);
+  const [hoursSavedAt, setHoursSavedAt] = useState<number | null>(null);
+  const [hoursError, setHoursError] = useState('');
+
+  // Minute tick so the open/closed badge stays live while the page is open.
+  const [tickHours, setTickHours] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTickHours((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const isOpenNow = useMemo(() => {
+    if (!hours.enabled) return true;
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+    const now = new Date();
+    const cur = now.getHours() * 60 + now.getMinutes();
+    const open = toMin(hours.openTime);
+    const close = toMin(hours.closeTime);
+    const inWindow = open === close ? true : close > open ? cur >= open && cur < close : cur >= open || cur < close;
+    if (hours.days.includes(now.getDay()) && inWindow) return true;
+    // Overnight spillover from yesterday's window (e.g. Fri 11:00→02:00 covers Sat 00:30).
+    if (close <= open && cur < close && hours.days.includes((now.getDay() + 6) % 7)) return true;
+    return false;
+  }, [hours, tickHours]);
+
+  useEffect(() => {
+    api.fetchOnlineOrderingHours().then((h) => {
+      if (h) setHours(h);
+      setHoursLoaded(true);
+    }).catch(() => setHoursLoaded(true));
+  }, []);
+
+  const saveHours = useCallback(async (next: api.OnlineOrderingHours) => {
+    setHoursSaving(true);
+    setHoursError('');
+    const result = await api.updateOnlineOrderingHours(next);
+    setHoursSaving(false);
+    if (result?.ok) {
+      setHours(next);
+      setHoursSavedAt(Date.now());
+      setTimeout(() => setHoursSavedAt(null), 2000);
+    } else {
+      setHoursError(result?.status === 409 ? 'Conflict — another device changed settings. Retry.' : 'Could not save — check your connection.');
+    }
+  }, []);
   // Request sequence guard — supersede stale loads instead of bailing on a
   // mount-ref. React StrictMode (dev) double-invokes effects (setup → cleanup
   // → setup); a mountRef set false by that cleanup would discard EVERY load
@@ -249,6 +305,101 @@ export default function MenuAvailabilityPage({
           <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold">
             <WifiOff className="w-3 h-3" /> {pendingSync} pending sync
           </span>
+        )}
+      </div>
+
+      {/* ===== ONLINE-ORDERING HOURS (auto pause / resume) ===== */}
+      <div className="px-4 py-3 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className={`p-2 rounded-lg ${hours.enabled ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400'}`}>
+              <CalendarClock className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-[var(--color-text-primary)]">Online Ordering Hours</p>
+              <p className="text-[10px] text-gray-400">Website orders are automatically paused outside this schedule</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {hours.enabled ? (
+              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                isOpenNow ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-200'
+              }`}>
+                <Clock className="w-3 h-3" />
+                {isOpenNow ? 'Accepting orders now' : 'Paused — outside hours'}
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold">
+                <Clock className="w-3 h-3" /> Always open (no schedule)
+              </span>
+            )}
+            <button
+              onClick={() => saveHours({ ...hours, enabled: !hours.enabled })}
+              disabled={hoursSaving || !hoursLoaded}
+              className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer disabled:opacity-50 ${hours.enabled ? 'bg-[var(--brand-color)]' : 'bg-gray-300'}`}
+              title={hours.enabled ? 'Disable the schedule — always accept orders' : 'Enable the schedule — auto pause/resume'}
+            >
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${hours.enabled ? 'left-[22px]' : 'left-0.5'}`} />
+            </button>
+            {hoursSavedAt && <span className="text-[9px] text-green-600 font-bold">✓ Saved</span>}
+            {hoursError && (
+              <span className="flex items-center gap-1 text-[9px] text-red-600 font-bold"><AlertCircle className="w-3 h-3" /> {hoursError}</span>
+            )}
+          </div>
+
+          {hours.enabled && (
+            <div className="flex flex-wrap items-center gap-2 ml-auto">
+              {/* Day chips */}
+              <div className="flex gap-1">
+                {DAY_LABELS.map((label, d) => {
+                  const active = hours.days.includes(d);
+                  return (
+                    <button
+                      key={d}
+                      onClick={() => {
+                        const days = active ? hours.days.filter((x) => x !== d) : [...hours.days, d].sort();
+                        if (days.length > 0) saveHours({ ...hours, days });
+                      }}
+                      disabled={hoursSaving}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50 ${
+                        active ? 'bg-[var(--brand-color)] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Time inputs */}
+              <input
+                type="time" value={hours.openTime}
+                onChange={(e) => setHours((h) => ({ ...h, openTime: e.target.value }))}
+                onBlur={() => saveHours(hours)}
+                disabled={hoursSaving}
+                className="px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100"
+                title="Opens for online orders at (24h)"
+              />
+              <span className="text-[10px] font-bold text-gray-400">to</span>
+              <input
+                type="time" value={hours.closeTime}
+                onChange={(e) => setHours((h) => ({ ...h, closeTime: e.target.value }))}
+                onBlur={() => saveHours(hours)}
+                disabled={hoursSaving}
+                className="px-2 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100"
+                title="Closes for online orders at (24h) — earlier than opening = overnight window"
+              />
+              {(hours.closeTime <= hours.openTime) && (
+                <span className="text-[9px] font-bold text-amber-600">overnight window</span>
+              )}
+            </div>
+          )}
+        </div>
+        {hours.enabled && (
+          <div className="mt-2 bg-blue-50 border border-blue-100 rounded-xl p-2.5 flex items-start gap-2 text-[11px] text-[var(--brand-color)]">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span className="font-semibold">While paused, the customer website shows a closed banner and rejects new orders (in-progress carts are told at checkout). Seated/table service inside the POS is never affected.</span>
+          </div>
         )}
       </div>
 

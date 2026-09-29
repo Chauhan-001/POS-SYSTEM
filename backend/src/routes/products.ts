@@ -18,6 +18,7 @@ import {
 } from '../controllers/productsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
+import { invalidateCacheTags } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import { createProductSchema, updateProductSchema, productQuerySchema, productParamsSchema, adjustStockSchema } from '../validation';
 
@@ -37,12 +38,13 @@ router.post('/resolve', requireAuth, resolveProductQuery);
 router.get('/:id', requireAuth, validate({ params: productParamsSchema }), getProduct);
 
 // Only Owner and Manager can modify the menu
-router.post('/', requireRole('Owner', 'Manager'), validate({ body: createProductSchema }), createProduct);
-router.put('/:id', requireRole('Owner', 'Manager'), validate({ body: updateProductSchema, params: productParamsSchema }), updateProduct);
-router.delete('/:id', requireRole('Owner', 'Manager'), validate({ params: productParamsSchema }), deleteProduct);
+router.post('/', requireRole('Owner', 'Manager'), validate({ body: createProductSchema }), createProduct, invalidateCacheTags(['reports']));
+router.put('/:id', requireRole('Owner', 'Manager'), validate({ body: updateProductSchema, params: productParamsSchema }), updateProduct, invalidateCacheTags(['reports']));
+router.delete('/:id', requireRole('Owner', 'Manager'), validate({ params: productParamsSchema }), deleteProduct, invalidateCacheTags(['reports']));
 
 // Stock adjustment (manual / waste) — Owner, Manager and Inventory roles;
 // only when the plan includes inventory.
-router.post('/:id/stock', requireRole('Owner', 'Manager', 'Inventory'), requireFeature('inventory'), validate({ body: adjustStockSchema, params: productParamsSchema }), adjustProductStock);
+// Stock movements (purchase/waste/adjustment) change inventory report values.
+router.post('/:id/stock', requireRole('Owner', 'Manager', 'Inventory'), requireFeature('inventory'), validate({ body: adjustStockSchema, params: productParamsSchema }), adjustProductStock, invalidateCacheTags(['reports']));
 
 export default router;

@@ -44,6 +44,29 @@ describe('LoyaltyService (Phase 1.6)', () => {
     expect(cust!.lifetimePoints).toBe(50);
   });
 
+  it('disables welcome points when welcomePointsEnabled is false', async () => {
+    await loyaltyService.updateSettings(REST, { welcomePointsEnabled: false });
+    const id = await makeCustomer();
+    const cust = await Customer.findById(id).lean().exec();
+    expect(cust!.points).toBe(0);
+    expect(cust!.lifetimePoints).toBe(0);
+    // Restore for other tests.
+    await loyaltyService.updateSettings(REST, { welcomePointsEnabled: true });
+  });
+
+  it('disables welcome points when welcomePoints is 0', async () => {
+    await loyaltyService.updateSettings(REST, { welcomePoints: 0 });
+    const id = await makeCustomer();
+    const cust = await Customer.findById(id).lean().exec();
+    expect(cust!.points).toBe(0);
+    // Custom amount is honored once re-enabled.
+    await loyaltyService.updateSettings(REST, { welcomePoints: 25 });
+    const id2 = await makeCustomer('9876543211');
+    const cust2 = await Customer.findById(id2).lean().exec();
+    expect(cust2!.points).toBe(25);
+    await loyaltyService.updateSettings(REST, { welcomePoints: 50 });
+  });
+
   it('earns points with the configured rate', async () => {
     const id = await makeCustomer();
     const { newBalance } = await loyaltyService.earnPoints(REST, id, {

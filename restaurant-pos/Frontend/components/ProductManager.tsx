@@ -445,9 +445,10 @@ export default function ProductManager({
   };
 
   const filtered = products.filter(p => {
-    // Menu items only — inventory items (availability=false) belong in
-    // the Inventory module, never in the Product & Catalog manager.
-    if (!p.availability) return false;
+    // Inventory items (type='inventory') belong in the Inventory module, never
+    // in the Product & Catalog manager. Sold-out MENU items stay visible so
+    // the Active/Ready toggle never makes a card disappear — it just grays it.
+    if (p.type === 'inventory') return false;
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.code.includes(search);
     const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
     return matchesSearch && matchesCategory;
@@ -730,7 +731,10 @@ export default function ProductManager({
   };
 
   return (
-    <div id="product_manager_workspace" className="p-6 h-full flex flex-col font-sans">
+    // The whole workspace scrolls as one page — the search/header and
+    // category tabs scroll away with the grid instead of staying pinned
+    // (a fixed header consumed too much screen while scrolling).
+    <div id="product_manager_workspace" className="p-6 h-full flex flex-col overflow-y-auto font-sans">
       
       {/* Search and Category Nav Row */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[var(--color-bg-white)] p-4 rounded-xl border border-[var(--color-border-default)] shadow-sm shrink-0">
@@ -852,11 +856,9 @@ export default function ProductManager({
         </form>
       </div>
 
-      {/* Grid Layout of products */}
-      {/* min-h-0 (not min-h-[400px]) so the grid compresses on short screens and
-          its own overflow-y-auto provides the scrollbar instead of overflowing
-          the page wrapper (which is overflow-hidden). */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      {/* Grid Layout of products — flows with the page scroll (no inner
+          scrollbar); the workspace wrapper owns the scrolling. */}
+      <div className="flex-1">
         {filtered.length === 0 ? (
           <div className="bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-12 text-center text-gray-500 flex flex-col items-center justify-center">
             <XCircle className="w-12 h-12 text-gray-300 mb-3" />
@@ -869,7 +871,9 @@ export default function ProductManager({
               <div 
                 key={product.id}
                 className={`bg-[var(--color-bg-white)] rounded-xl border p-4 shadow-sm relative flex flex-col justify-between transition-all ${
-                  product.availability ? 'border-[var(--color-border-default)] hover:shadow-md' : 'border-gray-200 bg-gray-50/50 opacity-75'
+                  product.availability 
+                    ? 'border-[var(--color-border-default)] hover:shadow-md' 
+                    : 'border-gray-200 bg-gray-50/50 grayscale opacity-70'
                 }`}
               >
                 {/* Image and Meta row */}
@@ -914,8 +918,8 @@ export default function ProductManager({
                     </div>
 
                     {!product.availability && (
-                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-xs uppercase tracking-wider">
-                        UNAVAILABLE
+                      <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                        Sold Out
                       </div>
                     )}
                   </div>
@@ -995,11 +999,12 @@ export default function ProductManager({
                   })()}
                 </div>
 
-                {/* Operations footer */}
-                <div className="flex items-center gap-2 border-t border-gray-100 pt-3 mt-3">
+                {/* Operations footer — flex-wrap so icon buttons never spill
+                    outside the card on narrow columns. */}
+                <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3 mt-3">
                   <button
                     onClick={() => handleToggleAvailability(product.id)}
-                    className={`flex-1 py-1.5 px-2 rounded-lg font-bold text-[10px] transition-all cursor-pointer text-center ${
+                    className={`flex-1 min-w-[96px] py-1.5 px-2 rounded-lg font-bold text-[10px] transition-all cursor-pointer text-center ${
                       product.availability 
                         ? 'bg-green-50 hover:bg-green-100 text-green-700 border border-green-200' 
                         : 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200'
@@ -1018,7 +1023,7 @@ export default function ProductManager({
                       : availabilityMap[product.id]?.visibleOnSite === false
                         ? 'Hidden from website — click to show on the customer site'
                         : 'Shown on website — click to hide from the customer site'}
-                    className={`relative flex-1 py-1.5 px-2 rounded-lg font-bold text-[10px] transition-all cursor-pointer text-center disabled:opacity-40 disabled:cursor-not-allowed ${
+                    className={`relative flex-1 min-w-[96px] py-1.5 px-2 rounded-lg font-bold text-[10px] transition-all cursor-pointer text-center disabled:opacity-40 disabled:cursor-not-allowed ${
                       availabilityMap[product.id]?.visibleOnSite === false
                         ? 'bg-gray-100 hover:bg-gray-200 text-gray-500 border border-gray-200'
                         : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200'

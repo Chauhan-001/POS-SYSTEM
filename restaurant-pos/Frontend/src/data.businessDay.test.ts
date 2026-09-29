@@ -32,82 +32,62 @@ function bill(date: string, time: string, grandTotal: number, paymentMethod: 'Ca
   } as Bill;
 }
 
-describe('businessDateKey — opening-window day boundary', () => {
-  it('rolls a pre-opening bill back to the previous business day', () => {
-    expect(businessDateKey('2026-08-16', '03:00', '08:00')).toBe('2026-08-15');
-    expect(businessDateKey('2026-08-16', '07:59', '08:00')).toBe('2026-08-15');
+describe('businessDateKey — POS reporting day (calendar day)', () => {
+  // The POS has NO opening time — hours exist only for online ordering. The
+  // reporting day is the plain local calendar day; time and any legacy
+  // openingTime argument must NEVER shift a bill to another day.
+  it('returns the own date of the bill regardless of time', () => {
+    expect(businessDateKey('2026-08-16', '03:00', '08:00')).toBe('2026-08-16');
+    expect(businessDateKey('2026-08-16', '07:59', '08:00')).toBe('2026-08-16');
+    expect(businessDateKey('2026-08-16', '23:59')).toBe('2026-08-16');
+    expect(businessDateKey('2026-08-16', undefined)).toBe('2026-08-16');
   });
 
-  it('keeps bills at/after opening on their calendar day', () => {
-    expect(businessDateKey('2026-08-16', '08:00', '08:00')).toBe('2026-08-16');
-    expect(businessDateKey('2026-08-16', '23:59', '08:00')).toBe('2026-08-16');
-  });
-
-  it('defaults to 08:00 opening when unset', () => {
-    expect(businessDateKey('2026-08-16', '03:00', undefined)).toBe('2026-08-15');
-    expect(businessDateKey('2026-08-16', '12:00', undefined)).toBe('2026-08-16');
-  });
-
-  it('handles month boundaries', () => {
-    expect(businessDateKey('2026-08-01', '01:00', '08:00')).toBe('2026-07-31');
-    expect(businessDateKey('2026-01-01', '01:00', '08:00')).toBe('2025-12-31');
-  });
-
-  it('handles a custom opening time (e.g. 11:00 kitchen start)', () => {
-    expect(businessDateKey('2026-08-16', '10:30', '11:00')).toBe('2026-08-15');
-    expect(businessDateKey('2026-08-16', '11:00', '11:00')).toBe('2026-08-16');
+  it('ignores the legacy openingTime argument', () => {
+    expect(businessDateKey('2026-08-16', '03:00', '11:00')).toBe('2026-08-16');
+    expect(businessDateKey('2026-01-01', '01:00', '08:00')).toBe('2026-01-01');
   });
 });
 
-describe('isInBusinessDay — late-night sales group into the same business day', () => {
-  it('yesterday-evening and today-early-morning bills share one business day', () => {
-    const day = '2026-08-15'; // business day start
-    expect(isInBusinessDay(bill('2026-08-15', '22:00', 300), day, '08:00')).toBe(true);
-    expect(isInBusinessDay(bill('2026-08-16', '03:00', 200), day, '08:00')).toBe(true);
-  });
-
-  it('excludes bills outside the window', () => {
+describe('isInBusinessDay — same-day grouping', () => {
+  it('groups bills by their calendar date only', () => {
     const day = '2026-08-15';
-    expect(isInBusinessDay(bill('2026-08-15', '06:00', 50), day, '08:00')).toBe(false);
+    expect(isInBusinessDay(bill('2026-08-15', '22:00', 300), day, '08:00')).toBe(true);
+    expect(isInBusinessDay(bill('2026-08-15', '03:00', 200), day, '08:00')).toBe(true);
+    expect(isInBusinessDay(bill('2026-08-16', '03:00', 200), day, '08:00')).toBe(false);
     expect(isInBusinessDay(bill('2026-08-16', '09:00', 100), day, '08:00')).toBe(false);
   });
 });
 
-describe('computeDailySales — business-day aware "today"', () => {
-  it('counts the in-progress business day (from opening, including last night)', () => {
+describe('computeDailySales — calendar-day "today"', () => {
+  it('counts every non-voided bill stamped today, whatever the hour', () => {
     vi.useFakeTimers();
-    // 10:00 local on Aug 16 → business day started Aug 16 08:00
-    vi.setSystemTime(new Date('2026-08-16T10:00:00'));
-    const todayStr = localDateKey();
-    expect(todayStr).toBe('2026-08-16');
-
-    const bills = [
-      bill('2026-08-16', '09:00', 100),  // today, after opening → included
-      bill('2026-08-16', '03:00', 200),  // today, before opening → belongs to YESTERDAY's business day
-      bill('2026-08-15', '22:00', 300),  // last night → belongs to YESTERDAY's business day
-    ];
-    const sales = computeDailySales(bills, '₹', '08:00');
-    expect(sales.totalRevenue).toBe(100);
-    expect(sales.totalOrders).toBe(1);
-
-    // ...but those two late-night bills count as YESTERDAY's business day
-    // (business day starting 08-15 = [Aug 15 08:00 → Aug 16 08:00)).
-    const yesterdayKey = '2026-08-15';
-    expect(bills.filter(b => isInBusinessDay(b, yesterdayKey, '08:00')).reduce((s, b) => s + b.grandTotal, 0)).toBe(500);
-  });
-
-  it('before opening time, "today" is still yesterday\'s business day', () => {
-    vi.useFakeTimers();
-    // 03:00 local on Aug 16 → in-progress business day started Aug 15 08:00
+    // 03:00 local on Aug 16 — the calendar day is still Aug 16.
     vi.setSystemTime(new Date('2026-08-16T03:00:00'));
 
     const bills = [
-      bill('2026-08-15', '20:00', 500), // yesterday evening → today's business day
-      bill('2026-08-16', '02:00', 250), // early morning → today's business day
-      bill('2026-08-16', '10:00', 999), // future, after opening → not yet
+      bill('2026-08-16', '02:00', 250), // today, early morning → included
+      bill('2026-08-16', '10:00', 999), // today, later → included
+      bill('2026-08-15', '22:00', 300), // yesterday → excluded
     ];
     const sales = computeDailySales(bills, '₹', '08:00');
-    expect(sales.totalRevenue).toBe(750);
+    expect(sales.totalRevenue).toBe(1249);
     expect(sales.totalOrders).toBe(2);
+  });
+
+  it('keeps evening sales of yesterday on yesterday', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-16T10:00:00'));
+    const bills = [
+      bill('2026-08-16', '09:00', 100),
+      bill('2026-08-16', '03:00', 200), // today's early morning stays TODAY
+      bill('2026-08-15', '22:00', 300), // yesterday evening stays YESTERDAY
+    ];
+    const sales = computeDailySales(bills, '₹', '08:00');
+    expect(sales.totalRevenue).toBe(300);
+    expect(sales.totalOrders).toBe(2);
+
+    const yesterdayKey = '2026-08-15';
+    expect(bills.filter(b => isInBusinessDay(b, yesterdayKey, '08:00')).reduce((s, b) => s + b.grandTotal, 0)).toBe(300);
   });
 });

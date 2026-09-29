@@ -98,6 +98,42 @@ function earliestBatchExpiry(batches: IStockBatch[]): string {
   return expiries.length > 0 ? expiries[0] : '';
 }
 
+/**
+ * FIFO cost basis of a stock-out: consume `outQty` from batches in FIFO order
+ * (same ordering as consumeFifoTillEmpty) and return Σ batch.cost × qty per
+ * batch. A batch without a recorded cost falls back to `fallbackCost` (the
+ * product's rolling averageCost), then to 0 — legacy batches before cost
+ * tracking still produce a sensible value instead of silently zeroing COGS.
+ */
+function consumeFifoCostBasis(batches: IStockBatch[], outQty: number, fallbackCost: number): number {
+  let remaining = Math.max(0, outQty);
+  const sorted = [...batches].sort((a, b) => {
+    const ea = a.expiryDate || '9999-12-31';
+    const eb = b.expiryDate || '9999-12-31';
+    if (ea !== eb) return ea < eb ? -1 : 1;
+    const ra = a.receivedDate || '0000-01-01';
+    const rb = b.receivedDate || '0000-01-01';
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    return 0;
+  });
+  let total = 0;
+  for (const b of sorted) {
+    if (remaining <= 0) break;
+    const qty = Number(b.quantity) || 0;
+    if (qty <= 0) continue;
+    const take = Math.min(qty, remaining);
+    const unitCost = Number(b.cost);
+    total += (Number.isFinite(unitCost) && unitCost > 0 ? unitCost : (fallbackCost > 0 ? fallbackCost : 0)) * take;
+    remaining -= take;
+  }
+  // Any shortfall beyond recorded stock (negative-clamped sales) is valued at
+  // the fallback cost too — the stock left but the ingredient was used.
+  if (remaining > 0 && fallbackCost > 0) {
+    total += fallbackCost * remaining;
+  }
+  return Math.round(total * 100) / 100;
+}
+
 export interface StockMovementInput {
   restaurantId: string;
   branchId?: string;
@@ -134,6 +170,10 @@ export interface StockMovementInput {
   expiryDate?: string;
   /** Optional batch number for tracking. Paired with expiryDate. */
   batchNumber?: string;
+  /** Override the event date (YYYY-MM-DD) recorded on the InventoryEvent.
+   *  Defaults to today. Used by bill-driven consumption so the event lands in
+  *  the bill's reporting period, not the processing date. */
+  eventDate?: string;
 }
 
 export class StockMovementService {
@@ -164,6 +204,10 @@ export class StockMovementService {
     before: number;
     after: number;
     effectiveDelta: number;
+    /** Total FIFO cost consumed (stock-outs; 0 for stock-ins). */
+    costBasis: number;
+    /** Per-unit FIFO cost consumed (stock-outs; 0 for stock-ins). */
+    unitCost: number;
   }> {
     if (!input.restaurantId) throw new AppError(400, 'restaurantId is required');
     if (!Number.isFinite(input.delta) || input.delta === 0) {
@@ -248,6 +292,10 @@ export class StockMovementService {
       const before = Number(product.currentStock) || 0;
       let effectiveDelta = input.delta;
       let after = before + effectiveDelta;
+      /** Total FIFO cost consumed by this movement (stock-outs only). */
+      let costBasis = 0;
+      /** Per-unit FIFO cost consumed (stock-outs only). */
+      let unitCostBasis = 0;
 
       // ── Negative-stock guard ──────────────────────────────────────
       if (after < 0) {
@@ -290,6 +338,16 @@ export class StockMovementService {
         }
       } else if (effectiveDelta < 0) {
         // Stock-out: consume FIFO — earliest expiry first ('' last).
+        // Compute the FIFO cost basis BEFORE consuming (needs the batch set
+        // that will be consumed) so the movement's real value is recorded.
+        costBasis = consumeFifoCostBasis(
+          batches,
+          -effectiveDelta,
+          Number(product.averageCost) || 0
+        );
+        unitCostBasis = -effectiveDelta > 0
+          ? Math.round((costBasis / -effectiveDelta) * 100) / 100
+          : 0;
         batches = consumeFifoTillEmpty(batches, -effectiveDelta);
       }
 
@@ -343,6 +401,22 @@ export class StockMovementService {
     // item with allowNegative — effectiveDelta is 0). A "sold 0 pcs" row in
     // the activity feed is garbage; only record real stock changes.
     if (effectiveDelta !== 0) {
+      // FIFO cost stamping:
+      //   - stock-out  → the real batch cost consumed (computed above)
+      //   - purchase   → the price actually paid per unit (stock-in pins it
+      //                  onto the batch; the event records it for reports)
+      const eventUnitCost = effectiveDelta < 0
+        ? unitCostBasis
+        : input.purchasePrice != null
+          ? Number(input.purchasePrice) || 0
+          : undefined;
+      // Use the EXACT cost basis for the total (not unitCost × qty) so
+      // rounding the per-unit figure never drifts the recorded value.
+      const eventTotalCost = effectiveDelta < 0
+        ? costBasis
+        : eventUnitCost != null
+          ? Math.round(eventUnitCost * Math.abs(effectiveDelta) * 100) / 100
+          : undefined;
       try {
         await inventoryEventRepo.create({
           restaurantId: new mongoose.Types.ObjectId(input.restaurantId),
@@ -353,7 +427,8 @@ export class StockMovementService {
           unit: input.unit || product.unit || 'pcs',
           operator: input.operator || 'System',
           details: input.details || `${input.type}: ${Math.abs(effectiveDelta)} ${product.unit || 'pcs'} ${product.name}`,
-          eventDate: new Date().toISOString().slice(0, 10),
+          eventDate: input.eventDate || new Date().toISOString().slice(0, 10),
+          ...(eventUnitCost != null ? { unitCost: eventUnitCost, totalCost: eventTotalCost } : {}),
         } as any);
       } catch (err: any) {
         console.warn('[StockMovement] inventory event failed (non-fatal):', err.message);
@@ -382,7 +457,7 @@ export class StockMovementService {
       console.warn('[StockMovement] audit log failed (non-fatal):', err.message);
     }
 
-    return { product: updated, before, after, effectiveDelta };
+    return { product: updated, before, after, effectiveDelta, costBasis, unitCost: unitCostBasis };
     });
   }
 }

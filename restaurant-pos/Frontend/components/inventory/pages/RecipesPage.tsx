@@ -71,10 +71,13 @@ export default function RecipesPage() {
   }, []);
 
   const loadMenuProducts = useCallback(async () => {
-    // fetchProducts() defaults to type=menu, so results are already menu-only.
-    const data = await fetchProducts();
+    // Explicitly request MENU items only: recipe costing is per sellable dish.
+    // The server also defaults to type=menu, but passing it explicitly guards
+    // against future default changes silently mixing inventory items in (their
+    // prices/costs would corrupt the recipe list values).
+    const data = await fetchProducts({ type: 'menu' });
     if (Array.isArray(data)) {
-      setMenuProducts(data.filter((p: any) => !p.isDeleted));
+      setMenuProducts(data.filter((p: any) => !p.isDeleted && p.type !== 'inventory'));
     }
   }, []);
 
@@ -200,6 +203,19 @@ export default function RecipesPage() {
         hasRecipe,
         recipeCount: productRecipes.length,
         ingredientCount: productRecipes[0]?.components?.length || 0,
+        // TRUE cost range across the product's recipes: variants can each
+        // have their own cost (Half vs Full), so a single "first recipe" cost
+        // would misstate the card. Same cost → one number; different costs →
+        // min–max range.
+        costSummary: (() => {
+          const costs = productRecipes
+            .map((r) => Number(r.costSummary?.estimatedVariableCost ?? r.costSummary?.recipeCost) || 0)
+            .filter((c) => c > 0);
+          if (costs.length === 0) return null;
+          const min = Math.min(...costs);
+          const max = Math.max(...costs);
+          return { min, max, isRange: min !== max };
+        })(),
         variantStatus,
         hasVariants: hasRealVariants,
         hasModifiers,
@@ -350,7 +366,7 @@ export default function RecipesPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {filteredCards.map(({ product, recipe, hasRecipe, ingredientCount, variantStatus, hasVariants, hasModifiers, hasAddOns, variantsGapCount }) => (
+          {filteredCards.map(({ product, recipe, hasRecipe, ingredientCount, costSummary, variantStatus, hasVariants, hasModifiers, hasAddOns, variantsGapCount }) => (
             <div
               key={product._id}
               className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] overflow-hidden hover:shadow-md transition-all flex flex-col"
@@ -439,14 +455,22 @@ export default function RecipesPage() {
                   </div>
                 )}
 
-                {/* Cost summary (if recipe exists) */}
-                {recipe?.costSummary && recipe.costSummary.recipeCost > 0 && (
-                  <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                {/* Cost summary — true min–max across the product's variant
+                    recipes (single value when all cost the same), shown against
+                    the product's selling price. Margin % only when the price is
+                    known (> 0), otherwise a margin number would be garbage. */}
+                {costSummary && (
+                  <div className="text-[10px] text-gray-500 flex items-center gap-1 flex-wrap">
                     <IndianRupee className="w-3 h-3" />
-                    Cost: {fmt(recipe.costSummary.estimatedVariableCost ?? recipe.costSummary.recipeCost)}
-                    {recipe.costSummary.contribution > 0 && (
-                      <span className="text-emerald-600 font-semibold ml-1">
-                        · {fmt(recipe.costSummary.contribution)} margin
+                    Cost: {costSummary.isRange ? `${fmt(costSummary.min)}–${fmt(costSummary.max)}` : fmt(costSummary.min)}
+                    {(Number(product.price) || 0) > 0 && (
+                      <span className="text-gray-400">
+                        · Price: {fmt(product.price)}
+                      </span>
+                    )}
+                    {(Number(product.price) || 0) > 0 && (
+                      <span className="text-emerald-600 font-semibold">
+                        · {Math.round((((Number(product.price) || 0) - costSummary.min) / (Number(product.price) || 1)) * 100)}% margin
                       </span>
                     )}
                   </div>

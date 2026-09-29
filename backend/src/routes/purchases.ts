@@ -17,6 +17,7 @@ import {
 } from '../controllers/purchasesController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
+import { invalidateCacheTags } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import {
   createPurchaseSchema,
@@ -32,8 +33,8 @@ router.get('/', requireAuth, requireFeature('inventory'), validate({ query: purc
 router.get('/suppliers', requireAuth, requireFeature('inventory'), supplierSummary);
 
 // Only Owner and Manager can record, correct or remove purchases
-router.post('/', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ body: createPurchaseSchema }), createPurchase);
+router.post('/', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ body: createPurchaseSchema }), createPurchase, invalidateCacheTags(['reports']));
 router.patch('/:id', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ params: purchaseParamsSchema, body: updatePurchaseSchema }), updatePurchase);
-router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ params: purchaseParamsSchema }), deletePurchase);
+router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ params: purchaseParamsSchema }), deletePurchase, invalidateCacheTags(['reports']));
 
 export default router;

@@ -16,6 +16,7 @@ export const updateLoyaltySettingsSchema = z.object({
   fixedExpiryDate: dateString.optional(),
   expiryReminderDays: z.array(z.number().int().min(1).max(365)).optional(),
   welcomePoints: z.number().min(0).optional(),
+  welcomePointsEnabled: z.boolean().optional(),
   birthdayBonusPoints: z.number().min(0).optional(),
   anniversaryBonusPoints: z.number().min(0).optional(),
   referralEnabled: z.boolean().optional(),

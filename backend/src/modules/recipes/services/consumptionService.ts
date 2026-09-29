@@ -373,6 +373,11 @@ export class ConsumptionService {
     }
 
     // ── Apply stock movements (best-effort, clamped, never fails) ─
+    // The movement is stamped with the BILL's date (not the processing date)
+    // so the InventoryEvent lands in the same reporting window as the bill —
+    // otherwise backfilled/late-finalized bills break theoretical-vs-actual
+    // consumption reconciliation.
+    const billEventDate = String(bill.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
     for (const entry of agg.values()) {
       try {
         await stockMovementService.applyMovement({
@@ -385,6 +390,7 @@ export class ConsumptionService {
           operator: ctx.operator || 'System',
           details: `Recipe consumption (bill ${bill.invoiceNumber || billId})`,
           allowNegative: true,
+          eventDate: billEventDate,
         });
       } catch (err: any) {
         console.warn('[ConsumptionService] ingredient deduction skipped:', entry.itemName, err.message);

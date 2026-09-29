@@ -22,6 +22,7 @@ import { expenseRepo, vendorRepo, auditLogRepo } from '../repositories';
 import Expense from '../models/Expense';
 import { cashLedgerService } from './index';
 import { AppError } from '../utils/AppError';
+import { SYSTEM_CATEGORIES } from './expenseCategoryService';
 
 const CSV_HEADERS = ['Date', 'Category', 'Description', 'Amount', 'Payment Method', 'Vendor', 'Notes', 'COGS', 'Created By'];
 
@@ -124,7 +125,15 @@ export class ExpenseService {
       date: data.date || new Date().toISOString().slice(0, 10),
       restaurantId: new mongoose.Types.ObjectId(restaurantId),
       branchId: branchId ? new mongoose.Types.ObjectId(branchId) : undefined,
-      isCogs: data.isCogs ?? false,
+      isCogs: data.isCogs ?? (
+        // Default the COGS flag from the category: the system ingredient
+        // category is always COGS unless explicitly overridden, so manual
+        // ingredient entries are consistently excluded from operating costs.
+        (() => {
+          const cat = SYSTEM_CATEGORIES.find((c) => c.name === data.category);
+          return cat?.isCogs === true;
+        })()
+      ),
       version: 1,
       isDeleted: false,
       createdBy: data.createdBy || ctx.operator,

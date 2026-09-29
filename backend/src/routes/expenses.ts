@@ -16,6 +16,7 @@ import {
 } from '../controllers/expensesController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
+import { invalidateCacheTags } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import {
   createExpenseSchema, updateExpenseSchema, expenseQuerySchema,
@@ -30,9 +31,10 @@ router.get('/export', requireAuth, requireFeature('expense_tracking'), exportExp
 router.get('/:id', requireAuth, requireFeature('expense_tracking'), validate({ params: expenseParamsSchema }), getExpense);
 
 // Only Owner and Manager can record, edit, delete or restore expenses
-router.post('/', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ body: createExpenseSchema }), createExpense);
-router.patch('/:id', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ body: updateExpenseSchema, params: expenseParamsSchema }), updateExpense);
-router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ body: deleteExpenseSchema, params: expenseParamsSchema }), deleteExpense);
-router.post('/:id/restore', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ params: expenseParamsSchema }), restoreExpense);
+// Expenses feed the finance/P&L reports — invalidate the reports cache tag.
+router.post('/', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ body: createExpenseSchema }), createExpense, invalidateCacheTags(['reports']));
+router.patch('/:id', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ body: updateExpenseSchema, params: expenseParamsSchema }), updateExpense, invalidateCacheTags(['reports']));
+router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ body: deleteExpenseSchema, params: expenseParamsSchema }), deleteExpense, invalidateCacheTags(['reports']));
+router.post('/:id/restore', requireRole('Owner', 'Manager'), requireFeature('expense_tracking'), validate({ params: expenseParamsSchema }), restoreExpense, invalidateCacheTags(['reports']));
 
 export default router;

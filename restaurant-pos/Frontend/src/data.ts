@@ -294,47 +294,55 @@ export function shiftDateKey(dateStr: string, days: number): string {
 }
 
 /**
- * The BUSINESS day a bill belongs to. The business day runs from opening time
- * (HH:mm, e.g. 08:00) until the next day's opening time — a bill stamped at
- * 03:00 belongs to the PREVIOUS calendar day's business day, not "today".
- * Returns the YYYY-MM-DD of the business day's start date.
+ * The day a bill belongs to for POS reporting. The POS has NO opening time —
+ * business hours now exist only for ONLINE ORDERING (onlineOrderingHours in
+ * Menu Availability), so the POS day is the plain LOCAL CALENDAR DAY and
+ * "today" is simply the local date. This keeps every POS module (Dashboard,
+ * Analytics, Reports, Finance) on ONE boundary; a pre-opening-time bill is
+ * never silently pushed to yesterday.
+ *
+ * The openingTime parameter is retained (ignored) for call-site
+ * compatibility — callers that still pass it need no change to compile.
+ * Returns the YYYY-MM-DD of the reporting day.
  */
-export function businessDateKey(dateStr: string, timeStr: string | undefined, openingTime?: string): string {
-  const t = (timeStr || '00:00').slice(0, 5);
-  const open = (openingTime || '08:00').slice(0, 5);
-  if (t < open) return shiftDateKey(dateStr, -1);
+export function businessDateKey(dateStr: string, _timeStr?: string, _openingTime?: string): string {
   return dateStr;
 }
 
-/** The business day currently in progress (YYYY-MM-DD of its start date). */
-export function todayBusinessKey(openingTime?: string): string {
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  return businessDateKey(localDateKey(now), timeStr, openingTime);
+/** The reporting day currently in progress (local YYYY-MM-DD). */
+export function todayBusinessKey(_openingTime?: string): string {
+  return localDateKey();
 }
 
-/** True when a bill falls inside the given business-day start date. */
-export function isInBusinessDay(b: Bill, businessDayStart: string, openingTime?: string): boolean {
-  return businessDateKey(b.date, b.time, openingTime) === businessDayStart;
+/** True when a bill falls on the given reporting day. */
+export function isInBusinessDay(b: Bill, businessDayStart: string, _openingTime?: string): boolean {
+  return businessDateKey(b.date, b.time) === businessDayStart;
 }
 
 export function computeDailySales(bills: Bill[], currencySymbol: string, openingTime?: string): DailySales {
   const today = todayBusinessKey(openingTime);
   const todayBills = bills.filter(b => isInBusinessDay(b, today, openingTime));
 
-  const totalRevenue = todayBills.reduce((s, b) => s + b.grandTotal, 0);
-  const totalOrders = todayBills.length;
+  // Voided bills are not sales and refunded bills only count up to their
+  // non-refunded remainder — mirror of the backend reports baseMatch, so the
+  // dashboard never disagrees with /reports/sales/summary after a void/refund.
+  const validBills = todayBills.filter(b => !b.isVoided);
+  const netBillTotal = (b: Bill): number =>
+    b.isRefunded ? Math.max(0, b.grandTotal - (b.refundAmount || 0)) : b.grandTotal;
+
+  const totalRevenue = validBills.reduce((s, b) => s + netBillTotal(b), 0);
+  const totalOrders = validBills.length;
   // Count items by QUANTITY (not just line-item count) — a bill with 3 lines
   // of qty 2 each has 6 items sold, not 3. When items array is empty (API-fetched
   // bills where BillItem join failed), fall back to 0 and let the backend summary
   // endpoint provide the authoritative count.
-  const totalItemsSold = todayBills.reduce((s, b) => {
+  const totalItemsSold = validBills.reduce((s, b) => {
     const items = b.items || [];
     if (items.length === 0) return s; // empty items — backend summary is authoritative
     return s + items.reduce((sum, item) => sum + (item.quantity || 1), 0);
   }, 0);
-  const totalDiscount = todayBills.reduce((s, b) => s + b.discount, 0);
-  const totalGst = todayBills.reduce((s, b) => s + b.gst, 0);
+  const totalDiscount = validBills.reduce((s, b) => s + b.discount, 0);
+  const totalGst = validBills.reduce((s, b) => s + b.gst, 0);
   const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
   // Data integrity flag: revenue exists but no items could be counted locally.
   // The dashboard uses the backend summary's itemsSold as the authoritative
@@ -343,10 +351,10 @@ export function computeDailySales(bills: Bill[], currencySymbol: string, opening
 
   // Payment method breakdown
   const paymentMap = new Map<string, { amount: number; count: number }>();
-  for (const bill of todayBills) {
+  for (const bill of validBills) {
     const pm = bill.paymentMethod || 'Cash';
     const entry = paymentMap.get(pm) || { amount: 0, count: 0 };
-    entry.amount += bill.grandTotal;
+    entry.amount += netBillTotal(bill);
     entry.count++;
     paymentMap.set(pm, entry);
   }
@@ -356,7 +364,7 @@ export function computeDailySales(bills: Bill[], currencySymbol: string, opening
 
   // Category breakdown from bill items
   const catMap = new Map<string, { qty: number; revenue: number }>();
-  for (const bill of todayBills) {
+  for (const bill of validBills) {
     for (const item of (bill.items || [])) {
       const cat = item.product?.category || 'General';
       const entry = catMap.get(cat) || { qty: 0, revenue: 0 };
@@ -371,7 +379,7 @@ export function computeDailySales(bills: Bill[], currencySymbol: string, opening
 
   // Top items by quantity sold
   const itemMap = new Map<string, { qty: number; revenue: number }>();
-  for (const bill of todayBills) {
+  for (const bill of validBills) {
     for (const item of (bill.items || [])) {
       const name = item.product?.name || item.product?.code || 'Unknown';
       const entry = itemMap.get(name) || { qty: 0, revenue: 0 };
@@ -387,11 +395,11 @@ export function computeDailySales(bills: Bill[], currencySymbol: string, opening
 
   // Cashier performance
   const cashierMap = new Map<string, { orders: number; revenue: number }>();
-  for (const bill of todayBills) {
+  for (const bill of validBills) {
     const name = bill.cashierName || 'Unknown';
     const entry = cashierMap.get(name) || { orders: 0, revenue: 0 };
     entry.orders++;
-    entry.revenue += bill.grandTotal;
+    entry.revenue += netBillTotal(bill);
     cashierMap.set(name, entry);
   }
   const cashierPerformance = Array.from(cashierMap.entries())

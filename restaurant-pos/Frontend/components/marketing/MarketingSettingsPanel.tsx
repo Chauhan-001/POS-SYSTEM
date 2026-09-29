@@ -87,6 +87,9 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
   settings?: SystemSettings; onUpdateSettings?: (u: SystemSettings) => void; products: Product[]; notify: (m: string) => void;
 }) {
   const [ptsPerUnit, setPtsPerUnit] = useState<number>(settings?.loyaltyPointsPerDollar ?? 1);
+  // New-customer welcome points — server-authoritative (LoyaltySettings).
+  const [welcomeEnabled, setWelcomeEnabled] = useState(true);
+  const [welcomePoints, setWelcomePoints] = useState(50);
   const [milestones, setMilestones] = useState<VisitMilestone[]>(settings?.visitMilestones || []);
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [milestoneVisits, setMilestoneVisits] = useState(5);
@@ -109,10 +112,30 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
           onUpdateSettings({ ...settings, loyaltyPointsPerDollar: rate });
         }
       }
+      if (typeof s?.welcomePoints === 'number') setWelcomePoints(s.welcomePoints);
+      if (typeof s?.welcomePointsEnabled === 'boolean') setWelcomeEnabled(s.welcomePointsEnabled);
     }).catch((err) => debugWarn('Loyalty', 'fetchLoyaltySettings failed:', err));
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const saveWelcomePoints = () => {
+    const pts = Number(welcomePoints);
+    if (!Number.isFinite(pts) || pts < 0) { notify('Enter a valid welcome points amount.'); return; }
+    const enabled = welcomeEnabled && pts > 0;
+    api.updateLoyaltySettings({ welcomePoints: pts, welcomePointsEnabled: enabled })
+      .then((s: any) => {
+        if (typeof s?.welcomePoints === 'number') setWelcomePoints(s.welcomePoints);
+        if (typeof s?.welcomePointsEnabled === 'boolean') setWelcomeEnabled(s.welcomePointsEnabled);
+        notify(s
+          ? (enabled ? `New customers get ${pts} welcome points.` : 'Welcome points disabled.')
+          : 'Offline — welcome points will sync when back online.');
+      })
+      .catch((err) => {
+        debugWarn('Loyalty', 'updateLoyaltySettings(welcome) failed:', err);
+        notify('Offline — welcome points will sync when back online.');
+      });
+  };
 
   const savePointsRate = () => {
     const rate = Number(ptsPerUnit);
@@ -196,6 +219,31 @@ function LoyaltyPanel({ rewards, onUpdateRewards, currencySymbol, settings, onUp
           </button>
         </div>
         <p className="text-[10px] text-gray-400 mt-2 flex items-center gap-1"><Info className="w-3 h-3" /> A customer spending {currencySymbol}1,000 earns {Math.round(1000 * ptsPerUnit)} points at this rate.</p>
+      </div>
+
+      {/* New-customer welcome points */}
+      <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-5">
+        <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-3">New customer welcome points</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-bold text-gray-700 cursor-pointer select-none">
+            <input type="checkbox" checked={welcomeEnabled} onChange={(e) => setWelcomeEnabled(e.target.checked)} className="w-4 h-4 accent-blue-600 cursor-pointer" />
+            Give welcome points to new customers
+          </label>
+          <div className={`flex items-center gap-2 ${!welcomeEnabled ? 'opacity-40 pointer-events-none' : ''}`}>
+            <input type="number" min="0" step="1" value={welcomePoints} onChange={(e) => setWelcomePoints(Number(e.target.value))}
+              className="w-24 px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-sm font-black text-[var(--brand-color)] text-center focus:outline-none focus:ring-2 focus:ring-blue-200" />
+            <span className="text-xs font-bold text-gray-700">points on enrollment</span>
+          </div>
+          <button onClick={saveWelcomePoints} className="flex items-center gap-1.5 bg-[var(--brand-color)] text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer hover:bg-[var(--color-primary-hover)] transition-all ml-auto">
+            <Save className="w-3.5 h-3.5" /> Save
+          </button>
+        </div>
+        <p className="text-[10px] text-gray-400 mt-2 flex items-center gap-1">
+          <Info className="w-3 h-3" />
+          {welcomeEnabled && welcomePoints > 0
+            ? `Every new customer receives ${welcomePoints} bonus points once, when they are added.`
+            : 'New customers start with 0 points.'}
+        </p>
       </div>
 
       {/* Visit milestones */}

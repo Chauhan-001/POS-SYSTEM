@@ -555,7 +555,10 @@ export class AuthService {
             },
             features: Array.isArray(plan.features) && plan.features.length > 0
               ? plan.features
-              : ['core_pos', 'basic_reports', 'inventory', 'loyalty'],
+              // Legacy fallback for plans without an explicit feature list —
+              // includes the paid finance/analytics/expense modules so a paid
+              // owner is never 403'd out of those workspaces.
+              : ['core_pos', 'basic_reports', 'inventory', 'loyalty', 'finance', 'expense_tracking', 'analytics'],
             ...(plan.aiEnabled !== undefined ? { aiEnabled: plan.aiEnabled } : {}),
           } as any)
         : await subscriptionRepo.create({

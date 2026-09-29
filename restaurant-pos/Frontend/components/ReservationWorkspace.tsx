@@ -11,6 +11,7 @@ import {
   Calendar, Clock, Users, Phone, Plus, X, CheckCircle,
   XCircle, UserCheck, UserX, AlertCircle, Clock as Timer,
   Search, Ban, UserPlus, PartyPopper, Edit3,
+  History, RefreshCw, ChevronLeft, ChevronRight, Loader2,
 } from 'lucide-react';
 import type { Reservation, WaitingEntry, TableInfo } from '../src/types';
 import * as api from '../src/api/client';
@@ -70,6 +71,29 @@ function isTableAvailable(tables: TableInfo[], guestCount: number): TableInfo | 
   return tables.find(t => t.status === 'Available' && t.capacity >= guestCount);
 }
 
+/**
+ * Activity-feed metadata: maps audit actions from /api/reservations/history to
+ * a human label, icon and color so the history modal reads like a timeline.
+ */
+const ACTION_META: Record<string, { label: string; icon: any; cls: string }> = {
+  RESERVATION_CREATED: { label: 'Booking created', icon: Calendar, cls: 'text-blue-600 bg-blue-50' },
+  RESERVATION_UPDATED: { label: 'Booking modified', icon: Edit3, cls: 'text-amber-600 bg-amber-50' },
+  RESERVATION_SEATED: { label: 'Guest seated', icon: UserCheck, cls: 'text-green-600 bg-green-50' },
+  RESERVATION_NO_SHOW: { label: 'Marked as No Show', icon: UserX, cls: 'text-gray-600 bg-gray-100' },
+  RESERVATION_CANCELLED: { label: 'Booking cancelled', icon: XCircle, cls: 'text-red-600 bg-red-50' },
+  RESERVATION_DELETED: { label: 'Booking cancelled', icon: XCircle, cls: 'text-red-600 bg-red-50' },
+  RESERVATION_EXPIRED: { label: 'Expired — auto No Show', icon: Ban, cls: 'text-gray-600 bg-gray-100' },
+  WAITING_LIST_ADDED: { label: 'Added to waiting list', icon: UserPlus, cls: 'text-amber-600 bg-amber-50' },
+  WAITING_LIST_UPDATED: { label: 'Waiting list updated', icon: Edit3, cls: 'text-amber-600 bg-amber-50' },
+  WAITING_LIST_REMOVED: { label: 'Removed from waiting list', icon: XCircle, cls: 'text-red-600 bg-red-50' },
+};
+
+function describeHistory(row: any): { label: string; icon: any; cls: string } {
+  const meta = ACTION_META[row?.action];
+  if (meta) return meta;
+  return { label: String(row?.action || 'Activity').replaceAll('_', ' '), icon: Clock, cls: 'text-gray-600 bg-gray-100' };
+}
+
 const STATUS_STYLES: Record<string, { bg: string; text: string; icon: any }> = {
   'Confirmed': { bg: 'bg-blue-50 border-blue-200', text: 'text-blue-700', icon: CheckCircle },
   'Seated': { bg: 'bg-green-50 border-green-200', text: 'text-green-700', icon: UserCheck },
@@ -89,6 +113,18 @@ export default function ReservationWorkspace({
   const [showAddWait, setShowAddWait] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingReservationId, setEditingReservationId] = useState<string | null>(null);
+
+  // Activity history modal state (fetches /api/reservations/history)
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRows, setHistoryRows] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<'net' | null>(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalPages, setHistoryTotalPages] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historySearchInput, setHistorySearchInput] = useState('');
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
 
   // Reservation form state
   const [resForm, setResForm] = useState({
@@ -131,6 +167,44 @@ export default function ReservationWorkspace({
     waitedMinutes: getElapsedMinutes(w.joinedAt),
   })), [activeWaiting, tick]);
 
+  // Debounce the history search box so typing doesn't spam the API.
+  useEffect(() => {
+    if (!showHistory) return;
+    const t = setTimeout(() => setHistorySearch(historySearchInput.trim()), 350);
+    return () => clearTimeout(t);
+  }, [historySearchInput, showHistory]);
+
+  // (Re)fetch the activity feed whenever the modal opens or filters change.
+  useEffect(() => {
+    if (!showHistory) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    api.fetchReservationHistory({ page: historyPage, limit: 30, search: historySearch || undefined })
+      .then((result: any) => {
+        if (cancelled) return;
+        setHistoryRows(result?.data || []);
+        setHistoryTotalPages(result?.totalPages || 1);
+        setHistoryTotal(result?.total || 0);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHistoryRows([]);
+        setHistoryError('net');
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showHistory, historyPage, historySearch, historyReloadKey]);
+
+  const openHistory = (res?: Reservation) => {
+    setHistoryPage(1);
+    setHistorySearchInput(res?.customerName || '');
+    setHistorySearch(res?.customerName || '');
+    setShowHistory(true);
+  };
+
   const handleEditReservation = (res: Reservation) => {
     setEditingReservationId(res.id);
     setResForm({
@@ -169,13 +243,16 @@ export default function ReservationWorkspace({
       );
       onUpdateReservations(updated);
       // BACKEND CALLED — push reservation edits to /api/reservations.
+      // date/time are only sent when actually changed: the server rejects past
+      // dates, and editing a past booking must not force the date forward.
       if (/^[a-fA-F0-9]{24}$/.test(editingReservationId)) {
+        const original = reservations.find(r => r.id === editingReservationId);
         api.updateReservation(editingReservationId, {
           customerName: resForm.customerName.trim(),
           customerPhone: resForm.customerPhone.trim(),
           guestCount: resForm.guestCount,
-          date: resForm.date,
-          time: resForm.time,
+          ...(original && resForm.date !== original.date ? { date: resForm.date } : {}),
+          ...(original && resForm.time !== original.time ? { time: resForm.time } : {}),
           ...(resForm.notes.trim() ? { notes: resForm.notes.trim() } : {}),
           ...(resForm.occasion.trim() ? { occasion: resForm.occasion.trim() } : {}),
         }).catch(err => debugWarn('ReservationWorkspace', 'updateReservation failed:', err));
@@ -262,6 +339,12 @@ export default function ReservationWorkspace({
   };
 
   const handleSeatReservation = (res: Reservation) => {
+    // Same-day rule: guests can only physically arrive on the booking date.
+    // Past/future bookings may still be modified or cancelled.
+    if (res.date !== getTodayString()) {
+      showToast?.('Only today\'s reservations can be seated. You can modify or cancel this booking instead.', 'warning');
+      return;
+    }
     const avail = tables.find(t =>
       t.status === 'Available' && t.capacity >= res.guestCount
     );
@@ -323,7 +406,12 @@ export default function ReservationWorkspace({
     showToast?.('Reservation cancelled', 'info');
   };
 
-  const handleNoShow = (id: string) => {
+  const handleNoShow = (id: string, res?: Reservation) => {
+    // Same-day rule — mirrors the server guard on POST /:id/no-show.
+    if (res && res.date !== getTodayString()) {
+      showToast?.('Only today\'s reservations can be marked as No Show. You can modify or cancel this booking instead.', 'warning');
+      return;
+    }
     onUpdateReservations(reservations.map(r => r.id === id ? { ...r, status: 'No Show' } : r));
     syncReservationStatus(id, { status: 'No Show' });
     showToast?.('Marked as No Show', 'info');
@@ -370,8 +458,15 @@ export default function ReservationWorkspace({
               <p className="text-[10px] text-gray-400">Table booking & guest queue management</p>
             </div>
           </div>
-          {/* Tab toggle */}
-          <div className="flex bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-1 shadow-xs">
+          {/* History + Tab toggle */}
+          <div className="flex items-center gap-2">
+            <button onClick={() => openHistory()}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--color-bg-white)] border border-[var(--color-border-default)] text-[10px] font-bold text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-all cursor-pointer shadow-xs"
+              title="View all reservation activity — bookings, cancellations, no-shows, seating">
+              <History className="w-3.5 h-3.5" />
+              History
+            </button>
+            <div className="flex bg-[var(--color-bg-white)] rounded-xl border border-[var(--color-border-default)] p-1 shadow-xs">
             <button onClick={() => setTab('reservations')}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
                 tab === 'reservations' ? 'bg-rose-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
@@ -388,6 +483,7 @@ export default function ReservationWorkspace({
               Waiting List
               {waitingWithWait.length > 0 && <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[8px] font-bold">{waitingWithWait.length}</span>}
             </button>
+            </div>
           </div>
         </div>
 
@@ -487,18 +583,26 @@ export default function ReservationWorkspace({
                       </div>
                       {res.status === 'Confirmed' && (
                         <div className="flex gap-1.5 mt-2 pt-2 border-t border-white/50">
-                          <button onClick={() => handleSeatReservation(res)}
-                            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-[var(--color-green-500-solid)] text-white rounded-lg text-[9px] font-bold hover:bg-[var(--color-green-600-solid)] transition-all cursor-pointer"
-                            title={avail ? `Seat at Table ${avail.number}` : 'Find available table'}>
-                            <UserCheck className="w-3 h-3" /> Seat
-                          </button>
+                          {res.date === getTodayString() ? (
+                            <>
+                              <button onClick={() => handleSeatReservation(res)}
+                                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-[var(--color-green-500-solid)] text-white rounded-lg text-[9px] font-bold hover:bg-[var(--color-green-600-solid)] transition-all cursor-pointer"
+                                title={avail ? `Seat at Table ${avail.number}` : 'Find available table'}>
+                                <UserCheck className="w-3 h-3" /> Seat
+                              </button>
+                              <button onClick={() => handleNoShow(res.id, res)}
+                                className="flex items-center justify-center gap-1 px-2 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-[9px] font-bold hover:bg-gray-300 transition-all cursor-pointer">
+                                <UserX className="w-3 h-3" /> No Show
+                              </button>
+                            </>
+                          ) : (
+                            <div className="flex-1 text-center text-[8px] font-bold text-gray-500 bg-white/60 rounded-lg px-2 py-1.5">
+                              Seat / No Show opens on {formatDateDisplay(res.date)}
+                            </div>
+                          )}
                           <button onClick={() => handleEditReservation(res)}
                             className="flex items-center justify-center gap-1 px-2 py-1.5 bg-blue-100 text-blue-600 rounded-lg text-[9px] font-bold hover:bg-blue-200 transition-all cursor-pointer">
                             <Edit3 className="w-3 h-3" /> Edit
-                          </button>
-                          <button onClick={() => handleNoShow(res.id)}
-                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-[9px] font-bold hover:bg-gray-300 transition-all cursor-pointer">
-                            <UserX className="w-3 h-3" /> No Show
                           </button>
                           <button onClick={() => handleCancelReservation(res.id)}
                             className="flex items-center justify-center gap-1 px-2 py-1.5 bg-red-100 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-200 transition-all cursor-pointer">
@@ -761,6 +865,122 @@ export default function ReservationWorkspace({
                   Add to Queue
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== RESERVATION ACTIVITY HISTORY MODAL ===== */}
+        {showHistory && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowHistory(false)}>
+            <div className="bg-[var(--color-bg-white)] rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-[var(--color-border-default)]">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-rose-50 text-rose-600">
+                    <History className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-gray-900">Reservation Activity</h3>
+                    <p className="text-[9px] text-gray-400">Bookings, cancellations, no-shows & seating — full log</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => { setHistoryPage(1); setHistoryReloadKey(k => k + 1); }}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all cursor-pointer"
+                    title="Refresh">
+                    <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                  <button onClick={() => setShowHistory(false)} className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Search */}
+              <div className="px-4 pt-3">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                  <input type="text" placeholder="Search by guest name, phone or action..."
+                    value={historySearchInput} onChange={e => { setHistorySearchInput(e.target.value); setHistoryPage(1); }}
+                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--color-border-default)] text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-200 bg-[var(--color-bg-white)]" />
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {historyLoading && historyRows.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                    <Loader2 className="w-6 h-6 animate-spin mb-2" />
+                    <p className="text-xs font-bold">Loading activity…</p>
+                  </div>
+                ) : historyError === 'net' ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                    <AlertCircle className="w-10 h-10 mb-2 text-amber-400" />
+                    <p className="text-sm font-bold text-gray-700">Couldn't load activity</p>
+                    <p className="text-[10px] mt-1">Check your connection and try again.</p>
+                  </div>
+                ) : historyRows.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-gray-300">
+                    <History className="w-12 h-12 mb-2" />
+                    <p className="text-sm font-bold">No activity yet</p>
+                    <p className="text-[10px] mt-1">Reservation actions will appear here</p>
+                  </div>
+                ) : (
+                  historyRows.map((row) => {
+                    const meta = describeHistory(row);
+                    const Icon = meta.icon;
+                    const when = new Date(row.createdAt);
+                    const detailParts: string[] = [];
+                    const d = row.details || {};
+                    if (d.guestName) detailParts.push(String(d.guestName));
+                    if (d.phone) detailParts.push(String(d.phone));
+                    if (d.date) detailParts.push(String(d.date));
+                    if (d.time) detailParts.push(String(d.time));
+                    if (d.guestCount) detailParts.push(`${d.guestCount} guests`);
+                    if (d.tableId) detailParts.push('table assigned');
+                    if (Array.isArray(d.changes) && d.changes.length) detailParts.push(`changed: ${d.changes.join(', ')}`);
+                    return (
+                      <div key={row.id} className="flex items-start gap-3 p-3 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-page)] hover:shadow-xs transition-all">
+                        <div className={`p-2 rounded-lg shrink-0 ${meta.cls}`}>
+                          <Icon className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <p className="text-xs font-bold text-gray-900">{meta.label}</p>
+                            <span className="text-[9px] text-gray-400 whitespace-nowrap">
+                              {when.toLocaleDateString([], { day: 'numeric', month: 'short' })} · {formatTime(when.toISOString())}
+                            </span>
+                          </div>
+                          {detailParts.length > 0 && (
+                            <p className="text-[10px] text-gray-500 mt-0.5 truncate">{detailParts.join(' · ')}</p>
+                          )}
+                          {row.performedBy && (
+                            <p className="text-[9px] text-gray-400 mt-0.5">by {row.performedBy}{row.entityType === 'WaitingEntry' ? ' · waiting list' : ''}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Pagination */}
+              {historyTotal > 0 && (
+                <div className="flex items-center justify-between p-3 border-t border-[var(--color-border-default)]">
+                  <span className="text-[9px] text-gray-400 font-bold">{historyTotal} activity {historyTotal === 1 ? 'entry' : 'entries'}</span>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setHistoryPage(p => Math.max(1, p - 1))} disabled={historyPage <= 1 || historyLoading}
+                      className="p-1.5 rounded-lg border border-[var(--color-border-default)] text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer">
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[10px] font-bold text-gray-600 px-1">{historyPage} / {historyTotalPages}</span>
+                    <button onClick={() => setHistoryPage(p => Math.min(historyTotalPages, p + 1))} disabled={historyPage >= historyTotalPages || historyLoading}
+                      className="p-1.5 rounded-lg border border-[var(--color-border-default)] text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer">
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

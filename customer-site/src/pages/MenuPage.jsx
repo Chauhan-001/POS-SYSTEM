@@ -229,6 +229,26 @@ export default function MenuPage() {
       <Header />
       <Marquee />
 
+      {/* Online-ordering pause/resume: when the restaurant's schedule (managed
+          from the POS Menu Availability screen) has ordering paused, show a
+          clear banner — the backend also rejects any new order (STORE_CLOSED),
+          so this is presentation of the same source of truth. */}
+      {menu && menu.orderingOpen === false && (
+        <div className="closed-banner" role="status" style={{
+          background: '#fff7ed',
+          border: '1px solid #fed7aa',
+          color: '#9a3412',
+          borderRadius: 12,
+          padding: '12px 16px',
+          margin: '8px 0 4px',
+          fontWeight: 700,
+          fontSize: 14,
+          textAlign: 'center',
+        }}>
+          🕒 We're not accepting online orders right now — please check back during our ordering hours.
+        </div>
+      )}
+
       <div className="row mb">
         <input
           className="input"

@@ -1021,10 +1021,17 @@ export class BillService {
 
     // Daily summary decrement — mirror the refund path so a voided bill does
     // not leave inflated revenue/orders in the daily snapshot (best-effort).
-    if ((bill as any).date && (bill as any).branchId) {
+    // REPORTING INTEGRITY: the decrement must mirror the creation bump exactly
+    // — same tenant scope (creation matches on restaurantId, so the reversal
+    // must too) and no branchId requirement (a branch-less bill was bumped on
+    // creation and its void must be able to reverse it, otherwise Today's
+    // Revenue stays permanently inflated).
+    if ((bill as any).date) {
       try {
+        const voidFilter: Record<string, any> = { date: (bill as any).date, branchId: (bill as any).branchId ?? null };
+        if (voidRestaurantId) voidFilter.restaurantId = voidRestaurantId;
         await DailySummary.findOneAndUpdate(
-          { date: (bill as any).date, branchId: (bill as any).branchId },
+          voidFilter,
           {
             $inc: {
               totalRevenue: -((bill as any).grandTotal || 0),
@@ -1257,11 +1264,15 @@ export class BillService {
       refundedItems: refundLines,
     } as any);
 
-    // Decrement daily summary (best-effort).
-    if ((bill as any).date && (bill as any).branchId) {
+    // Decrement daily summary (best-effort). Same integrity rules as the void
+    // path: tenant-scoped like the creation bump and valid for branch-less
+    // bills, so a refund always reverses exactly what was added.
+    if ((bill as any).date) {
       try {
+        const refundFilter: Record<string, any> = { date: (bill as any).date, branchId: (bill as any).branchId ?? null };
+        if (refundRestaurantId) refundFilter.restaurantId = refundRestaurantId;
         await DailySummary.findOneAndUpdate(
-          { date: (bill as any).date, branchId: (bill as any).branchId },
+          refundFilter,
           {
             $inc: {
               totalRevenue: -Math.round(refundAmount * 100) / 100,

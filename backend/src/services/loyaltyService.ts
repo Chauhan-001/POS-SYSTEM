@@ -80,6 +80,7 @@ const DEFAULT_SETTINGS = {
   fixedExpiryDate: undefined,
   expiryReminderDays: [30, 7, 1],
   welcomePoints: 50,
+  welcomePointsEnabled: true,
   birthdayBonusPoints: 100,
   anniversaryBonusPoints: 100,
   referralEnabled: true,
@@ -576,7 +577,9 @@ export class LoyaltyService {
     let bonusTxPoints = 0;
     const alreadyWelcomed = await LoyaltyTransaction.exists({ customerId: objectId(customerId), type: 'welcome' });
     const isFirstVisit = customer.isNewCustomer || !customer.firstVisit;
-    if (isFirstVisit && !alreadyWelcomed && settings.welcomePoints > 0) {
+    if (isFirstVisit && !alreadyWelcomed
+        && settings.welcomePointsEnabled !== false
+        && settings.welcomePoints > 0) {
       welcomeTxPoints = settings.welcomePoints;
     }
     // ── Birthday bonus (once per year) ───────────────────────

@@ -60,6 +60,20 @@ export function planPriceForPeriod(plan: any, period?: string): number {
  */
 const ALL_TRIAL_FEATURES = ALL_FEATURES;
 
+/**
+ * Features the paid Professional plan ships with. Single source for both
+ * seed sites (getPlans default plan + payment.verified activation) so they
+ * can never drift apart. NOTE: finance/expense_tracking/analytics are paid
+ * modules the Professional tier advertises in the pricing UI — omitting them
+ * here silently 403'd every /finance, /expenses and /reports call the moment
+ * a trial ended (requireFeature middleware), which looked like the Finance,
+ * Analytics and Expense modules had stopped fetching.
+ */
+const PROFESSIONAL_PLAN_FEATURES = [
+  'core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty',
+  'finance', 'expense_tracking', 'analytics',
+  'table_service', 'takeaway', 'qr_ordering',
+];
 export class SubscriptionService {
   async getPlans() {
     let plans = await SubscriptionPlan.find({ isActive: true }).sort({ sortOrder: 1 }).exec();
@@ -72,7 +86,7 @@ export class SubscriptionService {
         price: 499,
         maxUsers: 10,
         maxDevices: 3,
-        features: ['core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty'],
+        features: PROFESSIONAL_PLAN_FEATURES,
         aiEnabled: true,
         trialDays: TRIAL_DAYS,
         sortOrder: 1,
@@ -230,6 +244,27 @@ export class SubscriptionService {
       sub.updatedAt = now;
       await sub.save();
       console.log(`[SubscriptionService] Trial features upgraded for ${restaurantId}: full access enabled`);
+    }
+
+    // Repair ACTIVE professional subscriptions whose features snapshot was
+    // written by an older build with a truncated list (missing the paid
+    // finance/analytics/expense modules). Same spirit as the trial repair
+    // above: `features` mirrors the plan's snapshot, so an active professional
+    // row missing these keys is a stale snapshot, not an entitlement decision.
+    // Admin-granted feature lists are never touched — only rows whose snapshot
+    // exactly equals the old truncated default are upgraded.
+    if (sub.status === 'active' && sub.plan === 'professional') {
+      const LEGACY_TRUNCATED_LISTS = [
+        ['core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty'],
+        ['core_pos', 'basic_reports', 'inventory', 'loyalty'],
+      ];
+      const snapshot = (sub.features || []).join(',');
+      if (LEGACY_TRUNCATED_LISTS.some((l) => l.join(',') === snapshot)) {
+        sub.features = PROFESSIONAL_PLAN_FEATURES;
+        sub.updatedAt = now;
+        await sub.save();
+        console.log(`[SubscriptionService] Professional features repaired for ${restaurantId}: finance/analytics/expense unlocked`);
+      }
     }
 
     if (sub.status === 'trial' && sub.trialEnd && now > sub.trialEnd) {
@@ -439,7 +474,7 @@ export class SubscriptionService {
         startDate: now,
         maxUsers: 5,
         maxDevices: 3,
-        features: ['core_pos', 'basic_reports', 'ai', 'inventory', 'loyalty'],
+        features: PROFESSIONAL_PLAN_FEATURES,
       });
     }
 

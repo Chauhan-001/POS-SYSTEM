@@ -207,8 +207,13 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
   const [showTaxSummary, setShowTaxSummary] = useState(settings.showTaxSummaryOnReceipt ?? true);
   const [receiptFooterMessage, setReceiptFooterMessage] = useState(settings.receiptFooterMessage ?? 'THANK YOU FOR DINING WITH US!');
   const [receiptFooterImageUrl, setReceiptFooterImageUrl] = useState(settings.receiptFooterImageUrl ?? '');
-  const [openingTime, setOpeningTime] = useState(settings.openingTime ?? '08:00');
-  const [closingTime, setClosingTime] = useState(settings.closingTime ?? '23:59');
+  // NOTE: openingTime/closingTime were REMOVED from Settings (Business Hours
+  // section). Online-ordering hours now live in the Menu Availability screen
+  // (onlineOrderingHours in settings, edited there) — a single home so the
+  // storefront pause/resume schedule and the ordering switches can never
+  // contradict each other. The business-day `openingTime` VALUE (used by the
+  // Z-report business-day window) is preserved server-side and simply no
+  // longer editable here.
 
   // ─── KOT & kitchen state ──
   const [printCategoryHeaders, setPrintCategoryHeaders] = useState(settings.printCategoryHeaders ?? true);
@@ -273,7 +278,7 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
     taxRate, taxRules, invoicePrefix, invoiceStartingNumber, invoiceSuffix, printSize,
     sidebarLogoUrl, showCustomerName, showLoyaltyPoints, showPointsEarned, showQrCode,
     showDiscountBreakdown, printLogoOnReceipt, roundOffTotal, showTaxSummary,
-    receiptFooterMessage, receiptFooterImageUrl, openingTime, closingTime,
+    receiptFooterMessage, receiptFooterImageUrl,
     printCategoryHeaders, showItemModifiers, showOrderTime, showTableNumber,
     groupItemsInKOT, kotFooterNote, kotOutputMode, autoKotOnlineOrders,
     moduleSettings, rolePermissions, theme, notifications, security, integrations, discount, routingRules,
@@ -308,8 +313,6 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
     setShowTaxSummary(s.showTaxSummaryOnReceipt ?? true);
     setReceiptFooterMessage(s.receiptFooterMessage ?? 'THANK YOU FOR DINING WITH US!');
     setReceiptFooterImageUrl(s.receiptFooterImageUrl ?? '');
-    setOpeningTime(s.openingTime ?? '08:00');
-    setClosingTime(s.closingTime ?? '23:59');
     setPrintCategoryHeaders(s.printCategoryHeaders ?? true);
     setShowItemModifiers(s.showItemModifiers ?? true);
     setShowOrderTime(s.showOrderTime ?? true);
@@ -459,8 +462,10 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
       showTaxSummaryOnReceipt: showTaxSummary,
       receiptFooterMessage: receiptFooterMessage.trim(),
       receiptFooterImageUrl: receiptFooterImageUrl.trim(),
-      openingTime,
-      closingTime,
+      // openingTime/closingTime intentionally NOT written here — they are
+      // managed from Menu Availability (onlineOrderingHours) so there is one
+      // source of truth for business hours. Spreading `...settings` above
+      // preserves the existing values on every save.
       moduleSettings: sanitizedModuleSettings,
       rolePermissions,
       theme,
@@ -958,27 +963,10 @@ export default function SettingsManager({ settings, onUpdateSettings, currentBra
                   </div>
                 </div>
 
-                <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-xs space-y-4">
-                  <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[var(--brand-color)]" />
-                    <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Business Hours</h3>
-                    <span className="ml-auto text-[9px] text-gray-400">Defines the "today" sales window</span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-gray-400 tracking-wider mb-1.5">Opening Time</label>
-                      <input type="time" value={openingTime} onChange={(e) => setOpeningTime(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-gray-400 tracking-wider mb-1.5">Closing Time</label>
-                      <input type="time" value={closingTime} onChange={(e) => setClosingTime(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-[var(--color-border-input)] text-xs font-semibold" />
-                    </div>
-                  </div>
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-start gap-2.5 text-xs text-[var(--brand-color)]">
-                    <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span className="font-bold">Today's revenue, Z-report, hourly charts and "items sold" count sales from <strong>{openingTime || '08:00'}</strong> until <strong>{closingTime || '23:59'}</strong>. Bills before opening time belong to the previous business day (useful for late-night dining).</span>
-                  </div>
-                </div>
+                {/* Business Hours moved to Menu Availability — the online
+                    ordering schedule lives next to the online ordering
+                    switches so storefront open/closed can never contradict
+                    the item availability toggles. */}
 
                 <div className="bg-[var(--color-bg-white)] rounded-2xl border border-[var(--color-border-default)] p-6 shadow-xs space-y-4">
                   <div className="flex items-center gap-2 pb-1.5 border-b border-gray-50">

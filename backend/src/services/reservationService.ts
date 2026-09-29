@@ -180,10 +180,26 @@ export class ReservationService {
     return deleted;
   }
 
+  /**
+   * Seating / no-show are same-day operations: a guest can only physically
+   * arrive (or fail to arrive) on the booking date. Past and future bookings
+   * can still be edited or cancelled — just never seated or no-showed.
+   */
+  private assertActionableToday(res: { date: string; time: string; status?: string }) {
+    if (res.date !== todayStr()) {
+      throw new AppError(400, 'Only today\'s reservations can be seated or marked as No Show. Past and future bookings can be modified or cancelled.');
+    }
+    if (res.status && res.status !== 'Confirmed') {
+      throw new AppError(409, `Reservation is already ${res.status} and cannot be seated.`);
+    }
+  }
+
   /** Seat a reservation — assign table, mark Seated, reconcile the table. */
   async seatReservation(id: string, data: { tableId?: string }, ctx: ReservationCtx = {}) {
     const existing = await reservationRepo.findById(id);
     if (!existing) throw new AppError(404, 'Reservation not found');
+
+    this.assertActionableToday(existing as any);
 
     const tableId = data.tableId || existing.tableId;
     if (!tableId) throw new AppError(400, 'A table must be assigned to seat this reservation.');
@@ -205,10 +221,13 @@ export class ReservationService {
     return updated;
   }
 
-  /** Mark a reservation as No Show (explicit). */
+  /** Mark a reservation as No Show (explicit, same-day only). */
   async markNoShow(id: string, ctx: ReservationCtx = {}) {
     const existing = await reservationRepo.findById(id);
     if (!existing) throw new AppError(404, 'Reservation not found');
+
+    this.assertActionableToday(existing as any);
+
     const updated = await reservationRepo.update(id, { status: 'No Show' });
     if (existing.tableId) {
       await tableStateService.reconcileTable(existing.tableId, ctx).catch(() => undefined);
@@ -388,8 +407,13 @@ export class ReservationService {
         entityId,
         performedBy: ctx.operator || 'System',
         performedById: ctx.operatorId,
+        performedById: ctx.operatorId,
         details,
         branchId: ctx.branchId ? (ctx.branchId as any) : undefined,
+        // Stamp the tenant so /reservations/history can serve a strictly
+        // tenant-scoped activity feed (the generic audit query endpoints are
+        // admin-area; POS history must never see another tenant's rows).
+        restaurantId: ctx.restaurantId || undefined,
       } as any);
     } catch (err: any) {
       console.warn('[ReservationService] audit log failed (non-fatal):', err.message);

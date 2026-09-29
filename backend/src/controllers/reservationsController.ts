@@ -11,6 +11,8 @@
 import { Request, Response } from 'express';
 import { reservationService } from '../services';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
+import { queryAuditLogs } from '../modules/audit/queryService';
+import AuditLog from '../models/AuditLog';
 
 function authCtx(req: Request) {
   const user = (req as AuthenticatedRequest).user;
@@ -34,6 +36,56 @@ export async function listReservations(req: Request, res: Response): Promise<voi
     res.json({ data: result.data, total: result.total });
   } catch (error) {
     console.error('[ReservationsController] list error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * GET /api/reservations/history — Tenant-scoped reservation activity feed.
+ *
+ * Reads the audit trail (every create/update/cancel/no-show/seat/expiry and
+ * waitlist change) filtered to this restaurant's Reservation entities, so the
+ * POS "History" view shows the full lifecycle — including cancelled and
+ * no-showed bookings that the day view hides.
+ */
+export async function getReservationHistory(req: Request, res: Response): Promise<void> {
+  try {
+    const user = (req as AuthenticatedRequest).user;
+    const tenantId = user?.restaurantId ? String(user.restaurantId) : null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant context required' });
+      return;
+    }
+
+    const { limit, page, from, to, entityId, search } = req.query as Record<string, string | undefined>;
+
+    const result = await queryAuditLogs({
+      restaurantId: tenantId,
+      entityType: 'Reservation,WaitingEntry',
+      ...(entityId ? { entityId } : {}),
+      ...(from ? { from } : {}),
+      ...(to ? { to } : {}),
+      ...(search ? { search } : {}),
+      limit: Math.min(Number(limit) || 50, 200),
+      page: Math.max(Number(page) || 1, 1),
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    } as any);
+
+    const rows = (result.data as any[]).map((d) => ({
+      id: d.id,
+      action: d.action,
+      entityType: d.entityType,
+      entityId: d.entityId,
+      performedBy: d.performedBy,
+      performedById: d.performedById,
+      details: d.details,
+      createdAt: d.createdAt,
+    }));
+
+    res.json({ data: rows, total: result.total, page: result.page, limit: result.limit, totalPages: result.totalPages });
+  } catch (error) {
+    console.error('[ReservationsController] history error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

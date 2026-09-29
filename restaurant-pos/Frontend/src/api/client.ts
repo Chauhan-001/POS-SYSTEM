@@ -1926,6 +1926,24 @@ export async function fetchReportExport(report: string, format: 'csv' | 'xlsx' |
 
 const SETTINGS_CACHE_KEY = 'pos_settings_effective_v1';
 
+/**
+ * Called after any successful settings mutation (PATCH /settings, rollback,
+ * offline-queue replay). Settings are not a row in WRITE_CACHE_MAP — each
+ * terminal keeps its own effective-settings snapshot — but other terminals on
+ * the same restaurant should still pick up the change promptly instead of
+ * waiting for their next mount/reconnect. markStale('pos_settings') makes any
+ * subscribed screen refetch; the writer itself re-pulls via refresh() in
+ * useServerSettings.
+ */
+export function notifySettingsChanged(): void {
+  try {
+    syncEngine.markStale('pos_settings');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(CACHE_INVALIDATED_EVENT, { detail: 'pos_settings' }));
+    }
+  } catch { /* ignore */ }
+}
+
 export interface EffectiveSettings {
   settings: Record<string, any>;
   /** Public store token embedded in the loyalty QR (minted lazily by the server). */
@@ -2000,6 +2018,7 @@ export async function patchSettings(payload: {
     apiLog('PATCH', '/settings', result.status);
     return { ok: false, status: result.status, data: null };
   }
+  notifySettingsChanged();
   return { ok: true, status: result.status, data: result.json?.data ?? result.json };
 }
 
@@ -2017,7 +2036,9 @@ export async function rollbackSettings(payload: {
   toVersion: number;
   changeReason?: string;
 }) {
-  return post<any>('/settings/rollback', payload);
+  const result = await post<any>('/settings/rollback', payload);
+  if (result) notifySettingsChanged();
+  return result;
 }
 
 export async function fetchSettingsAudit(page = 1, limit = 50) {
@@ -2088,7 +2109,71 @@ export async function testPrinter(id: string): Promise<{ id: string; name: strin
   return post<any>(`/settings/printers/${id}/test`, {});
 }
 
+// ─── Online-ordering hours (Menu Availability) ─────────────────
+
+/** Persisted schedule that auto-pauses/resumes the customer website. */
+export interface OnlineOrderingHours {
+  enabled: boolean;
+  openTime: string;  // 'HH:mm' 24h local
+  closeTime: string; // 'HH:mm' 24h local (<= openTime ⇒ overnight window)
+  days: number[];    // 0=Sunday … 6=Saturday
+}
+
+export const DEFAULT_ONLINE_ORDERING_HOURS: OnlineOrderingHours = {
+  enabled: false,
+  openTime: '09:00',
+  closeTime: '23:00',
+  days: [0, 1, 2, 3, 4, 5, 6],
+};
+
+/**
+ * Save the online-ordering schedule (PATCH /settings, restaurant scope).
+ * Uses patchSettings so conflict detection + offline queueing + the
+ * cross-terminal `notifySettingsChanged` propagation all apply.
+ */
+export async function updateOnlineOrderingHours(hours: OnlineOrderingHours, baseVersion?: number): Promise<PatchSettingsResult> {
+  return patchSettings({
+    scope: 'restaurant',
+    settings: { onlineOrderingHours: hours },
+    ...(baseVersion ? { baseVersion } : {}),
+    changeReason: 'Updated online ordering hours (Menu Availability)',
+  });
+}
+
+/** Read the saved schedule from the effective settings (null = unset). */
+export async function fetchOnlineOrderingHours(): Promise<OnlineOrderingHours | null> {
+  const res = await fetchEffectiveSettings();
+  const raw = res?.settings?.onlineOrderingHours;
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    enabled: !!raw.enabled,
+    openTime: String(raw.openTime || '09:00'),
+    closeTime: String(raw.closeTime || '23:00'),
+    days: Array.isArray(raw.days) ? raw.days.map(Number).filter((d: number) => d >= 0 && d <= 6) : [0, 1, 2, 3, 4, 5, 6],
+  };
+}
+
 // ─── Finance (Phase 1.7) — backend-generated ────────────────────
+
+/**
+ * GET with the raw HTTP status surfaced, so callers can distinguish a plan
+ * 403 (FEATURE_NOT_IN_PLAN / SUBSCRIPTION_SUSPENDED) from a network failure.
+ * The generic get() helper collapses every failure to null, which made the
+ * Finance/Analytics/Expense workspaces render silently empty when the
+ * subscription plan didn't include the feature — indistinguishable from
+ * "no data yet".
+ */
+async function getWithStatus<T>(path: string): Promise<{ data: T | null; status: number; body?: any }> {
+  const result = await request('GET', path);
+  if (!result) return { data: null, status: 0 };
+  const data = result.json?.data ?? result.json;
+  return { data: (result.ok ? data : null) as T | null, status: result.status, body: result.json };
+}
+
+export async function fetchFinanceSummaryDetailed(period: 'today' | 'week' | 'month' | 'year' = 'month') {
+  const r = await getWithStatus<any>(`/finance/summary?period=${period}`);
+  return { data: r.data?.data || r.data, status: r.status, body: r.body };
+}
 
 export async function fetchFinanceSummary(period: 'today' | 'week' | 'month' | 'year' = 'month') {
   const res = await get<any>(`/finance/summary?period=${period}`);
@@ -2516,6 +2601,22 @@ export async function fetchReservations(params?: { branchId?: string; date?: str
   return get<any[]>(`/reservations${query ? '?' + query : ''}`);
 }
 
+/**
+ * GET /api/reservations/history — Tenant-scoped reservation activity feed */
+export async function fetchReservationHistory(params?: { page?: number; limit?: number; from?: string; to?: string; entityId?: string; search?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.from) qs.set('from', params.from);
+  if (params?.to) qs.set('to', params.to);
+  if (params?.entityId) qs.set('entityId', params.entityId);
+  if (params?.search) qs.set('search', params.search);
+  const query = qs.toString();
+  return get<{ data: any[]; total: number; page: number; limit: number; totalPages: number }>(
+    `/reservations/history${query ? '?' + query : ''}`
+  );
+}
+
 /** POST /api/reservations — Create a reservation */
 export async function createReservation(reservation: any) {
   return post<any>('/reservations', reservation);
@@ -2665,7 +2766,12 @@ export async function executePendingOperation(op: {
       // silently bypass the backend's manager authorization check.
       body: op.body !== undefined ? JSON.stringify(op.body) : undefined,
     });
-    if (res.ok) invalidateWriteCache(op.path);
+    if (res.ok) {
+      invalidateWriteCache(op.path);
+      // Settings mutations replayed from the offline queue need the same
+      // cross-terminal notification as their online counterparts.
+      if (op.path === '/settings') notifySettingsChanged();
+    }
     return res.ok;
   } catch {
     return false;

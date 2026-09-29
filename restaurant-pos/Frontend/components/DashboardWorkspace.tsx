@@ -20,8 +20,8 @@ import {
   Building2, ChevronRight, Store, FileText
 } from 'lucide-react';
 import type { DailySales, Bill, Order, TableInfo, Employee, Reservation } from '../src/types';
-import { todayBusinessKey, isInBusinessDay, shiftDateKey } from '../src/data';
-import { fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary } from '../src/api/client';
+import { todayBusinessKey, isInBusinessDay } from '../src/data';
+import { fetchSalesPeakHours, fetchSalesOrderTypes, fetchProductTop, fetchProductCategories, fetchSalesSummary, CACHE_INVALIDATED_EVENT } from '../src/api/client';
 import { fetchWhatsAppStatus } from '../src/api/client';
 import DashboardStatCard from './DashboardStatCard';
 
@@ -80,7 +80,8 @@ function formatDate(date: Date): string {
 function computeHourlyBreakdown(bills: Bill[], openingTime?: string): { hour: string; orders: number; revenue: number }[] {
   const hourlyMap: Record<string, { orders: number; revenue: number }> = {};
   const todayKey = todayBusinessKey(openingTime);
-  const todayBills = bills.filter(b => isInBusinessDay(b, todayKey, openingTime));
+  // Voided bills are not sales (mirrors the backend peak-hours aggregation).
+  const todayBills = bills.filter(b => isInBusinessDay(b, todayKey, openingTime) && !b.isVoided);
 
   for (let i = 8; i <= 23; i++) {
     const label = i < 10 ? `0${i}:00` : `${i}:00`;
@@ -94,7 +95,8 @@ function computeHourlyBreakdown(bills: Bill[], openingTime?: string): { hour: st
         const label = hour < 10 ? `0${hour}:00` : `${hour}:00`;
         if (hourlyMap[label]) {
           hourlyMap[label].orders += 1;
-          hourlyMap[label].revenue += b.grandTotal;
+          // Refunded bills contribute only their net (paid) amount.
+          hourlyMap[label].revenue += b.isRefunded ? Math.max(0, b.grandTotal - (b.refundAmount || 0)) : b.grandTotal;
         }
       }
     }
@@ -171,17 +173,18 @@ export default function DashboardWorkspace({
   const [waLoading, setWaLoading] = useState(false);
 
   const loadBackendToday = useCallback(async () => {
+    // REPORTING BOUNDARY: the POS has no opening time (hours now exist only
+    // for online ordering), so backend reports use the plain local calendar
+    // day — start = end = today. No business-day shifting, no openingTime
+    // param; this matches computeDailySales' local-day boundary exactly.
     const now = new Date();
-    const todayStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    const opening = (settings.openingTime || '08:00').slice(0, 5);
-    const nowTime = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-    const start = nowTime < opening ? shiftDateKey(todayStr, -1) : todayStr;
+    const start = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const [h, ot, top, cats, summ] = await Promise.all([
-      fetchSalesPeakHours(start, todayStr, opening),
-      fetchSalesOrderTypes(start, todayStr, opening),
-      fetchProductTop(start, todayStr, 10, opening),
-      fetchProductCategories(start, todayStr, opening),
-      fetchSalesSummary(start, todayStr, opening),
+      fetchSalesPeakHours(start, start),
+      fetchSalesOrderTypes(start, start),
+      fetchProductTop(start, start, 10),
+      fetchProductCategories(start, start),
+      fetchSalesSummary(start, start),
     ]);
     setBackendToday({
       hourly: h.data && Array.isArray(h.data.hourly) ? h.data.hourly : null,
@@ -192,7 +195,7 @@ export default function DashboardWorkspace({
       categoryBreakdown: cats.data && Array.isArray(cats.data) ? cats.data : null,
       itemsSold: summ.data?.summary?.itemsSold ?? null,
     });
-  }, [settings.openingTime]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -241,12 +244,25 @@ export default function DashboardWorkspace({
     return () => clearInterval(id);
   }, [handleRefresh]);
 
+  // Refresh backend aggregates immediately after a bill write (create/void)
+  // anywhere in the app — a new payment must move Today's Revenue, Total
+  // Orders and Peak Hours without waiting for the 60s auto-refresh.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onCacheInvalidated = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail === 'pos_bills') handleRefresh(true);
+    };
+    window.addEventListener(CACHE_INVALIDATED_EVENT, onCacheInvalidated);
+    return () => window.removeEventListener(CACHE_INVALIDATED_EVENT, onCacheInvalidated);
+  }, [handleRefresh]);
+
   const hourlyData = useMemo(() => {
     if (backendToday.hourly) {
       return backendToday.hourly.map(x => ({ hour: x.hour, orders: x.orders, revenue: x.revenue }));
     }
-    return computeHourlyBreakdown(bills, settings.openingTime);
-  }, [backendToday.hourly, bills, settings.openingTime]);
+    return computeHourlyBreakdown(bills);
+  }, [backendToday.hourly, bills]);
 
   const topItems = useMemo(() => {
     if (backendToday.topItems) return backendToday.topItems;
@@ -366,14 +382,8 @@ export default function DashboardWorkspace({
                 <span>{isRefreshing ? 'Syncing…' : 'Refresh'}</span>
               </button>
 
-              <button
-                onClick={onOpenDailySales}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-[var(--color-bg-white)] hover:bg-[var(--color-primary-light)] border border-[var(--color-border-default)] hover:border-[var(--brand-color)] rounded-xl text-xs font-bold text-gray-700 hover:text-[var(--brand-color)] transition-all cursor-pointer shadow-xs"
-              >
-                <Receipt className="w-3.5 h-3.5 text-[var(--brand-color)]" />
-                <span>Daily Sales</span>
-              </button>
-
+              {/* Daily Sales removed from here — Z-Report covers day-close;
+                  Daily Sales stays reachable from More → Daily Sales. */}
               <button
                 onClick={onOpenZReport}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-[var(--color-bg-white)] hover:bg-purple-50 border border-[var(--color-border-default)] hover:border-purple-300 rounded-xl text-xs font-bold text-gray-700 hover:text-purple-700 transition-all cursor-pointer shadow-xs"

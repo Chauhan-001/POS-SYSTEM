@@ -239,14 +239,21 @@ export class CustomerService {
     } as any);
 
     // Welcome points (server-computed; never trust client points).
+    // Honors BOTH the amount (0 = none) and the welcomePointsEnabled master
+    // switch so restaurants can turn the new-customer bonus off entirely.
     try {
-      await loyaltyService.earnPoints(restaurantId, (customer as any)._id.toString(), {
-        amount: (await loyaltyService.getSettings(restaurantId)).welcomePoints || 0,
-        type: 'welcome',
-        description: 'Welcome bonus points',
-        createdBy: ctx.operator,
-        branchId: ctx.branchId,
-      });
+      const loyaltySettings = await loyaltyService.getSettings(restaurantId);
+      const welcomeEnabled = loyaltySettings.welcomePointsEnabled !== false;
+      const welcomeAmount = welcomeEnabled ? (loyaltySettings.welcomePoints || 0) : 0;
+      if (welcomeAmount > 0) {
+        await loyaltyService.earnPoints(restaurantId, (customer as any)._id.toString(), {
+          amount: welcomeAmount,
+          type: 'welcome',
+          description: 'Welcome bonus points',
+          createdBy: ctx.operator,
+          branchId: ctx.branchId,
+        });
+      }
     } catch (err: any) {
       // Welcome points must never block enrollment.
       console.warn('[CustomerService] welcome points skipped:', err.message);

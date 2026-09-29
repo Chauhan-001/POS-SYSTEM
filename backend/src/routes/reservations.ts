@@ -10,6 +10,7 @@
 import { Router } from 'express';
 import {
   listReservations,
+  getReservationHistory,
   getReservation,
   createReservation,
   updateReservation,
@@ -40,6 +41,8 @@ router.delete('/waiting/:id', requireRole('Owner', 'Manager'), requireFeature('r
 
 // ─── Reservations ──────────────────────────────────────────────────
 router.get('/', requireAuth, requireFeature('reservations'), validate({ query: reservationQuerySchema }), listReservations);
+// History must precede /:id — a plain GET list of the reservation activity feed.
+router.get('/history', requireAuth, requireFeature('reservations'), getReservationHistory);
 router.get('/:id', requireAuth, requireFeature('reservations'), validate({ params: reservationParamsSchema }), getReservation);
 router.post('/', requireAuth, requireFeature('reservations'), validate({ body: createReservationSchema }), createReservation);
 router.put('/:id', requireAuth, requireFeature('reservations'), validate({ body: updateReservationSchema, params: reservationParamsSchema }), updateReservation);

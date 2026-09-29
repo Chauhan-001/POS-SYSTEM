@@ -1080,6 +1080,9 @@ export interface ExpenseEntry {
   isRecurring?: boolean;
   isSystemGenerated?: boolean;
   recurringTemplateId?: string;
+  /** Source reference for system-generated entries, e.g. `purchase:<id>` —
+   *  marks an expense auto-created from an inventory purchase. */
+  sourceRef?: string;
   branchId?: string;
   /** Optimistic-concurrency version (server-authoritative). */
   version?: number;

@@ -55,6 +55,10 @@ export interface IExpense extends Document {
   isRecurring: boolean;
   isSystemGenerated?: boolean;  // child expense created by the recurring scheduler
   recurringTemplateId?: mongoose.Types.ObjectId;
+  /** Source reference for system-generated expenses, e.g. `purchase:<id>` —
+   *  makes purchase→expense generation idempotent (retries/edits never
+   *  duplicate) and lets purchase edits/deletes find their expense. */
+  sourceRef?: string;
   // ── Versioning (optimistic concurrency for offline edits) ─
   version: number;
   // ── Soft delete / restore ──────────────────────────────────
@@ -113,6 +117,7 @@ const ExpenseSchema = new Schema<IExpense>(
     isRecurring: { type: Boolean, default: false },
     isSystemGenerated: { type: Boolean, default: false },
     recurringTemplateId: { type: Schema.Types.ObjectId, ref: 'RecurringExpense', default: null },
+    sourceRef: { type: String, trim: true, default: undefined, index: true },
     version: { type: Number, default: 1, min: 1 },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },

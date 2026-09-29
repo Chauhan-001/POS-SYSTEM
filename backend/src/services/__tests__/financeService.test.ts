@@ -7,6 +7,8 @@ import Bill from '../../models/Bill';
 import Expense from '../../models/Expense';
 import CashLedger from '../../models/CashLedger';
 import FinanceSettings from '../../models/FinanceSettings';
+import Product from '../../models/Product';
+import InventoryEvent from '../../models/InventoryEvent';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId().toString();
@@ -53,6 +55,8 @@ describe('FinanceService (Phase 1.7)', () => {
       Expense.deleteMany({}).exec(),
       CashLedger.deleteMany({}).exec(),
       FinanceSettings.deleteMany({}).exec(),
+      Product.deleteMany({}).exec(),
+      InventoryEvent.deleteMany({}).exec(),
     ]);
   });
 
@@ -138,5 +142,71 @@ describe('FinanceService (Phase 1.7)', () => {
     const pnl = await financeService.pnl(REST, { period: 'custom', startDate: '2026-08-01', endDate: '2026-08-31' });
     expect(pnl.cogs).toBe(700);
     expect(pnl.operatingExpenses).toBe(0);
+  });
+
+  it('includes real wastage cost (waste events × averageCost) in COGS', async () => {
+    await seedBill({ grandTotal: 1100, date: '2026-08-05' });
+    await Product.create({
+      restaurantId: new mongoose.Types.ObjectId(REST),
+      name: 'Paneer', type: 'inventory', unit: 'kg', category: 'Other', code: 'PANEER', price: 0,
+      currentStock: 10, averageCost: 250,
+    });
+    // 4 kg Paneer wasted × ₹250/kg = ₹1000 of real ingredient loss.
+    await InventoryEvent.create({
+      restaurantId: new mongoose.Types.ObjectId(REST),
+      type: 'waste', item: 'Paneer', quantity: -4, unit: 'kg',
+      operator: 'Manager', eventDate: '2026-08-07', details: 'waste: 4 kg Paneer',
+    });
+
+    const pnl = await financeService.pnl(REST, { period: 'custom', startDate: '2026-08-01', endDate: '2026-08-31' });
+    expect(pnl.cogs).toBe(1000);
+    expect(pnl.expenseByCategory['Wastage']?.amount).toBe(1000);
+    // grossProfit = revenue 1100 − COGS 1000
+    expect(pnl.grossProfit).toBe(100);
+  });
+
+  it('never mixes another restaurant\'s bills or waste into the P&L', async () => {
+    const OTHER = new mongoose.Types.ObjectId().toString();
+    // Our restaurant: one ₹1000 bill.
+    await seedBill({ grandTotal: 1000, date: '2026-08-05' });
+    // Another tenant: ₹9000 bill + ₹800 waste — must NOT leak in.
+    await Bill.create({
+      invoiceNumber: `INV-OTHER-${Math.random().toString(36).slice(2, 7)}`,
+      ticketNumber: `TK-OTHER-${Math.random().toString(36).slice(2, 7)}`,
+      date: '2026-08-06', time: '12:00', cashierName: 'Other', cashierRole: 'Cashier',
+      subtotal: 9000, discount: 0, gst: 0, grandTotal: 9000,
+      paymentMethod: 'Cash', orderType: 'Dine In',
+      restaurantId: new mongoose.Types.ObjectId(OTHER),
+    });
+    await InventoryEvent.create({
+      restaurantId: new mongoose.Types.ObjectId(OTHER),
+      type: 'waste', item: 'Chicken', quantity: -2, unit: 'kg',
+      operator: 'Other', eventDate: '2026-08-06', details: 'waste: 2 kg Chicken',
+    });
+
+    const pnl = await financeService.pnl(REST, { period: 'custom', startDate: '2026-08-01', endDate: '2026-08-31' });
+    expect(pnl.revenue).toBe(1000);
+    expect(pnl.orders).toBe(1);
+    expect(pnl.cogs).toBe(0);
+  });
+
+  it('monthlyStatement includes wastage in COGS', async () => {
+    await seedBill({ grandTotal: 2000, date: '2026-03-10' });
+    await Product.create({
+      restaurantId: new mongoose.Types.ObjectId(REST),
+      name: 'Milk', type: 'inventory', unit: 'L', category: 'Other', code: 'MILK', price: 0,
+      currentStock: 20, averageCost: 50,
+    });
+    await InventoryEvent.create({
+      restaurantId: new mongoose.Types.ObjectId(REST),
+      type: 'waste', item: 'Milk', quantity: -6, unit: 'L',
+      operator: 'Manager', eventDate: '2026-03-12', details: 'waste: 6 L Milk',
+    });
+
+    const stmt = await financeService.monthlyStatement(REST, 2026);
+    const mar = stmt.months.find((m: any) => m.month === '2026-03');
+    expect(mar!.revenue).toBe(2000);
+    expect(mar!.cogs).toBe(300); // 6 L × ₹50
+    expect(mar!.grossProfit).toBe(1700);
   });
 });

@@ -31,6 +31,13 @@ export interface IInventoryEvent extends Document {
   /** Optional source reference (e.g. the VoiceAuditLog id that created this
    *  event) so a voice undo can remove exactly the rows it produced. */
   refId?: string;
+  /** FIFO cost basis recorded at movement time: per-unit cost consumed.
+   *  Populated by the stock engine from the FIFO batch costs (fallback:
+   *  product averageCost). Undefined on legacy events. */
+  unitCost?: number;
+  /** FIFO cost basis recorded at movement time: total value consumed
+   *  (|quantity| × unitCost). Undefined on legacy events. */
+  totalCost?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +56,8 @@ const InventoryEventSchema = new Schema<IInventoryEvent>(
     /** Optional source reference (e.g. the VoiceAuditLog id that created this
      *  event) so a voice undo can remove exactly the rows it produced. */
     refId: { type: String, trim: true, default: undefined },
+    unitCost: { type: Number, default: undefined },
+    totalCost: { type: Number, default: undefined },
   },
   { timestamps: true }
 );

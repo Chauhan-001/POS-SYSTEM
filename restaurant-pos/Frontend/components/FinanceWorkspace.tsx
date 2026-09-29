@@ -13,7 +13,7 @@ import {
   Minus, Activity, Layers, Banknote, Wallet, Landmark, ReceiptText, Wifi, WifiOff
 } from 'lucide-react';
 import type { Bill, ExpenseEntry, FinanceSummary } from '../src/types';
-import { fetchFinanceSummary } from '../src/api/client';
+import { fetchFinanceSummaryDetailed } from '../src/api/client';
 
 interface FinanceWorkspaceProps {
   bills: Bill[];
@@ -50,22 +50,29 @@ interface MonthlyPL {
 }
 
 function computeMonthlyPL(bills: Bill[], expenses: ExpenseEntry[]): MonthlyPL[] {
-  // Group revenue by month
+  // Group revenue by month. REPORTING INTEGRITY: voided bills are NOT sales
+  // and refunded bills contribute only their net (paid) amount — the backend
+  // P&L (/finance/pnl) uses exactly these rules, so the offline monthly view
+  // must mirror them.
   const revMap: Record<string, { total: number; count: number }> = {};
   bills.forEach(b => {
+    if (b.isVoided) return;
     const key = b.date.slice(0, 7);
     if (!revMap[key]) revMap[key] = { total: 0, count: 0 };
-    revMap[key].total += b.grandTotal;
+    revMap[key].total += b.isRefunded ? Math.max(0, b.grandTotal - (b.refundAmount || 0)) : b.grandTotal;
     revMap[key].count += 1;
   });
 
-  // Group expenses by month
+  // Group expenses by month. COGS = per-expense isCogs flag (set by the
+  // expense form / category config), falling back to the system COGS category
+  // name for legacy records created before the flag existed — never a
+  // hardcoded single-category rule.
   const expMap: Record<string, { cogs: number; ops: { category: string; amount: number }[] }> = {};
   expenses.forEach(e => {
+    if (e.isDeleted) return;
     const key = e.date.slice(0, 7);
     if (!expMap[key]) expMap[key] = { cogs: 0, ops: [] };
-    // Ingredients & Raw Materials → COGS, everything else → operating expense
-    if (e.category === 'Ingredients & Raw Materials') {
+    if (e.isCogs || e.category === 'Ingredients & Raw Materials') {
       expMap[key].cogs += e.amount;
     } else {
       const existing = expMap[key].ops.find(o => o.category === e.category);
@@ -138,6 +145,8 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [summaryOnline, setSummaryOnline] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  /** 'plan' = 403 FEATURE_NOT_IN_PLAN / SUBSCRIPTION_SUSPENDED, 'net' = offline/server down. */
+  const [summaryError, setSummaryError] = useState<'plan' | 'net' | null>(null);
 
   // Period-aware offline fallback derived from the local monthly P&L so the
   // summary cards never show year-to-date figures when Today/Week/Month is picked.
@@ -160,17 +169,25 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
   const loadSummary = useCallback(async () => {
     setLoadingSummary(true);
     try {
-      const res = await fetchFinanceSummary(period);
-      if (res) {
-        setSummary(res);
+      const res = await fetchFinanceSummaryDetailed(period);
+      const code = res.body?.code;
+      if (res.status === 403 || code === 'FEATURE_NOT_IN_PLAN' || code === 'SUBSCRIPTION_SUSPENDED') {
+        setSummary(null);
+        setSummaryOnline(false);
+        setSummaryError('plan');
+      } else if (res.data) {
+        setSummary(res.data);
         setSummaryOnline(true);
+        setSummaryError(null);
       } else {
         setSummary(null);
         setSummaryOnline(false);
+        setSummaryError(res.status === 0 ? 'net' : null);
       }
     } catch {
       setSummary(null);
       setSummaryOnline(false);
+      setSummaryError('net');
     } finally {
       setLoadingSummary(false);
     }
@@ -203,11 +220,23 @@ export default function FinanceWorkspace({ bills, expenses, currencySymbol }: Fi
   };
 
   if (monthlyPL.length === 0 && !summaryOnline) {
+    // Plan-gated (403) vs offline/server — show WHY there is no data instead
+    // of a generic empty state that looks identical to a broken fetch.
+    if (summaryError === 'plan') {
+      return (
+        <div className="flex flex-col h-full bg-[var(--color-bg-page)] items-center justify-center px-6 text-center">
+          <Landmark className="w-16 h-16 text-amber-500 mb-4" />
+          <h2 className="text-lg font-bold text-gray-200">Finance Module Locked</h2>
+          <p className="text-sm text-gray-400 mt-2 max-w-md">Your current subscription plan does not include the Finance module. Upgrade the plan (or ask the platform admin to enable <span className="font-mono">finance</span>) to see profit &amp; loss, cash flow and GST reports.</p>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col h-full bg-[var(--color-bg-page)] items-center justify-center">
         <Banknote className="w-20 h-20 text-gray-500 mb-4" />
         <h2 className="text-lg font-bold text-gray-300">No Financial Data Yet</h2>
         <p className="text-sm text-gray-300 mt-1">Bills and expenses will appear here as you process orders.</p>
+        {summaryError === 'net' && <p className="text-xs text-gray-500 mt-3">Backend unreachable — showing local data only.</p>}
       </div>
     );
   }

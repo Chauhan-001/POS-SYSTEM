@@ -119,7 +119,7 @@ export async function analyzeWastageAndOptimize(
     type: 'waste',
     eventDate: { $gte: startDateStr, $lte: endDateStr },
   })
-    .select('item quantity unit cost eventDate reason')
+    .select('item quantity unit totalCost eventDate reason')
     .lean()
     .exec();
 
@@ -133,7 +133,7 @@ export async function analyzeWastageAndOptimize(
   for (const ing of ingredients) {
     const ingWasteEvents = wasteEvents.filter(w => w.item.toLowerCase() === ing.name.toLowerCase());
     const totalWasteQty = ingWasteEvents.reduce((sum, w) => sum + Math.abs(w.quantity || 0), 0);
-    const totalWasteCost = ingWasteEvents.reduce((sum, w) => sum + (w.cost || 0), 0);
+    const totalWasteCost = ingWasteEvents.reduce((sum, w) => sum + (w.totalCost || 0), 0);
     const avgDailyWaste = totalWasteQty / lookbackDays;
     const wasteEventsCount = ingWasteEvents.length;
 

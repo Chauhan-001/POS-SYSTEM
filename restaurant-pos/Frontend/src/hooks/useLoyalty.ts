@@ -182,6 +182,66 @@ export function useLoyalty(config: LoyaltyConfig) {
   }, [cartItems, products, settings, isProductMatchingReward, setAppliedReward, setCartItems, showToast]);
 
   /**
+   * Quick-enroll an unknown 10-digit phone straight from the billing screen.
+   * Creates the loyalty profile server-side (which auto-awards welcome points
+   * per the restaurant's loyalty settings), selects the new member as the
+   * active loyalty customer, and syncs the local customers list. Restores the
+   * previous behavior where tapping Enroll enrolled the guest immediately.
+   */
+  const handleQuickEnroll = useCallback((phone: string) => {
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.length !== 10) {
+      showToast('Enter the full 10-digit mobile number to enroll.', 'warning');
+      return;
+    }
+    if (customers.some(c => c.phone === cleaned)) {
+      // Raced with the async API lookup — just select the existing member.
+      const existing = customers.find(c => c.phone === cleaned)!;
+      setSearchedCustomer(existing);
+      showToast(`Loyalty matched: ${existing.name}`, 'success');
+      return;
+    }
+    // BACKEND CALLED — POST /api/customers enrolls the profile and the server
+    // awards welcome points per LoyaltySettings (server-computed, never client).
+    api.createCustomer({
+      phone: cleaned,
+      name: 'Guest Diner',
+      points: 0,
+      visits: 0,
+    }).then((created: any) => {
+      const serverCustomer: Customer = {
+        id: created?._id || created?.id,
+        phone: cleaned,
+        name: created?.name || 'Guest Diner',
+        isNew: true,
+        visits: 0,
+        points: Number(created?.points ?? 0),
+        lastVisit: 'Never',
+        purchaseHistory: [],
+      } as Customer;
+      setCustomers([serverCustomer, ...customers]);
+      setSearchedCustomer(serverCustomer);
+      showToast(`Enrolled! Welcome points added to ${serverCustomer.phone}.`, 'success');
+    }).catch((err: any) => {
+      debugWarn('useLoyalty', 'quick enroll failed:', err);
+      // Offline fallback — still enroll locally so the till is never blocked.
+      const localCustomer: Customer = {
+        id: `local_${Date.now()}`,
+        phone: cleaned,
+        name: 'Guest Diner',
+        isNew: true,
+        visits: 0,
+        points: 0,
+        lastVisit: 'Never',
+        purchaseHistory: [],
+      } as Customer;
+      setCustomers([localCustomer, ...customers]);
+      setSearchedCustomer(localCustomer);
+      showToast('Offline — enrolled locally, will sync when back online.', 'info');
+    });
+  }, [customers, setCustomers, setSearchedCustomer, showToast]);
+
+  /**
    * Redeem a reward tier. Large rewards trigger a REAL server OTP flow:
    * POST /api/otp/request (rate-limited, hashed, expiring). In demo mode the
    * server echoes the code so the POS can display it; verification still
@@ -248,6 +308,7 @@ export function useLoyalty(config: LoyaltyConfig) {
     findCustomerByPhone,
     isProductMatchingReward,
     handleCustomerPhoneChange,
+    handleQuickEnroll,
     handleRedeemRewardTier,
     applyRewardStateAndCheckCart,
   };

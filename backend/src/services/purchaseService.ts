@@ -11,6 +11,9 @@ import mongoose from 'mongoose';
 import { purchaseRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 import { stockMovementService } from './stockMovementService';
+import Expense from '../models/Expense';
+import { cashLedgerService } from './index';
+import { SYSTEM_CATEGORIES } from './expenseCategoryService';
 
 /**
  * Best-effort stock engine hook for a purchase item: increases stock + updates
@@ -45,6 +48,68 @@ async function applyPurchaseStock(opts: {
     });
   } catch (err: any) {
     console.warn('[PurchaseService] stock movement skipped (purchase still saved):', err.message);
+  }
+}
+
+/**
+ * Auto-create the system expense for a purchase (the "what we bought and what
+ * we paid" record in the expense register). Idempotent via sourceRef
+ * `purchase:<id>` — retries, edits and partial updates never duplicate.
+ * Best-effort: a ledger/category failure must never fail the purchase.
+ */
+async function upsertPurchaseExpense(opts: {
+  purchaseId: string;
+  restaurantId: string;
+  branchId?: string;
+  date?: string;
+  supplier?: string;
+  item: string;
+  quantity: number;
+  unit: string;
+  total: number;
+  paymentMethod?: string;
+  operator?: string;
+}) {
+  const sourceRef = `purchase:${opts.purchaseId}`;
+  try {
+    const existing = await Expense.findOne({ sourceRef }).lean().exec();
+    if (existing) {
+      // Purchase already has its expense — keep it in sync with corrections.
+      if (Math.round((Number(existing.amount) || 0) * 100) !== Math.round(opts.total * 100)) {
+        await Expense.updateOne({ _id: existing._id }, { $set: { amount: opts.total, updatedBy: opts.operator || 'System' } }).exec();
+      }
+      return existing._id.toString();
+    }
+    const cogsCategory = SYSTEM_CATEGORIES.find((c) => c.isCogs);
+    const expense = await Expense.create({
+      restaurantId: new mongoose.Types.ObjectId(opts.restaurantId),
+      branchId: opts.branchId ? new mongoose.Types.ObjectId(opts.branchId) : undefined,
+      date: opts.date || new Date().toISOString().slice(0, 10),
+      category: cogsCategory?.name || 'Ingredients & Raw Materials',
+      description: `Purchase: ${opts.item} (${opts.quantity} ${opts.unit})${opts.supplier ? ` — ${opts.supplier}` : ''}`,
+      amount: opts.total,
+      paymentMethod: opts.paymentMethod || 'Cash',
+      vendor: opts.supplier || undefined,
+      isCogs: true,
+      isSystemGenerated: true,
+      sourceRef,
+      createdBy: opts.operator || 'System',
+    } as any);
+    // Cash ledger hook — only for cash-paid purchases, same as manual expenses.
+    if ((expense.paymentMethod || 'Cash') === 'Cash') {
+      await cashLedgerService.recordExpense(opts.restaurantId, {
+        expenseId: (expense as any)._id.toString(),
+        amount: opts.total,
+        date: expense.date,
+        branchId: opts.branchId,
+        note: expense.description,
+        performedBy: opts.operator,
+      }).catch((err: any) => console.warn('[PurchaseService] ledger hook skipped:', err.message));
+    }
+    return (expense as any)._id.toString();
+  } catch (err: any) {
+    console.warn('[PurchaseService] system expense skipped (purchase still saved):', err.message);
+    return null;
   }
 }
 
@@ -149,6 +214,22 @@ export class PurchaseService {
       batchNumber: data.batchNumber,
     });
 
+    // System expense: the purchase lands in the expense register at what was
+    // actually paid (idempotent via sourceRef — never duplicated).
+    await upsertPurchaseExpense({
+      purchaseId: (purchase as any)._id.toString(),
+      restaurantId,
+      branchId: ctx.branchId || data.branchId,
+      date: (purchase as any).date,
+      supplier: (purchase as any).supplier,
+      item: data.item,
+      quantity,
+      unit: data.unit || 'kg',
+      total: (purchase as any).total,
+      paymentMethod: data.paymentMethod,
+      operator: ctx.operator,
+    });
+
     return purchase;
   }
 
@@ -237,6 +318,21 @@ export class PurchaseService {
       });
     }
 
+    // Keep the purchase's system expense in sync with the corrected total
+    // (idempotent — updates the existing record, never creates a duplicate).
+    await upsertPurchaseExpense({
+      purchaseId: id,
+      restaurantId,
+      branchId: (existing as any).branchId || updates.branchId,
+      date: updates.date || (existing as any).date,
+      supplier: updates.supplier || (existing as any).supplier,
+      item: newItem,
+      quantity,
+      unit: updates.unit || (existing as any).unit || 'kg',
+      total: updates.total,
+      operator: ctx.operator,
+    });
+
     return purchaseRepo.update(id, updates);
   }
 
@@ -265,6 +361,30 @@ export class PurchaseService {
       unit: (existing as any).unit || 'kg',
       operator: ctx.operator,
     });
+    // Void the purchase's system expense (soft-delete — visible in the register
+    // as deleted, restorable, and excluded from all finance aggregations).
+    try {
+      const sourceRef = `purchase:${id}`;
+      const linked = await Expense.findOne({ sourceRef }).lean().exec();
+      if (linked) {
+        await Expense.updateOne(
+          { _id: linked._id },
+          { $set: { isDeleted: true, deletedAt: new Date(), deletedBy: ctx.operator || 'System' } }
+        ).exec();
+        if ((linked as any).paymentMethod === 'Cash') {
+          await cashLedgerService.recordReversal(restaurantId, {
+            expenseId: (linked as any)._id.toString(),
+            amount: (linked as any).amount,
+            date: (linked as any).date,
+            branchId: (linked as any).branchId?.toString(),
+            note: `Purchase deleted — ${(linked as any).description}`,
+            performedBy: ctx.operator,
+          }).catch(() => {});
+        }
+      }
+    } catch (err: any) {
+      console.warn('[PurchaseService] expense reversal skipped:', err.message);
+    }
     return purchaseRepo.hardDelete(id);
   }
 

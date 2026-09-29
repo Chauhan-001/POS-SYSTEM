@@ -27,6 +27,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { ICacheAdapter, InMemoryAdapter } from '../cache/adapters';
+import type { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -99,11 +100,23 @@ class ResponseCache {
 
   // ─── Key generation (adapter-independent) ──────────────────
 
-  /** Generate a deterministic cache key from a request. */
+  /**
+   * Generate a deterministic cache key from a request.
+   *
+   * MULTI-TENANT SAFETY: the authenticated caller's tenant identity
+   * (restaurantId, or userId for platform-admin surface tokens) is part of
+   * every auto-generated key. Without this, two restaurants hitting the same
+   * cached GET path within the TTL would read each other's responses out of
+   * the shared in-memory/Redis store. Custom keys (options.key) bypass this —
+   * callers MUST scope those manually and only use them for truly global data.
+   */
   generateKey(req: Request, options?: CacheOptions): string {
     if (options?.key) return options.key;
 
-    let path = req.path;
+    const authUser = (req as AuthenticatedRequest).user;
+    const tenantScope = authUser?.restaurantId || authUser?.userId || 'anon';
+
+    let path = `t=${tenantScope}|${req.path}`;
 
     // Build query string portion
     if (!options?.ignoreQuery && req.query && Object.keys(req.query).length > 0) {

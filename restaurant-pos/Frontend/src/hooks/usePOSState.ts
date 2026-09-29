@@ -1684,7 +1684,12 @@ export function usePOSState() {
   }, [ordersViewMode]);
 
   // ============ DERIVED STATE ============
-  const dailySales = useMemo(() => computeDailySales(bills, settings.currencySymbol, settings.openingTime), [bills, settings.currencySymbol, settings.openingTime]);
+  // Branch-effective: a branch's own opening time defines its business day,
+  // so Today's Revenue / Total Orders / payment mix all resolve per branch.
+  const dailySales = useMemo(
+    () => computeDailySales(bills, settings.currencySymbol, effectiveSettings.openingTime),
+    [bills, settings.currencySymbol, effectiveSettings.openingTime]
+  );
   const [activityFeed, setActivityFeed] = useState<ActivityEntry[]>(() => getActivityFeed());
 
   // ============ ROLE PERMISSIONS ============
@@ -2015,6 +2020,7 @@ export function usePOSState() {
     refreshAllFromApi,
     refreshOrders,
     refreshProducts,
+    refreshExpenses,
 
     startResizeCart,
 

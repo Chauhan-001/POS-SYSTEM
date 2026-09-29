@@ -11,6 +11,7 @@ import { Router } from 'express';
 import { createInventoryEvent, listInventoryEvents, deleteInventoryEvent } from '../controllers/inventoryEventsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
+import { invalidateCacheTags } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import { createInventoryEventSchema, inventoryEventQuerySchema } from '../validation';
 
@@ -18,7 +19,7 @@ const router = Router();
 
 // All staff can view; only Owner/Manager can record activity events.
 router.get('/', requireAuth, requireFeature('inventory'), validate({ query: inventoryEventQuerySchema }), listInventoryEvents);
-router.post('/', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ body: createInventoryEventSchema }), createInventoryEvent);
-router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('inventory'), deleteInventoryEvent);
+router.post('/', requireRole('Owner', 'Manager'), requireFeature('inventory'), validate({ body: createInventoryEventSchema }), createInventoryEvent, invalidateCacheTags(['reports']));
+router.delete('/:id', requireRole('Owner', 'Manager'), requireFeature('inventory'), deleteInventoryEvent, invalidateCacheTags(['reports']));
 
 export default router;

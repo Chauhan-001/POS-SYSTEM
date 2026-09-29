@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ShoppingCart, RefreshCw, Phone, Award, X, DollarSign, ArrowLeftRight, ChevronLeft, ChevronRight, Search, Trash2, Printer, PauseCircle, MoreHorizontal, AlertTriangle } from 'lucide-react';
+import { ShoppingCart, RefreshCw, Phone, Award, X, DollarSign, ArrowLeftRight, ChevronLeft, ChevronRight, Search, Trash2, Printer, PauseCircle, MoreHorizontal, AlertTriangle, UserPlus } from 'lucide-react';
 import { CartItem, Customer, HeldOrder, Product, ProductVariant, LoyaltyReward, SystemSettings } from '../src/types';
 import CartItemRow from './CartItemRow';
 import OfferProfitabilityStrip from './OfferProfitabilityStrip';
@@ -41,6 +41,10 @@ interface CartPanelProps {
   onCustomerPhoneChange: (val: string) => void;
   onOpenOffers: () => void;
   onOpenCustomerSearch: () => void;
+  /** True when the typed 10-digit phone matches no loyalty member (new guest). */
+  isNewGuestPhone?: boolean;
+  /** Quick-enroll the typed new phone number into loyalty (billing flow). */
+  onQuickEnroll?: (phone: string) => void;
   loyaltyPhoneRef: React.RefObject<HTMLInputElement | null>;
   quickFireRef: React.RefObject<HTMLInputElement | null>;
   appliedReward: LoyaltyReward | null;
@@ -73,6 +77,7 @@ export default function CartPanel({
   products, quickFireInput, onQuickFireChange, quickFireSessionCount, quickFireFlash, onQuickFireKeyDown,
   isQuickFireActive, onToggleQuickFire, isMoreBillingOpen, onToggleMoreBilling,
   searchedCustomer, customerPhone, onCustomerPhoneChange, onOpenOffers, onOpenCustomerSearch,
+  isNewGuestPhone, onQuickEnroll,
   loyaltyPhoneRef, quickFireRef, appliedReward, splitDetails, onOpenSplitPopup,
   currencySymbol, onUpdateItemNotes, onEditConfiguredItem, moduleSettings = {} as Record<string, boolean>,
   unservedKotSummary, onForceCloseBill,
@@ -133,13 +138,23 @@ export default function CartPanel({
       <div className="p-2.5 border-b border-gray-200 bg-[var(--color-bg-white)] shrink-0">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Phone className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 ${isNewGuestPhone ? 'text-amber-500' : 'text-gray-400'}`} />
             <input ref={loyaltyPhoneRef as any} type="text"
               placeholder={moduleSettings.enableGuestCheckout !== false ? 'Customer Mobile (optional)' : 'Customer Mobile'}
               data-tour="phone-input"
               value={customerPhone} onChange={(e) => onCustomerPhoneChange(e.target.value)} maxLength={10}
-              className="w-full pl-8 pr-2 py-2 rounded-xl border border-gray-300 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)] bg-[var(--color-bg-white)]" />
+              className={`w-full pl-8 pr-2 py-2 rounded-xl border text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 bg-[var(--color-bg-white)] ${isNewGuestPhone ? 'border-amber-300 ring-1 ring-amber-200' : 'border-gray-300 focus:ring-[var(--brand-color)]'}`}
+              style={isNewGuestPhone ? { flex: 'none', width: 'calc(100% - 150px)' } : undefined} />
           </div>
+          {isNewGuestPhone && onQuickEnroll && (
+            <button onClick={() => onQuickEnroll(customerPhone)}
+              data-tour="quick-enroll-btn"
+              className="shrink-0 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-1 text-xs font-extrabold transition-all cursor-pointer shadow-sm"
+              title="Enroll this number as a new loyalty member">
+              <UserPlus className="w-4 h-4" />
+              <span>Enroll</span>
+            </button>
+          )}
           <button onClick={onOpenCustomerSearch}
             className="shrink-0 p-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl flex items-center justify-center transition-all cursor-pointer border border-gray-200"
             title="Search Customer">

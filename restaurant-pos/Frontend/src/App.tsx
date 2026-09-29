@@ -29,7 +29,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 import { normalizeRole, type Order, type Bill, type LoyaltyReward } from './types';
-import { setDBData, getDBData, localDateKey, clearAllCache } from './data';
+import { setDBData, getDBData, localDateKey, todayBusinessKey, isInBusinessDay, clearAllCache } from './data';
 import { decideFirstRun } from './firstRun';
 import { syncEngine } from './lib/syncEngine';
 import { workspaceToPath, pathToWorkspace, DEFAULT_WORKSPACE, type WorkspaceName } from './routes';
@@ -2183,7 +2183,7 @@ export default function App() {
               </button>
             </div>
           )}
-          <AppTitleBar restaurantName={pos.settings.restaurantName} isOnline={pos.isOnline} pendingSyncCount={pos.syncState?.pendingChanges ?? 0} branches={pos.branches} currentBranchId={pos.currentBranchId} onSetCurrentBranch={pos.setCurrentBranchId} showBranchSelector={pos.isMultiBranchEnabled && (pos.currentEmployee?.role === 'Owner' || pos.currentEmployee?.role === 'Manager')} />
+          <AppTitleBar restaurantName={pos.settings.restaurantName} logoUrl={pos.settings.sidebarLogoUrl} isOnline={pos.isOnline} pendingSyncCount={pos.syncState?.pendingChanges ?? 0} branches={pos.branches} currentBranchId={pos.currentBranchId} onSetCurrentBranch={pos.setCurrentBranchId} showBranchSelector={pos.isMultiBranchEnabled && (pos.currentEmployee?.role === 'Owner' || pos.currentEmployee?.role === 'Manager')} />
           <div className="flex flex-1 min-h-0 overflow-hidden w-full" style={{ direction: 'ltr' }}>
             {pos.activeWorkspace !== 'Billing' && (
               <AppSidebar
@@ -2216,11 +2216,22 @@ export default function App() {
                   reservations={pos.reservations}
                   products={pos.products}
                   currentEmployee={pos.currentEmployee!}
-                  settings={pos.settings}
-                  currencySymbol={pos.settings.currencySymbol}
+                  settings={pos.effectiveSettings}
+                  currencySymbol={pos.effectiveSettings.currencySymbol}
                   totalExpensesToday={(() => {
-                    const todayStr = localDateKey();
-                    return pos.expenses.filter((e: any) => e.date === todayStr).reduce((s: number, e: any) => s + e.amount, 0);
+                    // Business-day window (opening time aware) — the same window
+                    // used for Today's Revenue, so net profit is a true
+                    // like-for-like subtraction instead of calendar-day vs
+                    // business-day mismatch (e.g. a 07:30 expense counted in a
+                    // 08:00-opening restaurant's "today" while its revenue isn't).
+                    // Expenses with no recorded time count as all-day on their
+                    // date (never shifted to the previous business day).
+                    const bizDay = todayBusinessKey(pos.settings.openingTime);
+                    return pos.expenses
+                      .filter((e: any) => e.time
+                        ? isInBusinessDay({ date: e.date, time: e.time } as any, bizDay, pos.settings.openingTime)
+                        : e.date === bizDay)
+                      .reduce((s: number, e: any) => s + (e.amount || 0), 0);
                   })()}
                   totalExpensesThisMonth={(() => {
                     const thisMonth = localDateKey().slice(0, 7);
@@ -2378,6 +2389,12 @@ export default function App() {
                     splitDetails={pos.splitDetails}
                     onOpenSplitPopup={() => pos.setIsSplitPopupOpen(true)}
                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                    isNewGuestPhone={
+                      pos.customerPhone.replace(/\D/g, '').length === 10 &&
+                      !pos.searchedCustomer &&
+                      !pos.customers.some((c: any) => c.phone === pos.customerPhone.replace(/\D/g, ''))
+                    }
+                    onQuickEnroll={loyalty.handleQuickEnroll as any}
                     onUpdateItemNotes={handleUpdateItemNotes}
                     moduleSettings={pos.moduleSettings}
                     currencySymbol={pos.settings.currencySymbol}
@@ -2446,9 +2463,14 @@ export default function App() {
                     <span className="text-[10px] text-gray-400 ml-auto">Sales analytics & intelligence</span>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
-                    <ReportsManager bills={pos.bills} customers={pos.customers} products={pos.products} currencySymbol={pos.settings.currencySymbol} moduleSettings={pos.moduleSettings} onViewBill={(bill) => pos.setActiveReceipt(bill)} onRefresh={() => { 
-                      // BACKEND: Refresh from API: fetch('/api/bills').then(r => r.json()).then(setBills)
-                      setDBData('pos_bills', pos.bills); showToast('Data refreshed', 'info'); 
+                    <ReportsManager bills={pos.bills} customers={pos.customers} products={pos.products} currencySymbol={pos.settings.currencySymbol} moduleSettings={pos.moduleSettings} onViewBill={(bill) => pos.setActiveReceipt(bill)} onRefresh={() => {
+                      // Force a server re-pull of every collection (bypasses the
+                      // localStorage TTL caches) so Reports reflects the latest
+                      // sales. The previous stub wrote the CURRENT in-memory bills
+                      // back into localStorage — an anti-refresh that could stamp
+                      // stale rows over fresher synced data and made the toast lie.
+                      pos.refreshAllFromApi();
+                      showToast('Data refreshed', 'info');
                     }} />
                   </div>
                 </div>
@@ -2517,6 +2539,7 @@ export default function App() {
                     <ExpenseManager
                       expenses={pos.expenses}
                       onUpdateExpenses={pos.setExpenses}
+                      onRefreshExpenses={pos.refreshExpenses}
                       currencySymbol={pos.settings.currencySymbol}
                       currentEmployeeName={pos.currentEmployee?.name}
                     />

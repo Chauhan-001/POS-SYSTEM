@@ -33,6 +33,8 @@ import RefreshButton from './common/RefreshButton';
 interface ExpenseManagerProps {
   expenses: ExpenseEntry[];
   onUpdateExpenses: (expenses: ExpenseEntry[]) => void;
+  /** Force a server re-pull of the expenses list (merge, not replace). */
+  onRefreshExpenses?: () => Promise<unknown>;
   currencySymbol: string;
   currentEmployeeName?: string;
   currentRole?: string;
@@ -70,7 +72,7 @@ const emptyExpense = (): ExpenseEntry => ({
 
 type TabKey = 'expenses' | 'cash' | 'vendors' | 'recurring';
 
-export default function ExpenseManager({ expenses, onUpdateExpenses, currencySymbol, currentEmployeeName, currentRole = 'Owner' }: ExpenseManagerProps) {
+export default function ExpenseManager({ expenses, onUpdateExpenses, onRefreshExpenses, currencySymbol, currentEmployeeName, currentRole = 'Owner' }: ExpenseManagerProps) {
   const [tab, setTab] = useState<TabKey>('expenses');
 
   // ── Shared lists (server-driven) ──────────────────────────────
@@ -83,6 +85,9 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
+  // Purchase-generated expenses (auto-created when items are bought into
+  // inventory) default to visible — they ARE real expenses; toggle to hide.
+  const [showPurchaseExpenses, setShowPurchaseExpenses] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ExpenseEntry>(emptyExpense());
@@ -167,6 +172,10 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
       else if (key === 'pos_vendors') refreshVendors();
       else if (key === 'pos_cash_ledger') refreshLedger();
       else if (key === 'pos_recurring_expenses') refreshRecurring();
+      else if (key === 'pos_expenses' && onRefreshExpenses) void onRefreshExpenses();
+      // Finance summary is not TTL-cached but a sale elsewhere changes its
+      // numbers — refresh it alongside ledger updates.
+      else if (key === 'pos_bills') refreshFinance();
     };
     window.addEventListener(api.CACHE_INVALIDATED_EVENT, onInvalidated);
     const interval = setInterval(() => { refreshLedger(); refreshRecurring(); }, 5 * 60 * 1000);
@@ -174,11 +183,12 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
       window.removeEventListener(api.CACHE_INVALIDATED_EVENT, onInvalidated);
       clearInterval(interval);
     };
-  }, [refreshCategories, refreshVendors, refreshLedger, refreshRecurring]);
+  }, [refreshCategories, refreshVendors, refreshLedger, refreshRecurring, refreshFinance, onRefreshExpenses]);
 
   // ── Derived expense views ─────────────────────────────────────
   const visibleExpenses = useMemo(() => {
     let result = showDeleted ? expenses : expenses.filter(e => !e.isDeleted);
+    if (!showPurchaseExpenses) result = result.filter(e => !(e as any).sourceRef?.startsWith?.('purchase:') && !(e.isSystemGenerated && e.category === 'Ingredients & Raw Materials'));
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(e =>
@@ -191,7 +201,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
     if (dateFrom) result = result.filter(e => e.date >= dateFrom);
     if (dateTo) result = result.filter(e => e.date <= dateTo);
     return [...result].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
-  }, [expenses, search, categoryFilter, dateFrom, dateTo, showDeleted]);
+  }, [expenses, search, categoryFilter, dateFrom, dateTo, showDeleted, showPurchaseExpenses]);
 
   const totalExpenses = useMemo(() => visibleExpenses.reduce((s, e) => s + e.amount, 0), [visibleExpenses]);
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -446,7 +456,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
         </div>
         <div className="ml-auto flex items-center gap-2">
           <RefreshButton
-            onRefresh={() => Promise.all([refreshCategories(), refreshVendors(), refreshFinance(), refreshLedger(), refreshRecurring()]).then(() => undefined)}
+            onRefresh={() => Promise.all([refreshCategories(), refreshVendors(), refreshFinance(), refreshLedger(), refreshRecurring(), onRefreshExpenses?.()]).then(() => undefined)}
             className="gap-1.5 px-3 py-1.5 bg-[var(--color-bg-white)] border border-[var(--color-border-default)] rounded-lg text-[10px] font-bold text-gray-600 hover:border-[var(--brand-color)] hover:text-[var(--brand-color)]"
           >
             Sync
@@ -541,6 +551,10 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                   <input type="checkbox" checked={showDeleted} onChange={e => setShowDeleted(e.target.checked)} className="accent-red-500" />
                   Deleted
                 </label>
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 cursor-pointer">
+                  <input type="checkbox" checked={showPurchaseExpenses} onChange={e => setShowPurchaseExpenses(e.target.checked)} className="accent-red-500" />
+                  Purchases
+                </label>
                 <span className="text-[10px] font-bold text-gray-500">{visibleExpenses.length} result{visibleExpenses.length !== 1 ? 's' : ''}</span>
               </div>
 
@@ -560,7 +574,7 @@ export default function ExpenseManager({ expenses, onUpdateExpenses, currencySym
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-gray-900 truncate">{entry.description}</span>
-                          {entry.isSystemGenerated && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 shrink-0">🔄 Auto</span>}
+                          {entry.isSystemGenerated && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 shrink-0">{(entry as any).sourceRef?.startsWith?.('purchase:') ? '🛒 Purchase' : '🔄 Auto'}</span>}
                           {entry.isCogs && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-green-50 text-green-600 shrink-0">COGS</span>}
                         </div>
                         <div className="flex items-center gap-3 mt-0.5 text-[9px] text-gray-400 flex-wrap">

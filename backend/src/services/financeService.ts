@@ -32,6 +32,7 @@ import Expense from '../models/Expense';
 import Product from '../models/Product';
 import BillItem from '../models/BillItem';
 import FinanceSettings from '../models/FinanceSettings';
+import InventoryEvent from '../models/InventoryEvent';
 import { cashLedgerService } from './index';
 import { SYSTEM_CATEGORIES } from './expenseCategoryService';
 
@@ -86,7 +87,7 @@ export class FinanceService {
    * line item, matched by menuItemId (or itemName fallback). Best-effort —
    * items without product cost data contribute 0.
    */
-  private async billCogsFromInventory(items: any[]): Promise<number> {
+  private async billCogsFromInventory(items: any[], restaurantId?: string): Promise<number> {
     if (!Array.isArray(items) || items.length === 0) return 0;
     const ids = items
       .map((i: any) => i.menuItemId)
@@ -94,9 +95,16 @@ export class FinanceService {
     const names = items
       .map((i: any) => i.itemName)
       .filter(Boolean) as string[];
+    // TENANT SCOPING: the id lookup is inherently safe, but the name fallback
+    // MUST be scoped to this restaurant — different tenants can legally share
+    // item names and an unscoped match would cost one tenant another tenant's
+    // ingredient price.
+    const tenantMatch: Record<string, any> = restaurantId
+      ? { restaurantId: objectId(restaurantId) }
+      : {};
     const [byId, byName] = await Promise.all([
-      ids.length > 0 ? Product.find({ _id: { $in: ids.map(objectId) }, isDeleted: { $ne: true } }).select('_id averageCost').lean().exec() : [],
-      names.length > 0 ? Product.find({ name: { $in: names }, isDeleted: { $ne: true } }).select('_id name averageCost').lean().exec() : [],
+      ids.length > 0 ? Product.find({ _id: { $in: ids.map(objectId) }, ...tenantMatch, isDeleted: { $ne: true } }).select('_id averageCost').lean().exec() : [],
+      names.length > 0 ? Product.find({ name: { $in: names }, ...tenantMatch, isDeleted: { $ne: true } }).select('_id name averageCost').lean().exec() : [],
     ]);
     const costById = new Map(byId.map((p: any) => [p._id.toString(), p.averageCost || 0]));
     const costByName = new Map(byName.map((p: any) => [(p.name || '').toLowerCase(), p.averageCost || 0]));
@@ -135,10 +143,17 @@ export class FinanceService {
       ({ start, end } = dateRange(params.startDate, params.endDate));
     }
 
-    const billMatch: any = { date: { $gte: start, $lte: end }, isVoided: { $ne: true } };
+    // Tenant-scoped: this restaurant's bills ONLY. Without this filter the
+    // P&L silently merged every other tenant's bills (same database) into
+    // revenue/GST/orders — a cross-tenant data leak.
+    const billMatch: any = {
+      restaurantId: objectId(restaurantId),
+      date: { $gte: start, $lte: end },
+      isVoided: { $ne: true },
+    };
     if (params.branchId) billMatch.branchId = objectId(params.branchId);
 
-    const [billAgg, billItems, expenseAgg, settings] = await Promise.all([
+    const [billAgg, billIds, expenseAgg, settings] = await Promise.all([
       Bill.aggregate([
         { $match: billMatch },
         {
@@ -152,7 +167,9 @@ export class FinanceService {
           },
         },
       ]).exec(),
-      BillItem.find({}).select('billId menuItemId itemName quantity priceAtSale').lean().exec(),
+      // Only this period's bill ids — the old BillItem.find({}) pulled EVERY
+      // tenant's line items into memory before filtering.
+      Bill.find(billMatch).select('_id').lean().exec(),
       Expense.aggregate([
         {
           $match: {
@@ -166,7 +183,13 @@ export class FinanceService {
           $group: {
             // Group by category AND the per-expense COGS flag so both modes
             // ('auto' by category name, 'category' by explicit isCogs) work.
-            _id: { category: '$category', isCogs: { $ifNull: ['$isCogs', false] } },
+            // isSystemGenerated separates purchase-generated expenses (cash
+            // view) from manual entries (period expense view).
+            _id: {
+              category: '$category',
+              isCogs: { $ifNull: ['$isCogs', false] },
+              isSystemGenerated: { $ifNull: ['$isSystemGenerated', false] },
+            },
             amount: { $sum: '$amount' },
             count: { $sum: 1 },
           },
@@ -178,6 +201,13 @@ export class FinanceService {
     const totals = billAgg[0] || { revenue: 0, refunds: 0, discounts: 0, gstCollected: 0, orders: 0 };
     const revenue = Math.round(totals.revenue * 100) / 100;
 
+    // Line items for THIS period's bills only (recipe/inventory COGS input).
+    const idSet = new Set(billIds.map((b: any) => b._id.toString()));
+    const periodItems = idSet.size > 0
+      ? await BillItem.find({ billId: { $in: [...idSet].map(objectId) } })
+          .select('billId menuItemId itemName quantity priceAtSale').lean().exec()
+      : [];
+
     // COGS strategy:
     //   'auto'    → the Ingredients & Raw Materials category is COGS (legacy)
     //   'category'→ every expense explicitly flagged isCogs is COGS
@@ -187,8 +217,22 @@ export class FinanceService {
 
     const expenseByCategory: Record<string, { amount: number; count: number }> = {};
     let cogs = 0;
+    /** COGS that lives IN the expense ledger (flags/category + Wastage). */
+    let expenseLedgerCogs = 0;
+    /** Cash view: total of purchase-generated expenses (what was bought & paid). */
+    let ingredientPurchases = 0;
+    let ingredientPurchaseCount = 0;
     for (const row of expenseAgg) {
       const category = String(row._id?.category || 'Miscellaneous');
+      if (row._id?.isSystemGenerated === true) {
+        // Purchase-generated expenses are the CASH view of ingredient buying.
+        // They are NOT period P&L expenses: the stock they buy is priced into
+        // COGS when actually consumed (FIFO batch costs), so including them
+        // here as well would double count. Reported separately below.
+        ingredientPurchases = Math.round((ingredientPurchases + row.amount) * 100) / 100;
+        ingredientPurchaseCount += row.count;
+        continue;
+      }
       expenseByCategory[category] = {
         amount: Math.round((expenseByCategory[category]?.amount || 0) + row.amount * 100) / 100,
         count: (expenseByCategory[category]?.count || 0) + row.count,
@@ -196,18 +240,91 @@ export class FinanceService {
       const isCogsRow = cogsMode === 'auto'
         ? category === cogsCategoryName
         : row._id?.isCogs === true;
-      if (isCogsRow) cogs += row.amount;
+      if (isCogsRow) {
+        cogs += row.amount;
+        expenseLedgerCogs += row.amount;
+      }
     }
-    // Inventory consumption (real recipe cost) — matched across ALL bill items
-    // in the period via their owning bills.
-    const billIdsInRange = await Bill.find(billMatch).select('_id').lean().exec();
-    const idSet = new Set(billIdsInRange.map((b: any) => b._id.toString()));
-    const periodItems = billItems.filter((i: any) => idSet.has(String(i.billId)));
-    cogs += await this.billCogsFromInventory(periodItems);
+
+    // Usage COGS — prefer the REAL FIFO cost recorded on 'sold' inventory
+    // events at consumption time (each consumed unit is priced from the
+    // purchase-price-pinned batch it came out of). Fall back to the
+    // bill-item × averageCost estimate only when a tenant has no recorded
+    // consumption costs (legacy events / no recipe or stock tracking).
+    let cogsSource: 'recorded' | 'estimate' = 'estimate';
+    const soldEvents: any[] = await InventoryEvent.find({
+      restaurantId: objectId(restaurantId),
+      type: 'sold',
+      eventDate: { $gte: start, $lte: end },
+      ...(params.branchId ? { branchId: objectId(params.branchId) } : {}),
+    }).select('item quantity totalCost').lean().exec();
+    const soldWithCost = soldEvents.filter((e) => e.totalCost != null);
+    if (soldEvents.length > 0) {
+      let usageCost = soldWithCost.reduce((s, e) => s + (Number(e.totalCost) || 0), 0);
+      if (soldWithCost.length < soldEvents.length) {
+        // Some events predate cost tracking — value those at averageCost.
+        const fallbackProducts: any[] = await Product.find({
+          restaurantId: objectId(restaurantId),
+          isDeleted: { $ne: true },
+        }).select('name averageCost').limit(1000).lean().exec();
+        const fallbackCostByName = new Map(fallbackProducts.map((p: any) => [String(p.name || '').toLowerCase(), Number(p.averageCost) || 0]));
+        for (const e of soldEvents) {
+          if (e.totalCost != null) continue;
+          usageCost += Math.abs(Number(e.quantity) || 0) * (fallbackCostByName.get(String(e.item || '').toLowerCase()) || 0);
+        }
+      }
+      cogs += Math.round(usageCost * 100) / 100;
+      cogsSource = soldWithCost.length > 0 ? 'recorded' : 'estimate';
+    } else {
+      cogs += await this.billCogsFromInventory(periodItems, restaurantId);
+    }
+
+    // Wastage cost — recorded InventoryEvent 'waste' rows × the item's real
+    // averageCost (rolling purchase average maintained by the stock engine).
+    // Wasted stock is consumed but never sold; it belongs in COGS, not in an
+    // operating-expense bucket, so gross profit reflects true ingredient loss.
+    const wasteEvents: any[] = await InventoryEvent.find({
+      restaurantId: objectId(restaurantId),
+      type: 'waste',
+      eventDate: { $gte: start, $lte: end },
+      ...(params.branchId ? { branchId: objectId(params.branchId) } : {}),
+    }).select('item quantity unit branchId totalCost').lean().exec();
+    if (wasteEvents.length > 0) {
+      // Prefer the REAL FIFO cost recorded at waste time; fall back to the
+      // item's averageCost only for legacy events without a recorded cost.
+      const wasteWithCost = wasteEvents.filter((w) => w.totalCost != null);
+      let wastageCost = wasteWithCost.reduce((s, w) => s + (Number(w.totalCost) || 0), 0);
+      if (wasteWithCost.length < wasteEvents.length) {
+        // Case-insensitive name match against the tenant's real catalog —
+        // events store display names, the catalog is the cost source.
+        const wasteProducts: any[] = await Product.find({
+          restaurantId: objectId(restaurantId),
+          isDeleted: { $ne: true },
+        }).select('name averageCost').limit(1000).lean().exec();
+        const costByName = new Map(wasteProducts.map((p: any) => [String(p.name || '').toLowerCase(), Number(p.averageCost) || 0]));
+        for (const w of wasteEvents) {
+          if (w.totalCost != null) continue;
+          const cost = costByName.get(String(w.item || '').toLowerCase()) || 0;
+          wastageCost += Math.abs(Number(w.quantity) || 0) * cost;
+        }
+      }
+      wastageCost = Math.round(wastageCost * 100) / 100;
+      cogs += wastageCost;
+      expenseLedgerCogs += wastageCost;
+      expenseByCategory['Wastage'] = {
+        amount: wastageCost,
+        count: wasteEvents.length,
+      };
+    }
     cogs = Math.round(cogs * 100) / 100;
+    expenseLedgerCogs = Math.round(expenseLedgerCogs * 100) / 100;
 
     const totalExpenses = Math.round(Object.values(expenseByCategory).reduce((s, c) => s + c.amount, 0) * 100) / 100;
-    const operatingExpenses = Math.round((totalExpenses - cogs) * 100) / 100;
+    // Operating expenses = ledger expenses minus the COGS portion that lives
+    // in the ledger. Usage cost recorded on stock events (sold consumption)
+    // has no expense-ledger counterpart, so subtracting it here as well would
+    // double count it out of profit.
+    const operatingExpenses = Math.round((totalExpenses - expenseLedgerCogs) * 100) / 100;
     const grossProfit = Math.round((revenue - cogs) * 100) / 100;
     const operatingProfit = Math.round((grossProfit - operatingExpenses) * 100) / 100;
     const netProfit = operatingProfit;
@@ -227,6 +344,9 @@ export class FinanceService {
       netProfit,
       totalExpenses,
       expenseByCategory,
+      ingredientPurchases,
+      ingredientPurchaseCount,
+      cogsSource,
       margin: revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0,
     };
   }
@@ -311,6 +431,7 @@ export class FinanceService {
       Bill.aggregate([
         {
           $match: {
+            restaurantId: objectId(restaurantId),
             date: { $gte: start, $lte: end },
             isVoided: { $ne: true },
             isRefunded: { $ne: true },
@@ -445,8 +566,9 @@ export class FinanceService {
     const end = `${y}-12-31`;
 
     const [billAgg, expenseAgg] = await Promise.all([
+      // Tenant-scoped — same rule as pnl(): never mix tenants' bills.
       Bill.aggregate([
-        { $match: { date: { $gte: start, $lte: end }, isVoided: { $ne: true } } },
+        { $match: { restaurantId: objectId(restaurantId), date: { $gte: start, $lte: end }, isVoided: { $ne: true } } },
         {
           $group: {
             _id: { $substr: ['$date', 0, 7] },
@@ -458,10 +580,19 @@ export class FinanceService {
         },
       ]).exec(),
       Expense.aggregate([
-        { $match: { restaurantId: objectId(restaurantId), date: { $gte: start, $lte: end }, isDeleted: { $ne: true } } },
+        {
+          $match: {
+            restaurantId: objectId(restaurantId),
+            date: { $gte: start, $lte: end },
+            isDeleted: { $ne: true },
+            // Purchase-generated expenses are excluded from the usage P&L —
+            // bought stock is priced into COGS when consumed (same rule as pnl()).
+            isSystemGenerated: { $ne: true },
+          },
+        },
         {
           $group: {
-            _id: { month: { $substr: ['$date', 0, 7] }, isCogs: '$isCogs' },
+            _id: { month: { $substr: ['$date', 0, 7] }, isCogs: '$isCogs', category: '$category' },
             amount: { $sum: '$amount' },
           },
         },
@@ -469,11 +600,96 @@ export class FinanceService {
     ]);
 
     const billsByMonth = new Map(billAgg.map((r: any) => [r._id, r]));
+    // Same COGS rule as pnl(): 'auto' uses the system COGS category name,
+    // 'category' uses the per-expense isCogs flag. Grouping by BOTH category
+    // and isCogs lets either mode resolve per row.
+    const settings = await this.getSettings(restaurantId);
+    const cogsMode = settings?.cogsMode || 'auto';
+    const cogsCategoryName = SYSTEM_CATEGORIES.find((c) => c.isCogs)?.name;
     const expenseByMonth = new Map<string, { cogs: number; ops: number }>();
     for (const r of expenseAgg) {
       const entry = expenseByMonth.get(r._id.month) || { cogs: 0, ops: 0 };
-      if (r._id.isCogs) entry.cogs += r.amount; else entry.ops += r.amount;
+      const isCogsRow = cogsMode === 'auto'
+        ? r._id.category === cogsCategoryName
+        : r._id.isCogs === true;
+      if (isCogsRow) entry.cogs += r.amount; else entry.ops += r.amount;
       expenseByMonth.set(r._id.month, entry);
+    }
+
+    // Wastage cost per month — prefer the REAL FIFO cost recorded at waste
+    // time (totalCost); fall back to averageCost for legacy events (same rule
+    // as pnl()).
+    const wasteEvents: any[] = await InventoryEvent.find({
+      restaurantId: objectId(restaurantId),
+      type: 'waste',
+      eventDate: { $gte: start, $lte: end },
+    }).select('item quantity eventDate totalCost').lean().exec();
+    const costByName = new Map<string, number>();
+    if (wasteEvents.some((w) => w.totalCost == null)) {
+      const catalog: any[] = await Product.find({ restaurantId: objectId(restaurantId), isDeleted: { $ne: true } })
+        .select('name averageCost').limit(1000).lean().exec();
+      for (const p of catalog) costByName.set(String(p.name || '').toLowerCase(), Number(p.averageCost) || 0);
+    }
+    const wasteByMonth = new Map<string, number>();
+    for (const w of wasteEvents) {
+      const month = String(w.eventDate || '').slice(0, 7);
+      const cost = w.totalCost != null
+        ? Math.round((Number(w.totalCost) || 0) * 100) / 100
+        : Math.round(Math.abs(Number(w.quantity) || 0) * (costByName.get(String(w.item || '').toLowerCase()) || 0) * 100) / 100;
+      wasteByMonth.set(month, Math.round(((wasteByMonth.get(month) || 0) + cost) * 100) / 100);
+    }
+
+    // Usage COGS per month — prefer recorded FIFO costs from 'sold' events;
+    // only fall back to the bill-item × averageCost estimate when the tenant
+    // has no recorded consumption costs at all (same rule as pnl()).
+    const soldEventsYear: any[] = await InventoryEvent.find({
+      restaurantId: objectId(restaurantId),
+      type: 'sold',
+      eventDate: { $gte: start, $lte: end },
+    }).select('item quantity eventDate totalCost').lean().exec();
+    const soldWithCostYear = soldEventsYear.filter((e) => e.totalCost != null);
+    if (soldEventsYear.length > 0) {
+      for (const e of soldEventsYear) {
+        const month = String(e.eventDate || '').slice(0, 7);
+        let cost = e.totalCost != null ? Number(e.totalCost) || 0 : 0;
+        if (e.totalCost == null) {
+          cost = Math.abs(Number(e.quantity) || 0) * (costByName.get(String(e.item || '').toLowerCase()) || 0);
+        }
+        wasteByMonth.set(month, Math.round(((wasteByMonth.get(month) || 0) + cost) * 100) / 100);
+      }
+    }
+
+    // Estimate fallback only when there are no sold events to derive from.
+    const yearBills: any[] = soldEventsYear.length > 0
+      ? []
+      : await Bill.find({ restaurantId: objectId(restaurantId), date: { $gte: start, $lte: end }, isVoided: { $ne: true } })
+          .select('_id date').lean().exec();
+    const billMonth = new Map<string, string>();
+    for (const b of yearBills) billMonth.set(b._id.toString(), String(b.date).slice(0, 7));
+    const yearItems = yearBills.length > 0
+      ? await BillItem.find({ billId: { $in: yearBills.map((b: any) => b._id) } })
+          .select('billId menuItemId itemName quantity').lean().exec()
+      : [];
+    if (yearItems.length > 0) {
+      const ids = [...new Set(yearItems.map((i: any) => String(i.menuItemId)).filter((id: any) => /^[a-fA-F0-9]{24}$/.test(String(id))))];
+      const names = [...new Set(yearItems.map((i: any) => String(i.itemName || '')).filter(Boolean))];
+      // Tenant-scoped (same rule as billCogsFromInventory).
+      const [byId, byName] = await Promise.all([
+        ids.length > 0 ? Product.find({ _id: { $in: ids.map(objectId) }, restaurantId: objectId(restaurantId), isDeleted: { $ne: true } }).select('_id averageCost').lean().exec() : [],
+        names.length > 0 ? Product.find({ name: { $in: names }, restaurantId: objectId(restaurantId), isDeleted: { $ne: true } }).select('_id name averageCost').lean().exec() : [],
+      ]);
+      const itemCostById = new Map(byId.map((p: any) => [p._id.toString(), Number(p.averageCost) || 0]));
+      const itemCostByName = new Map(byName.map((p: any) => [String(p.name || '').toLowerCase(), Number(p.averageCost) || 0]));
+      for (const it of yearItems) {
+        const month = billMonth.get(String(it.billId));
+        if (!month) continue;
+        let cost = itemCostById.get(String(it.menuItemId));
+        if (cost === undefined) cost = itemCostByName.get(String(it.itemName || '').toLowerCase()) || 0;
+        if (cost > 0) {
+          const lineCost = Math.round(cost * (Number(it.quantity) || 0) * 100) / 100;
+          wasteByMonth.set(month, Math.round(((wasteByMonth.get(month) || 0) + lineCost) * 100) / 100);
+        }
+      }
     }
 
     const months: any[] = [];
@@ -482,7 +698,8 @@ export class FinanceService {
       const b = billsByMonth.get(key) || { revenue: 0, discounts: 0, gst: 0, orders: 0 };
       const e = expenseByMonth.get(key) || { cogs: 0, ops: 0 };
       const revenue = Math.round(b.revenue * 100) / 100;
-      const cogs = Math.round(e.cogs * 100) / 100;
+      // Expense COGS + wastage cost + recipe/inventory COGS (same rule as pnl()).
+      const cogs = Math.round((e.cogs + (wasteByMonth.get(key) || 0)) * 100) / 100;
       const ops = Math.round(e.ops * 100) / 100;
       months.push({
         month: key,
@@ -515,7 +732,15 @@ export class FinanceService {
         },
       ]).exec(),
       Expense.aggregate([
-        { $match: { restaurantId: objectId(restaurantId), date: { $gte: start, $lte: end }, isDeleted: { $ne: true } } },
+        {
+          $match: {
+            restaurantId: objectId(restaurantId),
+            date: { $gte: start, $lte: end },
+            isDeleted: { $ne: true },
+            // Usage view: purchase-generated expenses excluded (same rule as pnl()).
+            isSystemGenerated: { $ne: true },
+          },
+        },
         { $group: { _id: '$branchId', amount: { $sum: '$amount' }, cogs: { $sum: { $cond: ['$isCogs', '$amount', 0] } } } },
       ]).exec(),
     ]);

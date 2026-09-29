@@ -153,34 +153,40 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
   }, [startDate, endDate, billsVersion]);
 
   // ===== FILTER BILLS (offline fallback + ledger-less local views) =====
+  // REPORTING INTEGRITY: voided bills are not sales — exclude them from every
+  // offline estimate (mirrors the backend aggregations, which $match
+  // isVoided != true).
   const currentBills = useMemo(() =>
-    bills.filter(b => b.date >= startDate && b.date <= endDate),
+    bills.filter(b => !b.isVoided && b.date >= startDate && b.date <= endDate),
   [bills, startDate, endDate]);
 
   const previousBills = useMemo(() =>
-    bills.filter(b => b.date >= previousStartDate && b.date <= previousEndDate),
+    bills.filter(b => !b.isVoided && b.date >= previousStartDate && b.date <= previousEndDate),
   [bills, previousStartDate, previousEndDate]);
 
   // ─── Local estimates — OFFLINE FALLBACK ONLY ─────────────────────
-  const localRevenue = useMemo(() => currentBills.reduce((s, b) => s + b.grandTotal, 0), [currentBills]);
+  // Refunded bills contribute only their net (paid) amount — same rule as the
+  // backend net-revenue expression (grandTotal − refundAmount).
+  const netTotal = (b: Bill): number => (b.isRefunded ? Math.max(0, b.grandTotal - (b.refundAmount || 0)) : b.grandTotal);
+  const localRevenue = useMemo(() => currentBills.reduce((s, b) => s + netTotal(b), 0), [currentBills]);
   const localOrders = useMemo(() => currentBills.length, [currentBills]);
   const localAvgOrder = useMemo(() => localOrders > 0 ? localRevenue / localOrders : 0, [localRevenue, localOrders]);
   const localItems = useMemo(() => currentBills.reduce((s, b) => s + b.items.reduce((si, i) => si + i.quantity, 0), 0), [currentBills]);
   const localDiscount = useMemo(() => currentBills.reduce((s, b) => s + b.discount, 0), [currentBills]);
-  const localPrevRevenue = useMemo(() => previousBills.reduce((s, b) => s + b.grandTotal, 0), [previousBills]);
+  const localPrevRevenue = useMemo(() => previousBills.reduce((s, b) => s + netTotal(b), 0), [previousBills]);
   const localPrevOrders = useMemo(() => previousBills.length, [previousBills]);
   const localPrevAvgOrder = useMemo(() => localPrevOrders > 0 ? localPrevRevenue / localPrevOrders : 0, [localPrevRevenue, localPrevOrders]);
   const localPrevItems = useMemo(() => previousBills.reduce((s, b) => s + b.items.reduce((si, i) => si + i.quantity, 0), 0), [previousBills]);
 
   const localExpenses = useMemo(() =>
-    expenses.filter(e => e.date >= startDate && e.date <= endDate).reduce((s, e) => s + e.amount, 0),
+    expenses.filter(e => !e.isDeleted && e.date >= startDate && e.date <= endDate).reduce((s, e) => s + e.amount, 0),
   [expenses, startDate, endDate]);
 
   const localTrendData = useMemo(() => {
     const map: Record<string, { revenue: number; orders: number; items: number }> = {};
     currentBills.forEach(b => {
       if (!map[b.date]) map[b.date] = { revenue: 0, orders: 0, items: 0 };
-      map[b.date].revenue += b.grandTotal;
+      map[b.date].revenue += netTotal(b);
       map[b.date].orders += 1;
       map[b.date].items += b.items.reduce((s, i) => s + i.quantity, 0);
     });
@@ -248,7 +254,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
     currentBills.forEach(b => {
       if (!map[b.cashierName]) map[b.cashierName] = { orders: 0, revenue: 0, items: 0 };
       map[b.cashierName].orders += 1;
-      map[b.cashierName].revenue += b.grandTotal;
+      map[b.cashierName].revenue += netTotal(b);
       map[b.cashierName].items += b.items.reduce((s, i) => s + i.quantity, 0);
     });
     return Object.entries(map)
@@ -259,7 +265,7 @@ export default function AnalyticsWorkspace({ bills, expenses, currencySymbol }: 
   const localPaymentMethodData = useMemo(() => {
     const map: Record<string, number> = {};
     currentBills.forEach(b => {
-      map[b.paymentMethod] = (map[b.paymentMethod] || 0) + b.grandTotal;
+      map[b.paymentMethod] = (map[b.paymentMethod] || 0) + netTotal(b);
     });
     return Object.entries(map)
       .map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }))
