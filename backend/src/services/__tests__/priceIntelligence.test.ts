@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../models/Product', () => ({
+vi.mock('../../models/catalog/Product', () => ({
   default: { find: vi.fn() },
 }));
 
@@ -34,7 +34,7 @@ vi.mock('../../modules/recipes/services/costIntelligenceCore', () => ({
 }));
 
 import { getPriceIntelligence, TARGET_MARGIN_PCT, COST_SPIKE_PCT, DETERIORATION_PP } from '../priceIntelligenceService';
-import ProductModel from '../../models/Product';
+import ProductModel from '../../models/catalog/Product';
 import { costIntelligenceCore } from '../../modules/recipes/services/costIntelligenceCore';
 
 const REST = '507f1f77bcf86cd799439011';

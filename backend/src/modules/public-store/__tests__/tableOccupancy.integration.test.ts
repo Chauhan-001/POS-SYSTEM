@@ -2,10 +2,10 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Restaurant from '../../../models/Restaurant';
-import Table from '../../../models/Table';
-import Order from '../../../models/Order';
-import Product from '../../../models/Product';
+import Restaurant from '../../../models/core/Restaurant';
+import Table from '../../../models/orders/Table';
+import Order from '../../../models/orders/Order';
+import Product from '../../../models/catalog/Product';
 import QROrderingSession from '../../qr-ordering/models/QROrderingSession';
 import { publicStoreOrderService } from '../services/publicStoreOrderService';
 import { generatePublicToken } from '../../../utils/publicToken';

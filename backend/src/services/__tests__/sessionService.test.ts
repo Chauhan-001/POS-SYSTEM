@@ -10,8 +10,8 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { sessionService, hashToken } from '../sessionService';
-import RefreshToken from '../../models/RefreshToken';
-import AuditLog from '../../models/AuditLog';
+import RefreshToken from '../../models/core/RefreshToken';
+import AuditLog from '../../models/admin/AuditLog';
 
 let mongod: MongoMemoryServer;
 const USER = new mongoose.Types.ObjectId();

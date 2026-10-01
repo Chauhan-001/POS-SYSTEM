@@ -2,9 +2,9 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
-import Product from '../../../models/Product';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
+import Product from '../../../models/catalog/Product';
 import { productReportService } from '../services';
 
 let mongod: MongoMemoryServer;

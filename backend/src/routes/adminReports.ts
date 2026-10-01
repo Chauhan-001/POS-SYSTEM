@@ -14,7 +14,7 @@ import { Router } from 'express';
 // Admin-dashboard gate: accepts ONLY admin-surface (super_admin) tokens.
 import { requireAdminAuth as requireAuth } from '../middleware/authMiddleware';
 import { requireCollectionAccess } from '../middleware/authorizationMiddleware';
-import type { AuthorizationAction } from '../models/Authorization';
+import type { AuthorizationAction } from '../models/core/Authorization';
 import { cached } from '../utils/ResponseCache';
 import { validate } from '../middleware/validate';
 import {
@@ -43,7 +43,7 @@ import {
   downloadReportExport,
   runReportSnapshots,
   listReportSnapshots,
-} from '../controllers/adminReportsController';
+} from '../controllers/admin/adminReportsController';
 
 const router: Router = Router();
 

@@ -84,8 +84,8 @@ router.get('/feedback', requireAuth, requireRole('Owner', 'Manager'), async (req
     }
 
     // Dynamic import to avoid circular deps
-    const { default: ReceiptFeedback } = await import('../models/ReceiptFeedback');
-    const { default: Bill } = await import('../models/Bill');
+    const { default: ReceiptFeedback } = await import('../models/customers/ReceiptFeedback');
+    const { default: Bill } = await import('../models/intelligence/Bill');
 
     const page = Math.max(1, parseInt(String(req.query.page)) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit)) || 20));

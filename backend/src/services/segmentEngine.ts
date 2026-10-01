@@ -8,9 +8,9 @@
  * All segments update automatically.
  */
 
-import CustomerModel from '../models/Customer';
-import type { SegmentType, ICustomerSegment } from '../models/CustomerSegment';
-import CustomerSegmentModel from '../models/CustomerSegment';
+import CustomerModel from '../models/customers/Customer';
+import type { SegmentType, ICustomerSegment } from '../models/customers/CustomerSegment';
+import CustomerSegmentModel from '../models/customers/CustomerSegment';
 import mongoose from 'mongoose';
 
 // ─── Segment Definitions ──────────────────────────────────────

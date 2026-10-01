@@ -11,6 +11,8 @@
     "test:watch": "vitest",
     "audit:fact-consistency": "npx tsx scripts/audit-fact-consistency.ts",
     "audit:fact-consistency:live": "npx tsx scripts/audit-fact-consistency.ts --live",
+    "seed:calendar": "npx tsx scripts/seed-calendar-demo.ts",
+    "seed:calendar:clean": "npx tsx scripts/seed-calendar-demo.ts --clean",
     "audit:security": "npm audit --audit-level=high",
     "typecheck": "tsc --noEmit",
     "seed:demo": "npx tsx scripts/seed-demo.ts",

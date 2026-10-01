@@ -23,8 +23,8 @@
  *   HIGH_DISCOUNT_RATE = 20% of combo revenue given up as structural savings
  */
 
-import OfferModel from '../models/Offer';
-import ProductModel from '../models/Product';
+import OfferModel from '../models/marketing/Offer';
+import ProductModel from '../models/catalog/Product';
 import { getComboAnalytics, classifyCombo, type ComboAnalyticsSummary } from './offerAnalyticsService';
 import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
 import { resolveMenuProductScope } from './productService';

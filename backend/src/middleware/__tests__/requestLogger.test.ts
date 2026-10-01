@@ -17,11 +17,11 @@ import { EventEmitter } from 'events';
 import { requestLogger } from '../requestLogger';
 
 // Mock AuditLog so no DB is needed.
-vi.mock('../../models/AuditLog', () => ({
+vi.mock('../../models/admin/AuditLog', () => ({
   default: { create: vi.fn().mockResolvedValue({ _id: 'log_1' }) },
 }));
 
-import AuditLog from '../../models/AuditLog';
+import AuditLog from '../../models/admin/AuditLog';
 
 /** Build a fake res that supports res.on('finish') and status/json. */
 function fakeRes(): EventEmitter & { statusCode: number; status: any; json: any } {

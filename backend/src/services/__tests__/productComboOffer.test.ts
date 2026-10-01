@@ -20,8 +20,8 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Product from '../../models/Product';
-import Offer from '../../models/Offer';
+import Product from '../../models/catalog/Product';
+import Offer from '../../models/marketing/Offer';
 import { productService } from '../index';
 
 let mongod: MongoMemoryServer;

@@ -46,33 +46,33 @@ import { isKotAlertEnabled, playKotAlertSound } from './lib/alertSound';
 
 import { useAuth } from './hooks/useAuth';
 // Eagerly loaded workspace components (core POS flow — needed offline)
-import FirstTimeSetup from '../components/FirstTimeSetup';
-import LoginScreen from '../components/LoginScreen';
-import PinLoginScreen from '../components/PinLoginScreen';
+import FirstTimeSetup from './components/auth/FirstTimeSetup';
+import LoginScreen from './components/auth/LoginScreen';
+import PinLoginScreen from './components/auth/PinLoginScreen';
 import { useAutoLock } from './hooks/useAutoLock';
-import ReceiptModal from '../components/ReceiptModal';
-import ShortcutsGuide from '../components/ShortcutsGuide';
-import KOTModal from '../components/KOTModal';
-import OrderTimeline from '../components/OrderTimeline';
-import AddOnModal, { hasCustomizationOptions, getAddOnsForCategory } from '../components/AddOnModal';
-import ConfiguredItemModal from '../components/ConfiguredItemModal';
+import ReceiptModal from './components/receipts/ReceiptModal';
+import ShortcutsGuide from './components/shell/ShortcutsGuide';
+import KOTModal from './components/orders/KOTModal';
+import OrderTimeline from './components/orders/OrderTimeline';
+import AddOnModal, { hasCustomizationOptions, getAddOnsForCategory } from './components/billing/AddOnModal';
+import ConfiguredItemModal from './components/billing/ConfiguredItemModal';
 import { hasConfigSelection } from './lib/configSelection';
 import { useConfigCatalog } from './hooks/useConfigCatalog';
 import type { ResolvedProductConfig } from './types';
-import AppTitleBar from '../components/AppTitleBar';
-import AppSidebar from '../components/AppSidebar';
-import ErrorBoundary from './components/ErrorBoundary';
-import CustomerSearchPopup from './components/CustomerSearchPopup';
-import DashboardWorkspace from '../components/DashboardWorkspace';
-import OrderManager from '../components/OrderManager';
-import BillingProductGrid from '../components/BillingProductGrid';
-import CartPanel from '../components/CartPanel';
-import KitchenDisplay from '../components/KitchenDisplay';
-import MoreWorkspace from '../components/MoreWorkspace';
-import PlanSelectionPage from '../components/PlanSelectionPage';
-import ReceiptLoader from '../components/ReceiptLoader';
+import AppTitleBar from './components/shell/AppTitleBar';
+import AppSidebar from './components/shell/AppSidebar';
+import ErrorBoundary from './components/shell/ErrorBoundary';
+import CustomerSearchPopup from './components/customers/CustomerSearchPopup';
+import DashboardWorkspace from './components/insights/DashboardWorkspace';
+import OrderManager from './components/orders/OrderManager';
+import BillingProductGrid from './components/billing/BillingProductGrid';
+import CartPanel from './components/billing/CartPanel';
+import KitchenDisplay from './components/orders/KitchenDisplay';
+import MoreWorkspace from './components/shell/MoreWorkspace';
+import PlanSelectionPage from './components/settings/PlanSelectionPage';
+import ReceiptLoader from './components/receipts/ReceiptLoader';
 // Type-only import for TourActions (used in tourActions object)
-import type { TourActions } from '../components/GuidedTour';
+import type { TourActions } from './components/shell/GuidedTour';
 
 // Lazy-loaded admin/settings workspace components (rarely used, heavy dependencies).
 // Phase 1.10: every lazy import is wrapped in `safeLazy` so a chunk that fails to
@@ -182,25 +182,26 @@ function safeLazy(loader: () => Promise<{ default: React.ComponentType<any> }>) 
   return Wrapper;
 }
 
-const ProductManager = safeLazy(() => import('../components/ProductManager'));
-const MenuAvailabilityPage = safeLazy(() => import('../components/MenuAvailabilityPage'));
-const QrStudioPage = safeLazy(() => import('../components/QrStudioPage'));
-const CustomerCallsPanel = safeLazy(() => import('../components/CustomerCallsPanel'));
-const LegalAcceptanceGate = safeLazy(() => import('../components/LegalAcceptanceGate'));
-const CustomerManager = safeLazy(() => import('../components/CustomerManager'));
-const OffersManager = safeLazy(() => import('../components/OffersManager'));
-const ReportsManager = safeLazy(() => import('../components/ReportsManager'));
-const StaffManager = safeLazy(() => import('../components/StaffManager'));
-const SettingsManager = safeLazy(() => import('../components/SettingsManager'));
-const BranchManager = safeLazy(() => import('../components/BranchManager'));
-const ReceiptHistory = safeLazy(() => import('../components/ReceiptHistory'));
-const ExpenseManager = safeLazy(() => import('../components/ExpenseManager'));
-const ReservationWorkspace = safeLazy(() => import('../components/ReservationWorkspace'));
-const AnalyticsWorkspace = safeLazy(() => import('../components/AnalyticsWorkspace'));
-const FinanceWorkspace = safeLazy(() => import('../components/FinanceWorkspace'));
-const InventoryManager = safeLazy(() => import('../components/inventory/InventoryManager'));
-const FeedbackPanel = safeLazy(() => import('../components/marketing/FeedbackPanel'));
-const GuidedTour = safeLazy(() => import('../components/GuidedTour'));
+const ProductManager = safeLazy(() => import('./components/menu/ProductManager'));
+const MenuAvailabilityPage = safeLazy(() => import('./components/menu/MenuAvailabilityPage'));
+const QrStudioPage = safeLazy(() => import('./components/marketing/QrStudioPage'));
+const CustomerCallsPanel = safeLazy(() => import('./components/customers/CustomerCallsPanel'));
+const LegalAcceptanceGate = safeLazy(() => import('./components/auth/LegalAcceptanceGate'));
+const CustomerManager = safeLazy(() => import('./components/customers/CustomerManager'));
+const OffersManager = safeLazy(() => import('./components/marketing/OffersManager'));
+const ReportsManager = safeLazy(() => import('./components/insights/ReportsManager'));
+const StaffManager = safeLazy(() => import('./components/settings/StaffManager'));
+const SettingsManager = safeLazy(() => import('./components/settings/SettingsManager'));
+const BranchManager = safeLazy(() => import('./components/settings/BranchManager'));
+const ReceiptHistory = safeLazy(() => import('./components/receipts/ReceiptHistory'));
+const ExpenseManager = safeLazy(() => import('./components/finance/ExpenseManager'));
+const ReservationWorkspace = safeLazy(() => import('./components/orders/ReservationWorkspace'));
+const AnalyticsWorkspace = safeLazy(() => import('./components/insights/AnalyticsWorkspace'));
+const FinanceWorkspace = safeLazy(() => import('./components/finance/FinanceWorkspace'));
+const InventoryManager = safeLazy(() => import('./components/inventory/InventoryManager'));
+const FeedbackPanel = safeLazy(() => import('./components/marketing/FeedbackPanel'));
+const MLInsightsWorkspace = safeLazy(() => import('./components/insights/MLInsightsWorkspace'));
+const GuidedTour = safeLazy(() => import('./components/shell/GuidedTour'));
 
 // Hooks
 import { useNotifications } from './hooks/useNotifications';
@@ -211,21 +212,21 @@ import { useLoyalty } from './hooks/useLoyalty';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { usePOSLiveEvents } from './hooks/usePOSLiveEvents';
 import { useKotAlertSound } from './hooks/useKotAlertSound';
-import { isOrderResolvedStatus, type PendingCall } from '../components/CustomerCallsPanel';
+import { isOrderResolvedStatus, type PendingCall } from './components/customers/CustomerCallsPanel';
 // Modal components
-import ConfirmationDialog from './components/modals/ConfirmationDialog';
-import PaymentConfirmModal from './components/modals/PaymentConfirmModal';
-import KOTPreviewModal from './components/modals/KOTPreviewModal';
-import OffersPopup from './components/modals/OffersPopup';
-import SplitPaymentModal from './components/modals/SplitPaymentModal';
-import OTPVerificationModal from './components/modals/OTPVerificationModal';
-import HeldOrdersDrawer from './components/modals/HeldOrdersDrawer';
-import DailySalesModal from './components/modals/DailySalesModal';
-import ActivityFeedModal from './components/modals/ActivityFeedModal';
-import ZReportModal from './components/modals/ZReportModal';
-import SyncPanelModal from './components/modals/SyncPanelModal';
-import VoidReasonModal from './components/modals/VoidReasonModal';
-import BillActionModal from './components/modals/BillActionModal';
+import ConfirmationDialog from './components/shell/ConfirmationDialog';
+import PaymentConfirmModal from './components/billing/PaymentConfirmModal';
+import KOTPreviewModal from './components/orders/KOTPreviewModal';
+import OffersPopup from './components/marketing/OffersPopup';
+import SplitPaymentModal from './components/billing/SplitPaymentModal';
+import OTPVerificationModal from './components/auth/OTPVerificationModal';
+import HeldOrdersDrawer from './components/orders/HeldOrdersDrawer';
+import DailySalesModal from './components/finance/DailySalesModal';
+import ActivityFeedModal from './components/insights/ActivityFeedModal';
+import ZReportModal from './components/finance/ZReportModal';
+import SyncPanelModal from './components/settings/SyncPanelModal';
+import VoidReasonModal from './components/billing/VoidReasonModal';
+import BillActionModal from './components/billing/BillActionModal';
 
 export default function App() {
   // Toast/notifications
@@ -957,6 +958,7 @@ export default function App() {
     Expenses: { manager: 'managerCanManageExpenses', cashier: 'cashierCanManageExpenses' },
     Reservations: { manager: 'managerCanAccessReservations', cashier: 'cashierCanAccessReservations' },
     Analytics: { manager: 'managerCanAccessAnalytics', cashier: 'cashierCanAccessAnalytics' },
+    MLInsights: { manager: 'managerCanAccessAnalytics', cashier: 'cashierCanAccessAnalytics' },
     Finance: { manager: 'managerCanAccessFinance', cashier: 'cashierCanAccessFinance' },
     Inventory: { manager: 'managerCanAccessInventory', cashier: 'cashierCanAccessInventory' },
     InventoryDashboard: { manager: 'managerCanAccessInventory', cashier: 'cashierCanAccessInventory' },
@@ -2239,6 +2241,7 @@ export default function App() {
                   })()}
                   currentBranchName={pos.currentBranch?.name}
                   showBranchIndicator={pos.isMultiBranchEnabled && !!pos.currentBranch}
+                  isMultiBranchOwner={pos.isMultiBranchEnabled && ['Owner', 'Manager'].includes(pos.currentEmployee?.role)}
                   onNavigate={(ws) => pos.setActiveWorkspace(ws as any)}
                   onOpenDailySales={() => pos.setIsDailySalesOpen(true)}
                   onOpenZReport={() => pos.setIsZReportOpen(true)}
@@ -2604,6 +2607,18 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Inventory' && pos.hasInventory && (
                 <div className="flex flex-col flex-1 min-h-0"><InventoryManager onBack={() => pos.setActiveWorkspace('More')} moduleSettings={pos.moduleSettings} products={pos.products} /></div>
+              )}
+              {pos.activeWorkspace === 'MLInsights' && (
+                <div className="flex flex-col flex-1 min-h-0">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
+                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">ML Insights</span>
+                    <span className="text-[10px] text-gray-400 ml-auto">Demand · Combos · Uplift</span>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    <MLInsightsWorkspace currencySymbol={pos.effectiveSettings.currencySymbol} />
+                  </div>
+                </div>
               )}
               {pos.activeWorkspace === 'Feedback' && (
                 <div className="flex flex-col flex-1 min-h-0">

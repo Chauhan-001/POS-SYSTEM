@@ -20,11 +20,11 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { billService } from '../index';
 import { stockMovementService } from '../stockMovementService';
 import { loyaltyService } from '../index';
-import Bill from '../../models/Bill';
-import BillItem from '../../models/BillItem';
-import Product from '../../models/Product';
-import DailySummary from '../../models/DailySummary';
-import InvoiceCounter from '../../models/InvoiceCounter';
+import Bill from '../../models/intelligence/Bill';
+import BillItem from '../../models/intelligence/BillItem';
+import Product from '../../models/catalog/Product';
+import DailySummary from '../../models/finance/DailySummary';
+import InvoiceCounter from '../../models/orders/InvoiceCounter';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId().toString();

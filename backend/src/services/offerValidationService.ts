@@ -12,12 +12,12 @@
  */
 
 import mongoose from 'mongoose';
-import Offer from '../models/Offer';
-import Customer from '../models/Customer';
-import CustomerSegment from '../models/CustomerSegment';
-import CouponRedemption from '../models/CouponRedemption';
-import Product from '../models/Product';
-import ProductVariant from '../models/ProductVariant';
+import Offer from '../models/marketing/Offer';
+import Customer from '../models/customers/Customer';
+import CustomerSegment from '../models/customers/CustomerSegment';
+import CouponRedemption from '../models/customers/CouponRedemption';
+import Product from '../models/catalog/Product';
+import ProductVariant from '../models/catalog/ProductVariant';
 import { AppError } from '../utils/AppError';
 import { couponRedemptionRepo, customerActivityRepo, auditLogRepo } from '../repositories';
 import { recordOfferRedemption } from './offerAnalyticsService';

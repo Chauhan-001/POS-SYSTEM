@@ -16,9 +16,9 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { billService } from '../index';
-import Bill from '../../models/Bill';
-import BillItem from '../../models/BillItem';
-import AuditLog from '../../models/AuditLog';
+import Bill from '../../models/intelligence/Bill';
+import BillItem from '../../models/intelligence/BillItem';
+import AuditLog from '../../models/admin/AuditLog';
 import { stockMovementService } from '../stockMovementService';
 import { loyaltyService } from '../index';
 

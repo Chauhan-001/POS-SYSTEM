@@ -13,11 +13,11 @@
  */
 
 import mongoose from 'mongoose';
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
 import { dailySummaryRepo, monthlySummaryRepo, yearlySummaryRepo } from '../../../repositories';
-import MonthlySummary from '../../../models/MonthlySummary';
-import YearlySummary from '../../../models/YearlySummary';
+import MonthlySummary from '../../../models/finance/MonthlySummary';
+import YearlySummary from '../../../models/finance/YearlySummary';
 import { dateRange, ReportScope } from './salesReportService';
 
 function objectId(v: string): mongoose.Types.ObjectId {

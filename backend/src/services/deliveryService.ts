@@ -20,7 +20,7 @@
 import mongoose from 'mongoose';
 import { createHmac } from 'node:crypto';
 import { URL } from 'node:url';
-import Restaurant from '../models/Restaurant';
+import Restaurant from '../models/core/Restaurant';
 import WhatsAppIntegration from '../modules/whatsapp/models/WhatsAppIntegration';
 import { decrypt } from '../modules/whatsapp/services/credentialCrypto';
 import { whatsappMessageService } from '../modules/whatsapp/services/whatsappMessageService';

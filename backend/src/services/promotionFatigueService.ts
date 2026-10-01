@@ -9,7 +9,7 @@
  * Fatigue detection is based on measured outcomes, not opaque predictions.
  */
 
-import IRecommendationOutcome from '../models/RecommendationOutcome';
+import IRecommendationOutcome from '../models/intelligence/RecommendationOutcome';
 import mongoose from 'mongoose';
 
 const PROMOTION_FATIGUE_WINDOW = 90; // days

@@ -13,7 +13,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import ConfigurationTemplate from '../models/ConfigurationTemplate';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import { buildCatalog } from '../services/catalogService';
 
 let mongod: MongoMemoryServer;

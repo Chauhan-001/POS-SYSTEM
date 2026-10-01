@@ -11,8 +11,8 @@
 
 import mongoose from 'mongoose';
 import { vendorRepo, auditLogRepo } from '../repositories';
-import Expense from '../models/Expense';
-import Purchase from '../models/Purchase';
+import Expense from '../models/finance/Expense';
+import Purchase from '../models/catalog/Purchase';
 import { AppError } from '../utils/AppError';
 
 export class VendorService {

@@ -9,10 +9,10 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
-import InventoryEventModel from '../models/InventoryEvent';
-import PurchaseModel from '../models/Purchase';
-import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/IntelligenceSignal';
+import ProductModel from '../models/catalog/Product';
+import InventoryEventModel from '../models/catalog/InventoryEvent';
+import PurchaseModel from '../models/catalog/Purchase';
+import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 import { computeProductBaselines, ProductBaseline } from './salesBaselineService';
 
 export interface WastageItem {

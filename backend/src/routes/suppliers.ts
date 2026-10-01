@@ -14,7 +14,7 @@ import {
   createSupplier,
   updateSupplier,
   deleteSupplier,
-} from '../controllers/suppliersController';
+} from '../controllers/catalog/suppliersController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

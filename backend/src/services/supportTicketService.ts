@@ -21,13 +21,13 @@
  */
 
 import crypto from 'crypto';
-import SupportTicket, { TicketStatus, TicketTimelineEntry, TicketAttachmentMeta } from '../models/SupportTicket';
-import type { TicketCategory, TicketPriority, TicketSource } from '../models/SupportTicket';
-import TicketReply from '../models/TicketReply';
-import TicketCounter from '../models/TicketCounter';
-import Restaurant from '../models/Restaurant';
-import User from '../models/User';
-import AuditLog from '../models/AuditLog';
+import SupportTicket, { TicketStatus, TicketTimelineEntry, TicketAttachmentMeta } from '../models/admin/SupportTicket';
+import type { TicketCategory, TicketPriority, TicketSource } from '../models/admin/SupportTicket';
+import TicketReply from '../models/admin/TicketReply';
+import TicketCounter from '../models/admin/TicketCounter';
+import Restaurant from '../models/core/Restaurant';
+import User from '../models/core/User';
+import AuditLog from '../models/admin/AuditLog';
 import { mediaService } from '../modules/media';
 import { auditLogRepo } from '../repositories';
 import { AppError } from '../utils/AppError';

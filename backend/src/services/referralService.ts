@@ -13,8 +13,8 @@
  */
 
 import mongoose from 'mongoose';
-import Customer from '../models/Customer';
-import Referral from '../models/Referral';
+import Customer from '../models/customers/Customer';
+import Referral from '../models/customers/Referral';
 import { AppError } from '../utils/AppError';
 import { referralRepo, customerRepo, customerActivityRepo, auditLogRepo } from '../repositories';
 import { loyaltyService, customerService } from './index';

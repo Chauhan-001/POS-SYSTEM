@@ -18,7 +18,7 @@
  */
 
 import { getUpcomingFestivals, isFestivalSeason } from './festivalService';
-import type { OfferRecommendationSource } from '../models/Offer';
+import type { OfferRecommendationSource } from '../models/marketing/Offer';
 
 // ─── Interfaces ─────────────────────────────────────────────────
 

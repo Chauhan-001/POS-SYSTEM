@@ -25,40 +25,40 @@ import mongoose from 'mongoose';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import Restaurant from '../models/Restaurant';
-import Subscription from '../models/Subscription';
-import SubscriptionPlan from '../models/SubscriptionPlan';
-import Branch from '../models/Branch';
-import License from '../models/License';
-import Device from '../models/Device';
-import DeviceActivity from '../models/DeviceActivity';
-import Employee from '../models/Employee';
-import Payment from '../models/Payment';
-import Invoice from '../models/Invoice';
-import InvoiceCounter from '../models/InvoiceCounter';
-import User from '../models/User';
-import Bill from '../models/Bill';
-import Product from '../models/Product';
-import Customer from '../models/Customer';
-import LoyaltyTransaction from '../models/LoyaltyTransaction';
-import AIUsageLog from '../models/AIUsageLog';
+import Restaurant from '../models/core/Restaurant';
+import Subscription from '../models/core/Subscription';
+import SubscriptionPlan from '../models/core/SubscriptionPlan';
+import Branch from '../models/core/Branch';
+import License from '../models/core/License';
+import Device from '../models/core/Device';
+import DeviceActivity from '../models/core/DeviceActivity';
+import Employee from '../models/core/Employee';
+import Payment from '../models/orders/Payment';
+import Invoice from '../models/orders/Invoice';
+import InvoiceCounter from '../models/orders/InvoiceCounter';
+import User from '../models/core/User';
+import Bill from '../models/intelligence/Bill';
+import Product from '../models/catalog/Product';
+import Customer from '../models/customers/Customer';
+import LoyaltyTransaction from '../models/customers/LoyaltyTransaction';
+import AIUsageLog from '../models/core/AIUsageLog';
 import VoiceAuditLog from '../modules/voice-inventory/models/VoiceAuditLog';
-import Expense from '../models/Expense';
-import Offer from '../models/Offer';
-import Reward from '../models/Reward';
-import Reservation from '../models/Reservation';
-import Table from '../models/Table';
-import Floor from '../models/Floor';
-import Purchase from '../models/Purchase';
-import DailySummary from '../models/DailySummary';
-import MonthlySummary from '../models/MonthlySummary';
-import YearlySummary from '../models/YearlySummary';
-import Order from '../models/Order';
-import TakeawayOrder from '../models/TakeawayOrder';
-import HeldOrder from '../models/HeldOrder';
-import CustomerActivity from '../models/CustomerActivity';
-import CustomerVisit from '../models/CustomerVisit';
-import BranchSettings from '../models/BranchSettings';
+import Expense from '../models/finance/Expense';
+import Offer from '../models/marketing/Offer';
+import Reward from '../models/customers/Reward';
+import Reservation from '../models/orders/Reservation';
+import Table from '../models/orders/Table';
+import Floor from '../models/orders/Floor';
+import Purchase from '../models/catalog/Purchase';
+import DailySummary from '../models/finance/DailySummary';
+import MonthlySummary from '../models/finance/MonthlySummary';
+import YearlySummary from '../models/finance/YearlySummary';
+import Order from '../models/orders/Order';
+import TakeawayOrder from '../models/orders/TakeawayOrder';
+import HeldOrder from '../models/orders/HeldOrder';
+import CustomerActivity from '../models/customers/CustomerActivity';
+import CustomerVisit from '../models/customers/CustomerVisit';
+import BranchSettings from '../models/core/BranchSettings';
 import RestaurantSettings from '../modules/settings/models/RestaurantSettings';
 import Printer from '../modules/settings/models/Printer';
 import { hashPin } from '../utils/bcrypt';
@@ -85,7 +85,7 @@ const ALLOWED_SORTS = ['name', 'createdAt', 'updatedAt', 'plan', 'status'];
 const UPDATEABLE_FIELDS = [
   'name', 'legalName', 'brandName', 'restaurantType', 'cuisineType', 'phone', 'altPhone',
   'email', 'website', 'description', 'notes', 'extraInfo', 'gst', 'fssai', 'pan',
-  'businessRegNumber', 'ownerName', 'ownerPhone', 'ownerEmail', 'emergencyContact',
+  'businessRegNumber', 'establishedDate', 'ownerName', 'ownerPhone', 'ownerEmail', 'emergencyContact',
   'identityType', 'identityNumber', 'address', 'area', 'city', 'district', 'state',
   'country', 'pinCode', 'latitude', 'longitude', 'timezone', 'currency', 'gstEnabled',
   'printerType', 'receiptWidth', 'taxMode', 'offlineMode', 'aiEnabled', 'loyaltyEnabled',
@@ -117,6 +117,7 @@ function toRestaurantRow(r: any, sub: any, branchCount: number, deviceCount: num
     fssai: r.fssai,
     pan: r.pan,
     businessRegNumber: r.businessRegNumber,
+    establishedDate: r.establishedDate ?? null,
     ownerName: r.ownerName || r.name,
     ownerPhone: r.ownerPhone || r.phone,
     ownerEmail: r.ownerEmail || r.email || '',
@@ -356,6 +357,15 @@ export class RestaurantService {
 
     const now = new Date();
 
+    // Defense in depth: routes validate establishedDate via zod, but the
+    // service is callable from other paths — never persist a bogus/future date.
+    if (body.establishedDate) {
+      const ts = new Date(`${body.establishedDate}T00:00:00Z`).getTime();
+      if (Number.isNaN(ts) || ts > Date.now()) {
+        throw new AppError(400, 'establishedDate must be a valid date not in the future');
+      }
+    }
+
     // ─── Phase A: create the Restaurant doc ───────────────────────
     const restaurant = await Restaurant.create({
       restaurantId,
@@ -375,6 +385,7 @@ export class RestaurantService {
       fssai: body.fssai,
       pan: body.pan,
       businessRegNumber: body.businessRegNumber,
+      establishedDate: body.establishedDate ? new Date(`${body.establishedDate}T00:00:00Z`) : undefined,
       ownerName: body.ownerName || name,
       ownerPhone: body.ownerPhone || body.phone,
       ownerEmail: body.ownerEmail || body.email,
@@ -653,6 +664,14 @@ export class RestaurantService {
       if (!UPDATEABLE_FIELDS.includes(key)) continue;
       updates[key] = body[key];
       sanitized[key] = body[key];
+    }
+
+    // Normalize date fields (validated as YYYY-MM-DD strings upstream);
+    // an empty string clears the field.
+    if ('establishedDate' in updates) {
+      updates.establishedDate = updates.establishedDate
+        ? new Date(`${updates.establishedDate}T00:00:00Z`)
+        : null;
     }
 
     const subUpdates: Record<string, any> = {};

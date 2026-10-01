@@ -18,7 +18,7 @@
 import { orderRepo, orderItemRepo, kotRecordRepo, timelineEventRepo, takeawayOrderRepo } from '../repositories';
 import { tableStateService, type ReconcileCtx } from './tableStateService';
 import { OrderCounter, Order, TakeawayOrder } from '../models';
-import KOTRecord, { kotToFrontend } from '../models/KOTRecord';
+import KOTRecord, { kotToFrontend } from '../models/orders/KOTRecord';
 import { AppError } from '../utils/AppError';
 
 const TERMINAL_ORDER_STATUSES = ['Paid', 'Closed', 'Cancelled', 'Refunded', 'Held'];

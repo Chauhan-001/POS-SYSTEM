@@ -13,7 +13,7 @@ import {
   getCategoryForecastHandler,
   getProductForecastHandler,
   getForecastExplainHandler,
-} from '../controllers/forecastController';
+} from '../controllers/finance/forecastController';
 import { requireAuth } from '../middleware/authMiddleware';
 
 const router = Router();

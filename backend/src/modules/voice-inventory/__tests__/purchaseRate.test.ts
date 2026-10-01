@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import VoicePendingAction from '../models/VoicePendingAction';
 import { issuePendingAction } from '../services/PendingActionService';
 import { updateInventory } from '../services/InventoryService';

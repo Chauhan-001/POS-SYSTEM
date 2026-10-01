@@ -16,7 +16,7 @@ import {
   adjustOrder,
   listOrderAdjustments,
   listOrderRefunds,
-} from '../controllers/ordersController';
+} from '../controllers/orders/ordersController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import {

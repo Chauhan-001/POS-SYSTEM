@@ -26,7 +26,7 @@ import {
   blockCustomer,
   getCustomerTransactions,
   generateReferralCode,
-} from '../controllers/customersController';
+} from '../controllers/customers/customersController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

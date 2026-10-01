@@ -28,11 +28,11 @@
 
 import mongoose from 'mongoose';
 import { orderRepo, orderItemRepo, kotRecordRepo, billRepo, auditLogRepo, timelineEventRepo } from '../repositories';
-import { kotToFrontend } from '../models/KOTRecord';
-import OrderAdjustment, { AdjustmentLine } from '../models/OrderAdjustment';
-import Product from '../models/Product';
-import Payment from '../models/Payment';
-import BranchSettings from '../models/BranchSettings';
+import { kotToFrontend } from '../models/orders/KOTRecord';
+import OrderAdjustment, { AdjustmentLine } from '../models/orders/OrderAdjustment';
+import Product from '../models/catalog/Product';
+import Payment from '../models/orders/Payment';
+import BranchSettings from '../models/core/BranchSettings';
 import { billService, refundService } from './index';
 
 // NOTE: billService is referenced lazily inside methods (never at module load)

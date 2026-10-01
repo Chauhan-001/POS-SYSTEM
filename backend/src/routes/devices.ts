@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
-import { registerDevice, getMyDevices, heartbeatDevice } from '../controllers/deviceRegistrationController';
+import { registerDevice, getMyDevices, heartbeatDevice } from '../controllers/core/deviceRegistrationController';
 import { deviceRegisterSchema, deviceHeartbeatSchema } from '../validation/device';
 
 const router = Router();

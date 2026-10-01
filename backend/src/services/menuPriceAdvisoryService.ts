@@ -9,7 +9,7 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
+import ProductModel from '../models/catalog/Product';
 import RecipeModel from '../modules/recipes/models/Recipe';
 import { computeProductBaselines, ProductBaseline } from './salesBaselineService';
 import { recipeCostEngine } from '../modules/recipes/services/recipeCostEngine';

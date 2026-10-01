@@ -29,14 +29,14 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { ownerService } from '../ownerService';
 import { hashPin } from '../../utils/bcrypt';
 
-import User from '../../models/User';
-import Employee from '../../models/Employee';
-import Restaurant from '../../models/Restaurant';
-import RefreshToken from '../../models/RefreshToken';
-import Device from '../../models/Device';
-import Branch from '../../models/Branch';
-import AuditLog from '../../models/AuditLog';
-import Subscription from '../../models/Subscription';
+import User from '../../models/core/User';
+import Employee from '../../models/core/Employee';
+import Restaurant from '../../models/core/Restaurant';
+import RefreshToken from '../../models/core/RefreshToken';
+import Device from '../../models/core/Device';
+import Branch from '../../models/core/Branch';
+import AuditLog from '../../models/admin/AuditLog';
+import Subscription from '../../models/core/Subscription';
 
 let mongod: MongoMemoryServer;
 

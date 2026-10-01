@@ -17,8 +17,10 @@
  *   GET  /api/voice-inventory/history   — Query voice action history
  *   GET  /api/voice-inventory/status    — Module status
  *
- * REMOVED (Phase 3 — AI-only):
- *   POST /api/voice-inventory/transcribe (server-side STT)
+ * RESTORED (Phase B re-integration — recovered from commit ecf6df6):
+ *   POST /api/voice-inventory/transcribe (server-side STT: Groq Whisper / Google)
+ *
+ * Still REMOVED (AI-only, not part of the recovery scope):
  *   POST /api/voice-inventory/generate-aliases (LLM alias generation)
  *   POST /api/voice-inventory/suggest-product (LLM new-product suggestion)
  *
@@ -36,6 +38,7 @@ import { validate } from '../../../middleware/validate';
 import { voiceApiLimiter } from '../../../middleware/rateLimiter';
 import {
   parseVoiceCommand,
+  transcribeVoiceAudio,
   confirmVoiceAction,
   undoVoiceAction,
   listAliases,
@@ -55,6 +58,7 @@ import {
 } from '../controllers/voiceInventoryController';
 import {
   voiceParseRequestSchema,
+  voiceTranscribeSchema,
   voiceConfirmSchema,
   voiceUndoSchema,
   aliasCreateSchema,
@@ -94,8 +98,20 @@ router.post(
   parseVoiceCommand
 );
 
-// POST /api/voice-inventory/transcribe — REMOVED (Phase 3, AI-only STT).
-// Browser SpeechRecognition posts plain transcripts to /parse instead.
+/**
+ * POST /api/voice-inventory/transcribe — RESTORED (Phase B re-integration).
+ * Transcribe a base64 mic clip to text (Groq Whisper / Google STT fallback).
+ * Frontend then posts the transcript to /parse — same deterministic flow as
+ * typed input, same confirmation boundary, same InventoryService authority.
+ */
+router.post(
+  '/transcribe',
+  requireAuth,
+  requireFeature('inventory'),
+  validate({ body: voiceTranscribeSchema }),
+  voiceApiLimiter,
+  transcribeVoiceAudio
+);
 
 /**
  * POST /api/voice-inventory/confirm

@@ -13,10 +13,10 @@
 
 import crypto from 'crypto';
 import mongoose from 'mongoose';
-import OtpRequest from '../models/OtpRequest';
+import OtpRequest from '../models/core/OtpRequest';
 import { AppError } from '../utils/AppError';
 import { otpRequestRepo, loyaltySettingsRepo } from '../repositories';
-import type { OtpPurpose } from '../models/OtpRequest';
+import type { OtpPurpose } from '../models/core/OtpRequest';
 
 const OTP_TTL_MS = 5 * 60 * 1000;       // 5 minutes
 const MAX_ATTEMPTS = 5;

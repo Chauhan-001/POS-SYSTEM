@@ -323,7 +323,7 @@ export class BillService {
         const hasEmptyItems = [...byBill.values()].every(arr => arr.length === 0);
         if (hasRevenue && hasEmptyItems && billIds.length > 0) {
           try {
-            const { default: BillItemModel } = await import('../models/BillItem');
+            const { default: BillItemModel } = await import('../models/intelligence/BillItem');
             const directItems = await BillItemModel.find(
               { billId: { $in: [...objectIds, ...billIds] } }
             ).sort({ createdAt: 1 }).lean().exec();

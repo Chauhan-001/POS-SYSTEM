@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { getReport, getSegmentReport, getBirthdayReport } from '../controllers/customerReportController';
+import { getReport, getSegmentReport, getBirthdayReport } from '../controllers/customers/customerReportController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

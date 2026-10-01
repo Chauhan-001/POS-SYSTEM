@@ -26,8 +26,8 @@ import mongoose from 'mongoose';
 import { productRepo, inventoryEventRepo, auditLogRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 import { round4 } from '../modules/recipes/services/unitConversion';
-import type { IStockBatch } from '../models/Product';
-import Product from '../models/Product';
+import type { IStockBatch } from '../models/catalog/Product';
+import Product from '../models/catalog/Product';
 
 /** Every supported stock movement type. */
 export type StockMovementType =

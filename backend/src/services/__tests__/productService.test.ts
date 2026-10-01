@@ -7,8 +7,8 @@ vi.mock('../../modules/voice-inventory/services/AliasGeneratorService', () => ({
 }));
 
 import { productService } from '../index';
-import Product from '../../models/Product';
-import ProductVariant from '../../models/ProductVariant';
+import Product from '../../models/catalog/Product';
+import ProductVariant from '../../models/catalog/ProductVariant';
 
 let mongod: MongoMemoryServer;
 

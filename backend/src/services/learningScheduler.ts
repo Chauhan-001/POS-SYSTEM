@@ -17,12 +17,12 @@
  * publishing.
  */
 
-import IRecommendationOutcome from '../models/RecommendationOutcome';
+import IRecommendationOutcome from '../models/intelligence/RecommendationOutcome';
 import mongoose from 'mongoose';
 import { analyzePromotionFatigue } from './promotionFatigueService';
 import { buildStrategyProfile, compareProfiles } from './promotionStrategyProfileService';
 import { getFeedbackSummary, shouldSuppressStrategy, getStrategyPreferenceTrends } from './recommendationFeedbackService';
-import LearningSignal from '../models/LearningSignal';
+import LearningSignal from '../models/intelligence/LearningSignal';
 
 const SCHEDULE_INTERVAL_DAYS = 7; // Weekly learning cycle
 

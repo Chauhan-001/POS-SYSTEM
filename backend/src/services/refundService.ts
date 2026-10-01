@@ -18,7 +18,7 @@
  */
 
 import mongoose from 'mongoose';
-import RefundRecord, { IRefundRecord, RefundStatus } from '../models/RefundRecord';
+import RefundRecord, { IRefundRecord, RefundStatus } from '../models/orders/RefundRecord';
 import { auditLogRepo } from '../repositories';
 import { paymentGateway } from '../modules/payment/RazorpayGateway';
 import { AppError } from '../utils/AppError';

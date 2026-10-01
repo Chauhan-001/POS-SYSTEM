@@ -19,7 +19,7 @@
 
 import mongoose from 'mongoose';
 import { expenseRepo, vendorRepo, auditLogRepo } from '../repositories';
-import Expense from '../models/Expense';
+import Expense from '../models/finance/Expense';
 import { cashLedgerService } from './index';
 import { AppError } from '../utils/AppError';
 import { SYSTEM_CATEGORIES } from './expenseCategoryService';

@@ -8,7 +8,7 @@
  */
 
 import { Router } from 'express';
-import { listAvailability, updateAvailability, availabilityHistory } from '../controllers/availabilityController';
+import { listAvailability, updateAvailability, availabilityHistory } from '../controllers/orders/availabilityController';
 import { requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import {

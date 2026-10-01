@@ -8,7 +8,7 @@
 import { Router } from 'express';
 import {
   listFloors, getFloor, createFloor, updateFloor, deleteFloor,
-} from '../controllers/floorsController';
+} from '../controllers/orders/floorsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import {

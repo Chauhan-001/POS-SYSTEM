@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { expenseService, cashLedgerService } from '../index';
-import Expense from '../../models/Expense';
-import CashLedger from '../../models/CashLedger';
+import Expense from '../../models/finance/Expense';
+import CashLedger from '../../models/finance/CashLedger';
 import { AppError } from '../../utils/AppError';
 
 let mongod: MongoMemoryServer;

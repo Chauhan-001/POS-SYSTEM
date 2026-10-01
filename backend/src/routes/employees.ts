@@ -15,7 +15,7 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
-} from '../controllers/employeesController';
+} from '../controllers/core/employeesController';
 import { requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import { createEmployeeSchema, updateEmployeeSchema, employeeQuerySchema, employeeParamsSchema } from '../validation';

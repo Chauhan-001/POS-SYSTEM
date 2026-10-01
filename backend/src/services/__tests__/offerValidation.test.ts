@@ -3,10 +3,10 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { offerValidationService, customerService } from '../index';
-import Customer from '../../models/Customer';
-import Offer from '../../models/Offer';
-import CouponRedemption from '../../models/CouponRedemption';
-import CustomerSegment from '../../models/CustomerSegment';
+import Customer from '../../models/customers/Customer';
+import Offer from '../../models/marketing/Offer';
+import CouponRedemption from '../../models/customers/CouponRedemption';
+import CustomerSegment from '../../models/customers/CustomerSegment';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId().toString();

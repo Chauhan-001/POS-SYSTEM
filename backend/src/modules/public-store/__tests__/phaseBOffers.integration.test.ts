@@ -28,14 +28,14 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vites
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Restaurant from '../../../models/Restaurant';
-import Offer from '../../../models/Offer';
-import Product from '../../../models/Product';
-import Branch from '../../../models/Branch';
-import BranchSettings from '../../../models/BranchSettings';
-import CouponRedemption from '../../../models/CouponRedemption';
-import Bill from '../../../models/Bill';
-import OfferAnalytics from '../../../models/OfferAnalytics';
+import Restaurant from '../../../models/core/Restaurant';
+import Offer from '../../../models/marketing/Offer';
+import Product from '../../../models/catalog/Product';
+import Branch from '../../../models/core/Branch';
+import BranchSettings from '../../../models/core/BranchSettings';
+import CouponRedemption from '../../../models/customers/CouponRedemption';
+import Bill from '../../../models/intelligence/Bill';
+import OfferAnalytics from '../../../models/marketing/OfferAnalytics';
 import { generatePublicToken } from '../../../utils/publicToken';
 import { publicStoreOrderService } from '../services/publicStoreOrderService';
 import { offerValidationService } from '../../../services';

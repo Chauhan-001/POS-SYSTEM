@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import {
   listVendors, getVendor, createVendor, updateVendor, deleteVendor, vendorSummary,
-} from '../controllers/vendorController';
+} from '../controllers/catalog/vendorController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

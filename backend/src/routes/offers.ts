@@ -29,7 +29,7 @@ import {
   validateOffer,
   applyOffer,
   lookupOfferByCode,
-} from '../controllers/offersController';
+} from '../controllers/marketing/offersController';
 import responseCache, { cached } from '../utils/ResponseCache';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';

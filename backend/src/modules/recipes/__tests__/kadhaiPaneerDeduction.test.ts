@@ -22,11 +22,11 @@ import { recipeService } from '../services/recipeService';
 import { billService } from '../../../services';
 import Recipe from '../models/Recipe';
 import RecipeConsumption from '../models/RecipeConsumption';
-import Product from '../../../models/Product';
-import ProductVariant from '../../../models/ProductVariant';
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
-import InventoryEvent from '../../../models/InventoryEvent';
+import Product from '../../../models/catalog/Product';
+import ProductVariant from '../../../models/catalog/ProductVariant';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
+import InventoryEvent from '../../../models/catalog/InventoryEvent';
 
 const REST_A = new mongoose.Types.ObjectId().toString();
 const BRANCH_A = new mongoose.Types.ObjectId().toString();

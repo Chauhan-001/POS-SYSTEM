@@ -10,7 +10,7 @@
  * suppress strategies based on single rejections — evidence is required.
  */
 
-import IRecommendationOutcome from '../models/RecommendationOutcome';
+import IRecommendationOutcome from '../models/intelligence/RecommendationOutcome';
 import mongoose from 'mongoose';
 
 export type FeedbackRating = 'positive' | 'neutral' | 'negative';

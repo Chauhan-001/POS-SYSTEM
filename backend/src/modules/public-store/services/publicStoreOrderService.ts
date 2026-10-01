@@ -19,12 +19,12 @@
  */
 
 import mongoose from 'mongoose';
-import Product from '../../../models/Product';
-import Branch from '../../../models/Branch';
-import BranchSettings from '../../../models/BranchSettings';
-import Table from '../../../models/Table';
-import KOTRecord from '../../../models/KOTRecord';
-import Offer from '../../../models/Offer';
+import Product from '../../../models/catalog/Product';
+import Branch from '../../../models/core/Branch';
+import BranchSettings from '../../../models/core/BranchSettings';
+import Table from '../../../models/orders/Table';
+import KOTRecord from '../../../models/orders/KOTRecord';
+import Offer from '../../../models/marketing/Offer';
 import Promotion from '../../promotions/models/Promotion';
 import QrToken from '../../qr-ordering/models/QrToken';
 import CustomerRequest from '../../qr-ordering/models/CustomerRequest';

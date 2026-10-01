@@ -13,7 +13,7 @@ import { Router } from 'express';
 import {
   listExpenses, getExpense, createExpense, updateExpense,
   deleteExpense, restoreExpense, exportExpenses,
-} from '../controllers/expensesController';
+} from '../controllers/finance/expensesController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { invalidateCacheTags } from '../utils/ResponseCache';

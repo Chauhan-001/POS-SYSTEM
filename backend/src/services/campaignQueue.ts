@@ -15,9 +15,9 @@
  */
 
 import mongoose from 'mongoose';
-import CampaignHistory from '../models/CampaignHistory';
-import Campaign from '../models/Campaign';
-import Offer from '../models/Offer';
+import CampaignHistory from '../models/marketing/CampaignHistory';
+import Campaign from '../models/marketing/Campaign';
+import Offer from '../models/marketing/Offer';
 import { providerFor, channelConfigured, type DeliveryPayload } from './deliveryService';
 import { recordCampaignDelivery } from './offerAnalyticsService';
 import { auditLogRepo } from '../repositories';

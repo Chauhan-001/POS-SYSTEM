@@ -11,9 +11,9 @@
  */
 
 import mongoose from 'mongoose';
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
-import DailySummary from '../../../models/DailySummary';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
+import DailySummary from '../../../models/finance/DailySummary';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);

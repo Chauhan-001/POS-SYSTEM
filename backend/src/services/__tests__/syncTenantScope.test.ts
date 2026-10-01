@@ -18,12 +18,12 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { SyncService } from '../syncService';
-import Product from '../../models/Product';
-import Order from '../../models/Order';
-import Employee from '../../models/Employee';
-import Branch from '../../models/Branch';
-import Bill from '../../models/Bill';
-import Customer from '../../models/Customer';
+import Product from '../../models/catalog/Product';
+import Order from '../../models/orders/Order';
+import Employee from '../../models/core/Employee';
+import Branch from '../../models/core/Branch';
+import Bill from '../../models/intelligence/Bill';
+import Customer from '../../models/customers/Customer';
 
 let mongod: MongoMemoryServer;
 

@@ -11,7 +11,7 @@
  */
 
 import crypto from 'crypto';
-import AuditLog from '../../models/AuditLog';
+import AuditLog from '../../models/admin/AuditLog';
 import { AuditChainMeta, AuditLogArchive, AUDIT_META_ID } from './models';
 import { recomputeDocHash } from './auditService';
 

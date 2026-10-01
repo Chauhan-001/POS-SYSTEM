@@ -17,15 +17,15 @@
  */
 
 import mongoose from 'mongoose';
-import Customer from '../models/Customer';
-import CustomerVisit from '../models/CustomerVisit';
-import Bill from '../models/Bill';
-import Offer from '../models/Offer';
-import CustomerSegment from '../models/CustomerSegment';
+import Customer from '../models/customers/Customer';
+import CustomerVisit from '../models/customers/CustomerVisit';
+import Bill from '../models/intelligence/Bill';
+import Offer from '../models/marketing/Offer';
+import CustomerSegment from '../models/customers/CustomerSegment';
 import { AppError } from '../utils/AppError';
 import { customerRepo, customerVisitRepo, customerActivityRepo, auditLogRepo, billRepo, referralRepo } from '../repositories';
 import { loyaltyService, otpService } from './index';
-import type { CustomerStatus } from '../models/Customer';
+import type { CustomerStatus } from '../models/customers/Customer';
 
 /** Regex to detect phone number IDs (10-15 digits) vs MongoDB ObjectIds */
 const PHONE_ID_RE = /^\d{10,15}$/;

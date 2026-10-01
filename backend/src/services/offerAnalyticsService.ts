@@ -24,10 +24,10 @@
  */
 
 import mongoose from 'mongoose';
-import OfferAnalytics from '../models/OfferAnalytics';
-import CouponRedemption from '../models/CouponRedemption';
-import Bill from '../models/Bill';
-import BillItem from '../models/BillItem';
+import OfferAnalytics from '../models/marketing/OfferAnalytics';
+import CouponRedemption from '../models/customers/CouponRedemption';
+import Bill from '../models/intelligence/Bill';
+import BillItem from '../models/intelligence/BillItem';
 import { Product, Recipe } from '../models';
 import { recipeCostEngine } from '../modules/recipes/services/recipeCostEngine';
 import { AppError } from '../utils/AppError';

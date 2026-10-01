@@ -19,6 +19,15 @@ export const pin = z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits');
 /** YYYY-MM-DD date string */
 export const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD format');
 
+/** YYYY-MM-DD date string that must parse to a real date and not be in the future. */
+export const pastDateString = dateString
+  .refine((v) => !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()), {
+    message: 'Date must be a valid calendar date',
+  })
+  .refine((v) => new Date(`${v}T00:00:00Z`).getTime() <= Date.now(), {
+    message: 'Date cannot be in the future',
+  });
+
 /** HH:MM time string */
 export const timeString = z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM format');
 

@@ -27,12 +27,12 @@
 
 import mongoose from 'mongoose';
 import { billRepo, financeSettingsRepo } from '../repositories';
-import Bill from '../models/Bill';
-import Expense from '../models/Expense';
-import Product from '../models/Product';
-import BillItem from '../models/BillItem';
-import FinanceSettings from '../models/FinanceSettings';
-import InventoryEvent from '../models/InventoryEvent';
+import Bill from '../models/intelligence/Bill';
+import Expense from '../models/finance/Expense';
+import Product from '../models/catalog/Product';
+import BillItem from '../models/intelligence/BillItem';
+import FinanceSettings from '../models/finance/FinanceSettings';
+import InventoryEvent from '../models/catalog/InventoryEvent';
 import { cashLedgerService } from './index';
 import { SYSTEM_CATEGORIES } from './expenseCategoryService';
 

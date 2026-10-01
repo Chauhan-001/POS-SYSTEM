@@ -16,19 +16,19 @@
  */
 
 import mongoose from 'mongoose';
-import Restaurant from '../models/Restaurant';
-import User from '../models/User';
-import Device from '../models/Device';
-import Subscription, { SubscriptionStatus } from '../models/Subscription';
+import Restaurant from '../models/core/Restaurant';
+import User from '../models/core/User';
+import Device from '../models/core/Device';
+import Subscription, { SubscriptionStatus } from '../models/core/Subscription';
 
 // NOTE: 'cancelled'/'expired' are NOT valid SubscriptionStatus values (schema
 // enum: trial | active | grace | suspended). This churn metric therefore
 // currently always reads 0. Flagged for owner review — the cast below only
 // makes the filter typecheck; it does not change runtime behavior.
-import AuditLog from '../models/AuditLog';
-import AIUsageLog from '../models/AIUsageLog';
+import AuditLog from '../models/admin/AuditLog';
+import AIUsageLog from '../models/core/AIUsageLog';
 import VoiceAuditLog from '../modules/voice-inventory/models/VoiceAuditLog';
-import Payment from '../models/Payment';
+import Payment from '../models/orders/Payment';
 
 // ─── Types ─────────────────────────────────────────────────────
 

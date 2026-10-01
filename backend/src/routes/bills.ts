@@ -14,7 +14,7 @@ import {
   getNextInvoice,
   reserveInvoiceRange,
   getBillItems,
-} from '../controllers/billsController';
+} from '../controllers/orders/billsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireSubscription } from '../middleware/subscriptionMiddleware';
 import { invalidateCacheTags } from '../utils/ResponseCache';

@@ -15,9 +15,9 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { purchaseService, stockMovementService, financeService } from '../index';
-import Expense from '../../models/Expense';
-import Product from '../../models/Product';
-import InventoryEvent from '../../models/InventoryEvent';
+import Expense from '../../models/finance/Expense';
+import Product from '../../models/catalog/Product';
+import InventoryEvent from '../../models/catalog/InventoryEvent';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId().toString();

@@ -20,10 +20,10 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
+import ProductModel from '../models/catalog/Product';
 import RecipeModel from '../modules/recipes/models/Recipe';
-import InventoryEventModel from '../models/InventoryEvent';
-import PurchaseModel from '../models/Purchase';
+import InventoryEventModel from '../models/catalog/InventoryEvent';
+import PurchaseModel from '../models/catalog/Purchase';
 import { generateDemandForecast, generateBatchForecasts, ForecastEntity, ForecastPeriod, ForecastOptions, ForecastResult } from './demandForecastingService';
 import { assessDataSufficiency } from './dataSufficiencyService';
 import { getUpcomingFestivals } from './festivalService';
@@ -636,10 +636,6 @@ export async function getInventoryForecastDashboard(
     expiryAlerts,
     ingredientForecasts: forecasts,
   };
-}
-
-function objectId(v: string): mongoose.Types.ObjectId {
-  return new mongoose.Types.ObjectId(v);
 }
 
 function getDateRange(days: number): { start: Date; end: Date } {

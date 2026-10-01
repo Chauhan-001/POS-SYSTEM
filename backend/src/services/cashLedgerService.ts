@@ -17,7 +17,7 @@
 
 import mongoose from 'mongoose';
 import { cashLedgerRepo, auditLogRepo } from '../repositories';
-import CashLedger from '../models/CashLedger';
+import CashLedger from '../models/finance/CashLedger';
 import { AppError } from '../utils/AppError';
 
 function objectId(v: string): mongoose.Types.ObjectId {

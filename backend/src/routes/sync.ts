@@ -11,7 +11,7 @@
  */
 
 import { Router } from 'express';
-import { pullSync } from '../controllers/syncController';
+import { pullSync } from '../controllers/core/syncController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireSubscription } from '../middleware/subscriptionMiddleware';
 

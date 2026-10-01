@@ -9,10 +9,10 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
-import OfferModel from '../models/Offer';
-import CustomerSegmentModel from '../models/CustomerSegment';
-import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/IntelligenceSignal';
+import ProductModel from '../models/catalog/Product';
+import OfferModel from '../models/marketing/Offer';
+import CustomerSegmentModel from '../models/customers/CustomerSegment';
+import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 import { detectComboOpportunities, ComboOpportunity } from './comboOpportunityService';
 import { detectAddOnOpportunities, AddOnOpportunity } from './addOnOpportunityService';
 import { detectInventoryOpportunities, InventoryDrivenOpportunity } from './inventoryOpportunityService';

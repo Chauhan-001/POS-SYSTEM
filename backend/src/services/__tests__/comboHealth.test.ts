@@ -9,8 +9,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../models/Offer', () => ({ default: { find: vi.fn() } }));
-vi.mock('../../models/Product', () => ({ default: { find: vi.fn() } }));
+vi.mock('../../models/marketing/Offer', () => ({ default: { find: vi.fn() } }));
+vi.mock('../../models/catalog/Product', () => ({ default: { find: vi.fn() } }));
 vi.mock('../offerAnalyticsService', () => ({
   getComboAnalytics: vi.fn(),
   // Real classifyCombo is synchronous (returns string[]); the service spreads it.
@@ -25,8 +25,8 @@ vi.mock('../../modules/recipes/services/costIntelligenceCore', () => ({
 
 import { getComboHealth, MIN_EVIDENCE_UNITS } from '../comboHealthService';
 import { WeakComboRecommendationProvider, type RecommendationContext } from '../offerEngine';
-import OfferModel from '../../models/Offer';
-import ProductModel from '../../models/Product';
+import OfferModel from '../../models/marketing/Offer';
+import ProductModel from '../../models/catalog/Product';
 import { getComboAnalytics } from '../offerAnalyticsService';
 import { costIntelligenceCore } from '../../modules/recipes/services/costIntelligenceCore';
 

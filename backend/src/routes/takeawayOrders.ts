@@ -13,7 +13,7 @@ import {
   updateTakeawayOrder,
   deleteTakeawayOrder,
   getNextOrderNumber,
-} from '../controllers/takeawayOrdersController';
+} from '../controllers/orders/takeawayOrdersController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import { createTakeawayOrderSchema, updateTakeawayOrderSchema, takeawayOrderQuerySchema, takeawayOrderParamsSchema, takeawayNextNumberQuerySchema } from '../validation';

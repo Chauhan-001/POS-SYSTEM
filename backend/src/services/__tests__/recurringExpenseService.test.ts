@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { recurringExpenseService, expenseService } from '../index';
-import RecurringExpense from '../../models/RecurringExpense';
-import Expense from '../../models/Expense';
+import RecurringExpense from '../../models/finance/RecurringExpense';
+import Expense from '../../models/finance/Expense';
 import { AppError } from '../../utils/AppError';
 
 let mongod: MongoMemoryServer;

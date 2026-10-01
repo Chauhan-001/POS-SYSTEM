@@ -11,7 +11,7 @@
  */
 
 import { Router } from 'express';
-import { requestOtp, verifyOtp } from '../controllers/otpController';
+import { requestOtp, verifyOtp } from '../controllers/core/otpController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

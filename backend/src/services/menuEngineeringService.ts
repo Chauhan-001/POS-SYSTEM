@@ -10,8 +10,8 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
-import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/IntelligenceSignal';
+import ProductModel from '../models/catalog/Product';
+import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 import { computeProductBaselines, ProductBaseline } from './salesBaselineService';
 
 export type MenuClassification = 'STAR' | 'PLOWHORSE' | 'PUZZLE' | 'DOG';

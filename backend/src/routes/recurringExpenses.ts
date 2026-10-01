@@ -12,7 +12,7 @@ import { Router } from 'express';
 import {
   listRecurring, getRecurring, createRecurring, updateRecurring,
   pauseRecurring, resumeRecurring, deleteRecurring, runRecurring,
-} from '../controllers/recurringExpenseController';
+} from '../controllers/finance/recurringExpenseController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

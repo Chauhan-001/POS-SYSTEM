@@ -11,7 +11,7 @@ import mongoose from 'mongoose';
 import { purchaseRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 import { stockMovementService } from './stockMovementService';
-import Expense from '../models/Expense';
+import Expense from '../models/finance/Expense';
 import { cashLedgerService } from './index';
 import { SYSTEM_CATEGORIES } from './expenseCategoryService';
 

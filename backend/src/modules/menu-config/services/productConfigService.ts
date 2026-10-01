@@ -10,7 +10,7 @@
  */
 
 import mongoose from 'mongoose';
-import Product, { IProductConfigRef, ProductConfigMode } from '../../../models/Product';
+import Product, { IProductConfigRef, ProductConfigMode } from '../../../models/catalog/Product';
 import { AppError } from '../../../utils/AppError';
 import { auditService } from '../../audit/auditService';
 import { assertTemplateBelongsToTenant, copy as copyTemplate, TemplateOperator } from './templateService';

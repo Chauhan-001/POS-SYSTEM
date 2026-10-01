@@ -22,8 +22,8 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import QrToken from '../models/QrToken';
-import Table from '../../../models/Table';
-import Branch from '../../../models/Branch';
+import Table from '../../../models/orders/Table';
+import Branch from '../../../models/core/Branch';
 import { genQrToken, resolvePublicToken, buildQrUrl, upsertTableSticker } from '../services/qrTokenService';
 import { restaurantRepo, userRepo, employeeRepo } from '../../../repositories';
 import { verifyPin } from '../../../utils/bcrypt';

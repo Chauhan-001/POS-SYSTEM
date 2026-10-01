@@ -12,7 +12,7 @@
  */
 
 import { BaseRepository } from '../../repositories/baseRepository';
-import AuditLog, { IAuditLog } from '../../models/AuditLog';
+import AuditLog, { IAuditLog } from '../../models/admin/AuditLog';
 import { auditService } from './auditService';
 
 export class LegacyAuditAdapter extends BaseRepository<IAuditLog> {

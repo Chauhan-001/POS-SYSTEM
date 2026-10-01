@@ -10,12 +10,12 @@
  */
 
 import mongoose from 'mongoose';
-import Customer from '../models/Customer';
-import Bill from '../models/Bill';
-import CustomerSegment from '../models/CustomerSegment';
-import Referral from '../models/Referral';
-import CouponRedemption from '../models/CouponRedemption';
-import Reward from '../models/Reward';
+import Customer from '../models/customers/Customer';
+import Bill from '../models/intelligence/Bill';
+import CustomerSegment from '../models/customers/CustomerSegment';
+import Referral from '../models/customers/Referral';
+import CouponRedemption from '../models/customers/CouponRedemption';
+import Reward from '../models/customers/Reward';
 import { loyaltyService } from './index';
 
 function objectId(v: string): mongoose.Types.ObjectId {

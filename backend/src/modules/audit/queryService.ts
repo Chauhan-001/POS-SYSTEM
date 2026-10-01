@@ -9,7 +9,7 @@
  * Also drives exports and the dashboard.
  */
 
-import AuditLog, { IAuditLog } from '../../models/AuditLog';
+import AuditLog, { IAuditLog } from '../../models/admin/AuditLog';
 import { maskPii } from './masking';
 
 export interface AuditQueryParams {

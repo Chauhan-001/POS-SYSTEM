@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { requireAuth } from '../middleware/authMiddleware';
-import { listSessions, revokeSession, revokeAllSessions } from '../controllers/sessionController';
+import { listSessions, revokeSession, revokeAllSessions } from '../controllers/core/sessionController';
 import { objectId } from '../validation/common';
 import { validate } from '../middleware/validate';
 import { z } from 'zod';

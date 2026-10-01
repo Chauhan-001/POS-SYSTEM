@@ -16,12 +16,12 @@
  */
 
 import mongoose from 'mongoose';
-import Restaurant from '../models/Restaurant';
-import Customer from '../models/Customer';
-import CustomerSegment from '../models/CustomerSegment';
-import Product from '../models/Product';
-import Offer from '../models/Offer';
-import Campaign from '../models/Campaign';
+import Restaurant from '../models/core/Restaurant';
+import Customer from '../models/customers/Customer';
+import CustomerSegment from '../models/customers/CustomerSegment';
+import Product from '../models/catalog/Product';
+import Offer from '../models/marketing/Offer';
+import Campaign from '../models/marketing/Campaign';
 import { getUpcomingFestivals } from './festivalService';
 import { generateRecommendations } from './offerEngine';
 import { deriveSurplusItems } from './recommendationContext';

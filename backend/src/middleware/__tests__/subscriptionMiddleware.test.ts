@@ -14,17 +14,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Request, Response } from 'express';
 import { requireSubscription, requireFeature, clearFeatureCache } from '../subscriptionMiddleware';
 
-vi.mock('../../models/Subscription', () => {
+vi.mock('../../models/core/Subscription', () => {
   const Subscription = { findOne: vi.fn() };
   return { default: Subscription };
 });
-vi.mock('../../models/SubscriptionPlan', () => {
+vi.mock('../../models/core/SubscriptionPlan', () => {
   const SubscriptionPlan = { findOne: vi.fn() };
   return { default: SubscriptionPlan };
 });
 
-import Subscription from '../../models/Subscription';
-import SubscriptionPlan from '../../models/SubscriptionPlan';
+import Subscription from '../../models/core/Subscription';
+import SubscriptionPlan from '../../models/core/SubscriptionPlan';
 
 function mockRes(): Response {
   const res = {

@@ -26,11 +26,11 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Restaurant from '../../../models/Restaurant';
-import Product from '../../../models/Product';
-import Order from '../../../models/Order';
-import OrderItem from '../../../models/OrderItem';
-import KOTRecord from '../../../models/KOTRecord';
+import Restaurant from '../../../models/core/Restaurant';
+import Product from '../../../models/catalog/Product';
+import Order from '../../../models/orders/Order';
+import OrderItem from '../../../models/orders/OrderItem';
+import KOTRecord from '../../../models/orders/KOTRecord';
 import RestaurantSettings from '../../settings/models/RestaurantSettings';
 import ConfigurationTemplate from '../../menu-config/models/ConfigurationTemplate';
 import CustomerRequest from '../../qr-ordering/models/CustomerRequest';

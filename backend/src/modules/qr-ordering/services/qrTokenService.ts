@@ -22,7 +22,7 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import QrToken from '../models/QrToken';
-import Restaurant from '../../../models/Restaurant';
+import Restaurant from '../../../models/core/Restaurant';
 import { ensurePublicToken } from '../../../utils/publicToken';
 import { config } from '../../../config';
 

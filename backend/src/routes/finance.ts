@@ -14,7 +14,7 @@ import {
   getFinanceSettings, updateFinanceSettings, getFinanceSummary, getPnl,
   getCashFlow, getGstReport, getExpenseRegister, getMonthlyStatement,
   getBranchComparison, getVendorDues, exportFinanceReport,
-} from '../controllers/financeController';
+} from '../controllers/core/financeController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

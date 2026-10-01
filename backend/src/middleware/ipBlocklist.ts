@@ -20,7 +20,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import BlockedIp from '../models/BlockedIp';
+import BlockedIp from '../models/admin/BlockedIp';
 
 interface BlockEntry {
   ip: string;

@@ -72,6 +72,9 @@ router.get('/employees/audit-activity', requireAuth, requireFeature('analytics')
 
 // ─── Branch consolidated summary (Owner/Manager) ──────────────────
 router.get('/branch-summary', requireAuth, requireRole('Owner', 'Manager'), requireFeature('analytics'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.branchSummary);
+// Multi-branch comparison intelligence: KPIs + growth, best sellers per
+// branch, cross-branch product comparison, deterministic insights.
+router.get('/branch-compare', requireAuth, requireRole('Owner', 'Manager'), requireFeature('analytics'), validate({ query: reportQuerySchema }), cached({ ttlMs: 30_000, tags: ['reports'] }), c.branchCompare);
 
 // ─── Closing (Owner/Manager only) ────────────────────────────────
 router.get('/closing/x', requireAuth, requireRole('Owner', 'Manager'), requireFeature('analytics'), validate({ query: closingQuerySchema }), cached({ ttlMs: 15_000, tags: ['reports'] }), c.closingX);

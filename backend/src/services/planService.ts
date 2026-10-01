@@ -32,13 +32,13 @@
  */
 
 import mongoose from 'mongoose';
-import SubscriptionPlan from '../models/SubscriptionPlan';
-import Subscription from '../models/Subscription';
-import Restaurant from '../models/Restaurant';
-import Device from '../models/Device';
-import Branch from '../models/Branch';
-import Payment from '../models/Payment';
-import AIUsageLog from '../models/AIUsageLog';
+import SubscriptionPlan from '../models/core/SubscriptionPlan';
+import Subscription from '../models/core/Subscription';
+import Restaurant from '../models/core/Restaurant';
+import Device from '../models/core/Device';
+import Branch from '../models/core/Branch';
+import Payment from '../models/orders/Payment';
+import AIUsageLog from '../models/core/AIUsageLog';
 import { auditLogRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 import { parsePagination, parseSearch, parseDateRange } from '../utils/queryParser';

@@ -9,7 +9,7 @@ import {
 } from '../utils/jwt';
 import { Employee, SubscriptionPlan } from '../models';
 import { generatePublicToken } from '../utils/publicToken';
-import Payment from '../models/Payment';
+import Payment from '../models/orders/Payment';
 import { paymentGateway } from '../modules/payment/RazorpayGateway';
 import { isBillingPeriod, billingDurationDays, planPriceForPeriod } from '../modules/subscription/subscriptionService';
 import { ALL_FEATURES } from '../constants/planFeatures';
@@ -431,6 +431,8 @@ export class AuthService {
     email?: string;
     password: string;
     restaurantName: string;
+    /** Real establishment date (YYYY-MM-DD), declared during first-time setup. */
+    establishedDate?: string;
     userId?: string;
     planId?: string;
     paymentOrderId?: string;
@@ -489,6 +491,8 @@ export class AuthService {
         restaurantId: data.restaurantName.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase().substring(0, 20),
         name: data.restaurantName,
         phone: data.phone,
+        // Real-world establishment date (owner-declared at onboarding).
+        establishedDate: data.establishedDate ? new Date(`${data.establishedDate}T00:00:00Z`) : undefined,
         isActive: true,
         ownerUserId: username,
         // Public storefront capability — without it QR Studio can never mint

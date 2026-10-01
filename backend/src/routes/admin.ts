@@ -30,7 +30,7 @@ import { Router } from 'express';
 import { requireAdminAuth as requireAuth } from '../middleware/authMiddleware';
 import { requireCollectionAccess } from '../middleware/authorizationMiddleware';
 import { authIpLimiter, accountBackoff } from '../middleware/rateLimiter';
-import { adminLogin, adminProfile, adminUpdateProfile, adminChangePassword } from '../controllers/adminAuthController';
+import { adminLogin, adminProfile, adminUpdateProfile, adminChangePassword } from '../controllers/admin/adminAuthController';
 import { cached, invalidateCache } from '../utils/ResponseCache';
 import {
   getRestaurants, getRestaurant, createRestaurant, updateRestaurant,
@@ -39,7 +39,7 @@ import {
   getRestaurantBranchUsage, createRestaurantBranch, addAdminNote,
   getSubscriptionUsage, getDeviceActivitySummary,
   resetRestaurantPassword, regenerateRestaurantCredentials,
-} from '../controllers/adminRestaurantsController';
+} from '../controllers/admin/adminRestaurantsController';
 import {
   uploadRestaurantLogo, uploadRestaurantCover,
   deleteRestaurantLogo, deleteRestaurantCover,
@@ -53,15 +53,15 @@ import {
   getOwnerSessions, revokeOwnerSession, revokeAllOwnerSessions,
   getOwnerDevices, getOwnerDevice, blockOwnerDevice, unblockOwnerDevice, removeOwnerDevice,
   getOwnerLoginHistory, getOwnerProfile, getOwnerStatistics,
-} from '../controllers/adminOwnersController';
+} from '../controllers/admin/adminOwnersController';
 import {
   getDevices, getDevice, blockDevice, unblockDevice,
   approveDevice, rejectDevice, bulkApproveDevices, bulkRejectDevices,
   removeDevice, permanentDeleteDevice, removeInactiveDevices,
   forceLogoutDevices, getDeviceSessions, revokeDeviceSession,
   getDeviceHealth, getDeviceStatistics,
-} from '../controllers/adminDevicesController';
-import { getDeviceActivity } from '../controllers/deviceActivityController';
+} from '../controllers/admin/adminDevicesController';
+import { getDeviceActivity } from '../controllers/core/deviceActivityController';
 import {
   deviceListQuerySchema, deviceParamsSchema, deviceSessionParamsSchema,
   deviceApprovalSchema, deviceRejectSchema, deviceBulkSchema,
@@ -71,37 +71,37 @@ import {
   getSubscriptions, getSubscription, renewSubscription, upgradeSubscription,
   downgradeSubscription, pauseSubscription, resumeSubscription,
   getSubscriptionByRestaurant, getSubscriptionPayments, updateGrantedFeatures,
-} from '../controllers/adminSubscriptionsController';
+} from '../controllers/admin/adminSubscriptionsController';
 import {
   getPlans, getPlan, createPlan, updatePlan, deletePlan,
   clonePlan, setPlanStatus, archivePlan, restorePlan, permanentDeletePlan,
   getPlanVersions, rollbackPlan, assignPlan, convertTrial, getPlanStatistics,
-} from '../controllers/adminPlansController';
+} from '../controllers/admin/adminPlansController';
 
 import {
   getDashboardStats, getAnalytics, getRecentActivity, getLatestRestaurants,
   getSubscriptionRevenue, getDeviceAnalyticsEndpoint,
   getGrowthMetricsEndpoint, getChurnMetricsEndpoint, getActivityMetricsEndpoint,
   getApiRequestAnalyticsEndpoint,
-} from '../controllers/adminAnalyticsController';
+} from '../controllers/admin/adminAnalyticsController';
 import {
   exportDashboardCSV, exportDashboardExcel, exportDashboardPDF,
-} from '../controllers/adminAnalyticsExportController';
+} from '../controllers/admin/adminAnalyticsExportController';
 // PHASE 3: AI analytics endpoints (aiAnalyticsController) and AI settings
 // endpoints were removed with the AI execution layer.
 import {
   getCompanySettings, updateCompanySettings,
   getDefaultSubscriptionSettings, updateDefaultSubscriptionSettings,
   getGeneralSettings, updateGeneralSettings,
-} from '../controllers/adminSettingsController';
-import { searchSupport } from '../controllers/adminSupportController';
+} from '../controllers/admin/adminSettingsController';
+import { searchSupport } from '../controllers/admin/adminSupportController';
 import {
   getTickets, getTicket, createTicket, updateTicket,
   setTicketStatusEndpoint as setTicketStatus, assignTicketEndpoint as assignTicket,
   getReplies, addReply, uploadAttachment, removeAttachment,
   deleteTicketEndpoint as deleteTicket, restoreTicketEndpoint as restoreTicket,
   getActivity, getTicketStatsEndpoint as getTicketStats, setSatisfaction,
-} from '../controllers/adminSupportController';
+} from '../controllers/admin/adminSupportController';
 import {
   ticketParamsSchema, ticketAttachmentParamsSchema, createTicketSchema,
   updateTicketSchema, ticketStatusSchema, assignTicketSchema, replySchema,
@@ -116,7 +116,7 @@ import {
   getAlerts, getAlertSummary, resolveAlertEndpoint, removeAlert,
   getSavedSearches, createSavedSearch, removeSavedSearch,
   getLegalHolds, createLegalHoldEndpoint, releaseLegalHoldEndpoint,
-} from '../controllers/adminAuditLogsController';
+} from '../controllers/admin/adminAuditLogsController';
 import {
   auditQuerySchema, auditDetailParamsSchema, auditExportBodySchema,
   auditArchiveQuerySchema, auditArchiveRestoreBodySchema,
@@ -127,10 +127,10 @@ import {
 import {
   getCrmOverview, getCrmCustomers, getCrmLoyaltySettings, getCrmTiers,
   getCrmCampaigns, getCrmReferrals, getCrmReport, getCrmOffers, getCrmRewards,
-} from '../controllers/adminCrmController';
+} from '../controllers/admin/adminCrmController';
 import {
   listBlockedIps, blockIp, unblockIp, getSuggestedBlockedIps,
-} from '../controllers/adminSecurityController';
+} from '../controllers/admin/adminSecurityController';
 import {
   blockedIpListQuerySchema, blockIpSchema, blockedIpParamsSchema,
 } from '../validation';
@@ -138,14 +138,14 @@ import {
   getFinanceOverview, getFinancePnl, getFinanceExpenses, getFinanceExpenseRegister,
   getFinanceCashFlow, getFinanceCashLedger, getFinanceGst, getFinanceVendors,
   getFinanceRecurring, getFinanceCategories, getFinanceMonthly, getFinanceBranches,
-} from '../controllers/adminFinanceController';
+} from '../controllers/admin/adminFinanceController';
 import {
   getAdminSalesSummary, getAdminSalesTrend, getAdminSalesPayments,
   getAdminSalesOrderTypes, getAdminSalesCashiers, getAdminProductTop,
   getAdminProductCategories, getAdminProductAbc, getAdminInventoryStock,
   getAdminInventoryValuation, getAdminEmployeePerformance, getAdminClosingZ,
   getAdminSummariesMonthly,
-} from '../controllers/adminReportsController';
+} from '../controllers/admin/adminReportsController';
 import { validate } from '../middleware/validate';
 import {
   adminLoginSchema,

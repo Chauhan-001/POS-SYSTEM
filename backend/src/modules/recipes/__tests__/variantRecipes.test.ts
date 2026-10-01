@@ -26,10 +26,10 @@ import { createRecipeSchema } from '../validators/recipe';
 import Recipe from '../models/Recipe';
 import RecipeVersion from '../models/RecipeVersion';
 import RecipeConsumption from '../models/RecipeConsumption';
-import Product from '../../../models/Product';
-import ProductVariant from '../../../models/ProductVariant';
-import Bill from '../../../models/Bill';
-import InventoryEvent from '../../../models/InventoryEvent';
+import Product from '../../../models/catalog/Product';
+import ProductVariant from '../../../models/catalog/ProductVariant';
+import Bill from '../../../models/intelligence/Bill';
+import InventoryEvent from '../../../models/catalog/InventoryEvent';
 
 const REST_A = new mongoose.Types.ObjectId().toString();
 const REST_B = new mongoose.Types.ObjectId().toString();

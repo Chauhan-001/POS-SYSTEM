@@ -25,9 +25,9 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 // path entirely — generateCreativeCopy is now always the deterministic
 // template, so no AI mock is needed.
 
-import Restaurant from '../../../models/Restaurant';
-import Offer from '../../../models/Offer';
-import Product from '../../../models/Product';
+import Restaurant from '../../../models/core/Restaurant';
+import Offer from '../../../models/marketing/Offer';
+import Product from '../../../models/catalog/Product';
 import Promotion from '../models/Promotion';
 import { promotionsService } from '../services/promotionsService';
 import { publicStoreOrderService } from '../../public-store/services/publicStoreOrderService';

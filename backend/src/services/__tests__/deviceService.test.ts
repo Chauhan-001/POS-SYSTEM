@@ -30,13 +30,13 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { deviceService } from '../deviceService';
 import { DeviceLimitReachedError, DeviceBlockedError } from '../devicePolicyService';
-import Device from '../../models/Device';
-import DeviceActivity from '../../models/DeviceActivity';
-import RefreshToken from '../../models/RefreshToken';
-import Restaurant from '../../models/Restaurant';
-import Branch from '../../models/Branch';
-import Subscription from '../../models/Subscription';
-import AuditLog from '../../models/AuditLog';
+import Device from '../../models/core/Device';
+import DeviceActivity from '../../models/core/DeviceActivity';
+import RefreshToken from '../../models/core/RefreshToken';
+import Restaurant from '../../models/core/Restaurant';
+import Branch from '../../models/core/Branch';
+import Subscription from '../../models/core/Subscription';
+import AuditLog from '../../models/admin/AuditLog';
 
 let mongod: MongoMemoryServer;
 

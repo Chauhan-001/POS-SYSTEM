@@ -2,11 +2,11 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Restaurant from '../../../models/Restaurant';
-import Reward from '../../../models/Reward';
-import Offer from '../../../models/Offer';
-import LoyaltyTier from '../../../models/LoyaltyTier';
-import LoyaltySettings from '../../../models/LoyaltySettings';
+import Restaurant from '../../../models/core/Restaurant';
+import Reward from '../../../models/customers/Reward';
+import Offer from '../../../models/marketing/Offer';
+import LoyaltyTier from '../../../models/customers/LoyaltyTier';
+import LoyaltySettings from '../../../models/customers/LoyaltySettings';
 import { publicStoreService } from '../services/publicStoreService';
 import { generatePublicToken } from '../../../utils/publicToken';
 

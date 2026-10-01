@@ -141,7 +141,7 @@ export async function generateCopy(req: Request, res: Response): Promise<void> {
 
 // ─── Restaurant branding for the studio ───────────────────────────
 
-import Restaurant from '../../../models/Restaurant';
+import Restaurant from '../../../models/core/Restaurant';
 
 export async function getRestaurantBranding(req: Request, res: Response): Promise<void> {
   try {

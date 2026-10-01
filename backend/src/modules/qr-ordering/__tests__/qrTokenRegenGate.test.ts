@@ -15,9 +15,9 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import type { Request, Response } from 'express';
 import { hashPin } from '../../../utils/bcrypt';
-import Restaurant from '../../../models/Restaurant';
-import Table from '../../../models/Table';
-import Employee from '../../../models/Employee';
+import Restaurant from '../../../models/core/Restaurant';
+import Table from '../../../models/orders/Table';
+import Employee from '../../../models/core/Employee';
 import QrToken from '../models/QrToken';
 import { createQrToken } from '../controllers/qrTokenController';
 

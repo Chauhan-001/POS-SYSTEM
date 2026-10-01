@@ -17,7 +17,7 @@
 
 import mongoose from 'mongoose';
 import { Recipe, Product, BillItem, ProductVariant } from '../../../models';
-import Offer from '../../../models/Offer';
+import Offer from '../../../models/marketing/Offer';
 import { AppError } from '../../../utils/AppError';
 import { recipeCostEngine, RecipeCostResult } from './recipeCostEngine';
 import { round2 } from './unitConversion';

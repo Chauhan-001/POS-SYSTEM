@@ -19,7 +19,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { orderService } from '../../../services';
-import Order from '../../../models/Order';
+import Order from '../../../models/orders/Order';
 import CustomerRequest from '../models/CustomerRequest';
 
 let mongod: MongoMemoryServer;

@@ -26,10 +26,10 @@ import fs from 'fs/promises';
 import path from 'path';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { MediaService } from '../mediaService';
-import Restaurant from '../../../models/Restaurant';
-import Subscription from '../../../models/Subscription';
-import SubscriptionPlan from '../../../models/SubscriptionPlan';
-import AuditLog from '../../../models/AuditLog';
+import Restaurant from '../../../models/core/Restaurant';
+import Subscription from '../../../models/core/Subscription';
+import SubscriptionPlan from '../../../models/core/SubscriptionPlan';
+import AuditLog from '../../../models/admin/AuditLog';
 
 let mongod: MongoMemoryServer;
 let tmpDir: string;

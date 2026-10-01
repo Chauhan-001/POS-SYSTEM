@@ -17,11 +17,11 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Offer from '../../models/Offer';
-import CouponRedemption from '../../models/CouponRedemption';
-import Bill from '../../models/Bill';
-import BillItem from '../../models/BillItem';
-import Product from '../../models/Product';
+import Offer from '../../models/marketing/Offer';
+import CouponRedemption from '../../models/customers/CouponRedemption';
+import Bill from '../../models/intelligence/Bill';
+import BillItem from '../../models/intelligence/BillItem';
+import Product from '../../models/catalog/Product';
 import Recipe from '../../modules/recipes/models/Recipe';
 import {
   getComboAnalytics,

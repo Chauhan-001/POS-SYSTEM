@@ -7,8 +7,8 @@
 
 import { CronJob } from 'cron';
 import mongoose from 'mongoose';
-import RestaurantModel from '../models/Restaurant';
-import BranchModel from '../models/Branch';
+import RestaurantModel from '../models/core/Restaurant';
+import BranchModel from '../models/core/Branch';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);

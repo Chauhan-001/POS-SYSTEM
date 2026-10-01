@@ -13,7 +13,7 @@
 
 import mongoose from 'mongoose';
 import VoiceAuditLog from '../models/VoiceAuditLog';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import type { VoiceAnalyticsSummary } from '../types';
 
 // ====================================================================

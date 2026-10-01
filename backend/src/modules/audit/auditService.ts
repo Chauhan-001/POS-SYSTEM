@@ -17,7 +17,7 @@
  */
 
 import crypto from 'crypto';
-import AuditLog, { IAuditLog, AuditSeverity, AuditResult } from '../../models/AuditLog';
+import AuditLog, { IAuditLog, AuditSeverity, AuditResult } from '../../models/admin/AuditLog';
 import { getAuditStore, parseUserAgent, requestIp, requestDeviceId } from './auditContext';
 import { maskSecrets } from './masking';
 import {

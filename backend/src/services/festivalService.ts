@@ -168,6 +168,30 @@ function festivalMonthDay(name: string, year: number): { month: number; day: num
   return FESTIVAL_DATES[year]?.[name] ?? null;
 }
 
+/**
+ * Deterministic cross-check for the Calendar AI assistant (Phase 2): does the
+ * curated exact-date table (the authoritative local source) agree with a
+ * claimed {name, year, month, day}? Month is 1-based. Returns:
+ *   'exact'        — curated table confirms the exact date
+ *   'approximate'  — festival known, table has no entry for that year (± drift)
+ *   'unknown'      — festival not in the table at all
+ */
+export function verifyFestivalDate(
+  name: string,
+  year: number,
+  month: number,
+  day: number,
+): 'exact' | 'approximate' | 'unknown' {
+  const normalized = name.trim();
+  const known = FESTIVAL_DATES[year]?.[normalized] ?? null;
+  const inTable = Object.values(FESTIVAL_DATES).some((y) => normalized in y) ||
+    FIXED_FESTIVALS.some((f) => f.name === normalized) ||
+    LUNAR_FESTIVALS.some((f) => f.name === normalized);
+  if (!inTable) return 'unknown';
+  if (known && known.month === month && known.day === day) return 'exact';
+  return 'approximate';
+}
+
 /** Format a local-midnight date as YYYY-MM-DD in LOCAL time — toISOString()
  *  would shift the date back a day in positive-offset timezones (e.g. IST). */
 function toIsoDate(d: Date): string {

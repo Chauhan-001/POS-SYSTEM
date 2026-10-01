@@ -18,26 +18,26 @@
  */
 
 import mongoose from 'mongoose';
-import Customer from '../models/Customer';
-import CustomerSegment from '../models/CustomerSegment';
-import Campaign from '../models/Campaign';
+import Customer from '../models/customers/Customer';
+import CustomerSegment from '../models/customers/CustomerSegment';
+import Campaign from '../models/marketing/Campaign';
 import CampaignProposal, {
   canApproveTransition as canProposalApproveTransition,
   canExecuteTransition as canProposalExecuteTransition,
-} from '../models/CampaignProposal';
+} from '../models/marketing/CampaignProposal';
 import type {
   CampaignProposalApprovalStatus,
   CampaignProposalExecutionStatus,
-} from '../models/CampaignProposal';
-import CampaignHistory from '../models/CampaignHistory';
-import Offer from '../models/Offer';
-import Product from '../models/Product';
+} from '../models/marketing/CampaignProposal';
+import CampaignHistory from '../models/marketing/CampaignHistory';
+import Offer from '../models/marketing/Offer';
+import Product from '../models/catalog/Product';
 import { AppError } from '../utils/AppError';
 import { campaignRepo, auditLogRepo } from '../repositories';
 import { enqueueCampaign } from './campaignQueue';
 import { CAMPAIGN_TRANSITIONS, canTransition } from '../constants/marketingStates';
-import type { CampaignChannel, CampaignStatus } from '../models/Campaign';
-import type { ICampaignProposal } from '../models/CampaignProposal';
+import type { CampaignChannel, CampaignStatus } from '../models/marketing/Campaign';
+import type { ICampaignProposal } from '../models/marketing/CampaignProposal';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);

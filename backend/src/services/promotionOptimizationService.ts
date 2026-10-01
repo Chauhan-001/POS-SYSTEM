@@ -9,12 +9,12 @@
  */
 
 import mongoose from 'mongoose';
-import OfferModel from '../models/Offer';
-import OfferAnalyticsModel from '../models/OfferAnalytics';
-import BillModel from '../models/Bill';
-import BillItemModel from '../models/BillItem';
-import ProductModel from '../models/Product';
-import CustomerModel from '../models/Customer';
+import OfferModel from '../models/marketing/Offer';
+import OfferAnalyticsModel from '../models/marketing/OfferAnalytics';
+import BillModel from '../models/intelligence/Bill';
+import BillItemModel from '../models/intelligence/BillItem';
+import ProductModel from '../models/catalog/Product';
+import CustomerModel from '../models/customers/Customer';
 import { assessDataSufficiency, DataConfidenceLevel } from './dataSufficiencyService';
 import { generateDemandForecast, ForecastOptions, ForecastEntity, ForecastPeriod } from './demandForecastingService';
 

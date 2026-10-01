@@ -17,7 +17,7 @@
  */
 
 import mongoose from 'mongoose';
-import MenuAvailability, { IMenuAvailability } from '../models/MenuAvailability';
+import MenuAvailability, { IMenuAvailability } from '../models/catalog/MenuAvailability';
 import { auditLogRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 

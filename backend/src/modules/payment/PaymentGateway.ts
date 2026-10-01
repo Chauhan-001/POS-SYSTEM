@@ -19,6 +19,7 @@ export interface RefundOptions {
   notes?: Record<string, string>;
 }
 
+
 export interface RefundResult {
   /** Provider refund id — the ONLY proof a refund was accepted. */
   id: string;

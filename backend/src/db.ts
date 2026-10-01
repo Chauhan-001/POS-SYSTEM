@@ -31,7 +31,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import { config } from './config';
-import type { AuthorizationAction } from './models/Authorization';
+import type { AuthorizationAction } from './models/core/Authorization';
 
 // =============================================================================
 // SECTION 1: ADMIN SEED
@@ -46,8 +46,8 @@ import type { AuthorizationAction } from './models/Authorization';
  */
 async function seedDashboardAdmin(): Promise<void> {
   try {
-    const User = (await import('./models/User')).default;
-    const Authorization = (await import('./models/Authorization')).default;
+    const User = (await import('./models/core/User')).default;
+    const Authorization = (await import('./models/core/Authorization')).default;
 
     const hashed = await bcrypt.hash('1008', 10);
 

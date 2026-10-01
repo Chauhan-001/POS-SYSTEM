@@ -14,7 +14,7 @@ import express from 'express';
 import http from 'http';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import BlockedIp from '../../models/BlockedIp';
+import BlockedIp from '../../models/admin/BlockedIp';
 import { ipBlocklist, invalidateIpBlocklistCache } from '../ipBlocklist';
 
 let mongod: MongoMemoryServer;

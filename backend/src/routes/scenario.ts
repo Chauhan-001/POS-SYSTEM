@@ -12,7 +12,7 @@ import {
   compareScenariosHandler,
   getOptimalScenarioHandler,
   getElasticityHandler,
-} from '../controllers/scenarioController';
+} from '../controllers/marketing/scenarioController';
 import { requireAuth } from '../middleware/authMiddleware';
 
 const router = Router();

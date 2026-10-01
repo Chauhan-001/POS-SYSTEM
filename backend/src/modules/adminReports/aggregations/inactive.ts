@@ -124,7 +124,7 @@ export async function getInactiveReport(
 
     let sub: any = null;
     try {
-      const { default: Subscription } = await import('../../../models/Subscription');
+      const { default: Subscription } = await import('../../../models/core/Subscription');
       sub = await Subscription.findOne({ restaurantId: r._id }).lean();
     } catch {
       sub = null;

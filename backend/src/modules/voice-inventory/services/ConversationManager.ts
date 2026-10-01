@@ -43,7 +43,7 @@ import {
   updateContext,
   completeContext,
 } from './ContextManager';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import type {
   ConversationState,
   ConversationResponse,

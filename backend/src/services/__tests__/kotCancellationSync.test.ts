@@ -17,13 +17,13 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { orderService, orderAdjustmentService } from '../index';
-import Order from '../../models/Order';
-import OrderItem from '../../models/OrderItem';
-import OrderAdjustment from '../../models/OrderAdjustment';
-import KOTRecord from '../../models/KOTRecord';
-import AuditLog from '../../models/AuditLog';
-import Product from '../../models/Product';
-import BranchSettings from '../../models/BranchSettings';
+import Order from '../../models/orders/Order';
+import OrderItem from '../../models/orders/OrderItem';
+import OrderAdjustment from '../../models/orders/OrderAdjustment';
+import KOTRecord from '../../models/orders/KOTRecord';
+import AuditLog from '../../models/admin/AuditLog';
+import Product from '../../models/catalog/Product';
+import BranchSettings from '../../models/core/BranchSettings';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId();

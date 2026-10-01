@@ -25,12 +25,12 @@ import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import Restaurant from '../../models/Restaurant';
-import User from '../../models/User';
-import SupportTicket from '../../models/SupportTicket';
-import TicketReply from '../../models/TicketReply';
-import TicketCounter from '../../models/TicketCounter';
-import AuditLog from '../../models/AuditLog';
+import Restaurant from '../../models/core/Restaurant';
+import User from '../../models/core/User';
+import SupportTicket from '../../models/admin/SupportTicket';
+import TicketReply from '../../models/admin/TicketReply';
+import TicketCounter from '../../models/admin/TicketCounter';
+import AuditLog from '../../models/admin/AuditLog';
 import { config } from '../../config';
 import * as svc from '../supportTicketService';
 

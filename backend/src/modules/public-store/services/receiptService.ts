@@ -21,12 +21,12 @@
  */
 
 import mongoose from 'mongoose';
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
-import Restaurant from '../../../models/Restaurant';
-import ReceiptFeedback from '../../../models/ReceiptFeedback';
-import Customer from '../../../models/Customer';
-import CustomerVisit from '../../../models/CustomerVisit';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
+import Restaurant from '../../../models/core/Restaurant';
+import ReceiptFeedback from '../../../models/customers/ReceiptFeedback';
+import Customer from '../../../models/customers/Customer';
+import CustomerVisit from '../../../models/customers/CustomerVisit';
 import { AppError } from '../../../utils/AppError';
 
 const RECEIPT_TOKEN_PATTERN = /^rcpt_[a-f0-9]{24}$/;

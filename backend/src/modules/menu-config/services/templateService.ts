@@ -15,7 +15,7 @@
 
 import mongoose from 'mongoose';
 import ConfigurationTemplate, { IConfigurationTemplate, IConfigOption, ITemplateData } from '../models/ConfigurationTemplate';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import { AppError } from '../../../utils/AppError';
 import { auditService } from '../../audit/auditService';
 import { createTemplateSchema, updateTemplateSchema } from '../validators/menuConfig';

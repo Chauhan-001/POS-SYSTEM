@@ -15,10 +15,10 @@
  */
 
 import mongoose from 'mongoose';
-import Offer from '../models/Offer';
-import Campaign from '../models/Campaign';
-import CampaignHistory from '../models/CampaignHistory';
-import Restaurant from '../models/Restaurant';
+import Offer from '../models/marketing/Offer';
+import Campaign from '../models/marketing/Campaign';
+import CampaignHistory from '../models/marketing/CampaignHistory';
+import Restaurant from '../models/core/Restaurant';
 import { campaignService } from './index';
 import { enqueueCampaign } from './campaignQueue';
 import { runDueAutomations } from './automationService';

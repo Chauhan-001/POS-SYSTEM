@@ -18,7 +18,7 @@ import {
   resetBranchCredentials,
   getBranchSettings,
   updateBranchSettings,
-} from '../controllers/branchesController';
+} from '../controllers/core/branchesController';
 import { requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

@@ -4,7 +4,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import RestaurantSettings from '../models/RestaurantSettings';
 import Printer from '../models/Printer';
-import AuditLog from '../../../models/AuditLog';
+import AuditLog from '../../../models/admin/AuditLog';
 import { settingsService } from '../services/settingsService';
 import { printerService } from '../services/printerService';
 import { AppError } from '../../../utils/AppError';

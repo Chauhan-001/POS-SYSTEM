@@ -19,7 +19,7 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import { recipeAiService } from '../services/recipeAiService';
 
 const REST_A = new mongoose.Types.ObjectId().toString();

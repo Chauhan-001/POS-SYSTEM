@@ -13,10 +13,10 @@
  */
 
 import mongoose from 'mongoose';
-import BillModel from '../models/Bill';
-import BillItemModel from '../models/BillItem';
-import ProductModel from '../models/Product';
-import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/IntelligenceSignal';
+import BillModel from '../models/intelligence/Bill';
+import BillItemModel from '../models/intelligence/BillItem';
+import ProductModel from '../models/catalog/Product';
+import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 import { computeDailyRevenueBaseline, computeWeekdayRevenueBaseline, computeHourlyRevenueBaseline, computeCategoryBaselines, computeProductBaselines, SalesBaseline, TimeSlotBaseline, CategoryBaseline, ProductBaseline } from './salesBaselineService';
 
 export type AnomalyType =

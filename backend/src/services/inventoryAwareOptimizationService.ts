@@ -7,7 +7,7 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
+import ProductModel from '../models/catalog/Product';
 import RecipeModel from '../modules/recipes/models/Recipe';
 import { generateDemandForecast, ForecastEntity, ForecastPeriod } from './demandForecastingService';
 import { optimizePromotion, OptimizationObjective, PromotionOptimizationInput } from './promotionOptimizationService';

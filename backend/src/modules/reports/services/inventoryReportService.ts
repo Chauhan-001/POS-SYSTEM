@@ -10,11 +10,11 @@
  */
 
 import mongoose from 'mongoose';
-import Product from '../../../models/Product';
-import Purchase from '../../../models/Purchase';
-import InventoryEvent from '../../../models/InventoryEvent';
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
+import Product from '../../../models/catalog/Product';
+import Purchase from '../../../models/catalog/Purchase';
+import InventoryEvent from '../../../models/catalog/InventoryEvent';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
 import { dateRange, ReportScope } from './salesReportService';
 import { round2 } from '../../recipes/services/unitConversion';
 

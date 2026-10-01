@@ -22,7 +22,7 @@
 
 import mongoose from 'mongoose';
 import ConfigurationTemplate, { IConfigurationTemplate, IConfigOption } from '../models/ConfigurationTemplate';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import { AppError } from '../../../utils/AppError';
 import { ConfigMode, ConfigStatus, ConfigType, DEFAULT_GROUP_RULES } from '../constants';
 

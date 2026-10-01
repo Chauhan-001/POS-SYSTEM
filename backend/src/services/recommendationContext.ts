@@ -17,13 +17,13 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
-import CustomerModel from '../models/Customer';
-import CustomerSegmentModel from '../models/CustomerSegment';
-import OfferModel from '../models/Offer';
-import BillModel from '../models/Bill';
-import BillItemModel from '../models/BillItem';
-import BranchModel from '../models/Branch';
+import ProductModel from '../models/catalog/Product';
+import CustomerModel from '../models/customers/Customer';
+import CustomerSegmentModel from '../models/customers/CustomerSegment';
+import OfferModel from '../models/marketing/Offer';
+import BillModel from '../models/intelligence/Bill';
+import BillItemModel from '../models/intelligence/BillItem';
+import BranchModel from '../models/core/Branch';
 import type { RecommendationContext } from './offerEngine';
 import { resolveMenuProductScope } from './productService';
 import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
@@ -266,13 +266,22 @@ async function attachEstimatedContribution(
  * the deterministic engine and the AI prompt consume. Tenant-scoped,
  * aggregate-only, deterministic economics only.
  */
+/**
+ * Load the tenant's menu products using the shared scope resolver (owned menu
+ * first, global fallback for fresh accounts). Shared by the canonical context
+ * builder and the AI tool layer so both always see the same menu.
+ */
+export async function loadMenuProducts(restaurantId: string): Promise<any[]> {
+  const productScope = await resolveMenuProductScope(String(restaurantId));
+  return ProductModel.find({ $or: productScope, isDeleted: { $ne: true } }).lean();
+}
+
 export async function buildRecommendationContext(
   restaurantId: string,
   opts: RecommendationContextOptions = {},
 ): Promise<RecommendationContext> {
   const oid = objectId(restaurantId);
 
-  const productScope = await resolveMenuProductScope(String(restaurantId));
   const [
     products,
     customerCount,
@@ -281,7 +290,7 @@ export async function buildRecommendationContext(
     vipCount,
     segments,
   ] = await Promise.all([
-    ProductModel.find({ $or: productScope, isDeleted: { $ne: true } }).lean(),
+    loadMenuProducts(String(restaurantId)),
     CustomerModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true } }),
     CustomerModel.countDocuments({ restaurantId: oid, isDeleted: { $ne: true }, visits: { $gte: 1 } }),
     CustomerModel.countDocuments({

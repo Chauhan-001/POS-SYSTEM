@@ -3,12 +3,12 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { financeService, expenseService, cashLedgerService } from '../index';
-import Bill from '../../models/Bill';
-import Expense from '../../models/Expense';
-import CashLedger from '../../models/CashLedger';
-import FinanceSettings from '../../models/FinanceSettings';
-import Product from '../../models/Product';
-import InventoryEvent from '../../models/InventoryEvent';
+import Bill from '../../models/intelligence/Bill';
+import Expense from '../../models/finance/Expense';
+import CashLedger from '../../models/finance/CashLedger';
+import FinanceSettings from '../../models/finance/FinanceSettings';
+import Product from '../../models/catalog/Product';
+import InventoryEvent from '../../models/catalog/InventoryEvent';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId().toString();

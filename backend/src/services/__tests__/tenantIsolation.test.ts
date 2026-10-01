@@ -24,9 +24,9 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { HeldOrderService } from '../heldOrderService';
 import { EmployeeService } from '../employeeService';
 import { BranchService } from '../branchService';
-import HeldOrder from '../../models/HeldOrder';
-import Employee from '../../models/Employee';
-import Branch from '../../models/Branch';
+import HeldOrder from '../../models/orders/HeldOrder';
+import Employee from '../../models/core/Employee';
+import Branch from '../../models/core/Branch';
 
 let mongod: MongoMemoryServer;
 

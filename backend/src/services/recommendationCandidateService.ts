@@ -7,8 +7,8 @@
  */
 
 import mongoose from 'mongoose';
-import PromotionCandidateModel, { IPromotionCandidate } from '../models/PromotionCandidate';
-import IntelligenceSignalModel from '../models/IntelligenceSignal';
+import PromotionCandidateModel, { IPromotionCandidate } from '../models/marketing/PromotionCandidate';
+import IntelligenceSignalModel from '../models/intelligence/IntelligenceSignal';
 import { generatePromotionCandidates, PromotionCandidate, deduplicateCandidates, PromotionCandidateOptions } from './promotionCandidateService';
 
 export type RecommendationStatus =

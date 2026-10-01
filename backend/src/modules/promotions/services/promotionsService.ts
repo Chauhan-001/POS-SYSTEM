@@ -24,8 +24,8 @@
 
 import mongoose from 'mongoose';
 import Promotion, { IPromotion, IOfferSnapshot, PromotionCreativeContent } from '../models/Promotion';
-import Offer from '../../../models/Offer';
-import Product from '../../../models/Product';
+import Offer from '../../../models/marketing/Offer';
+import Product from '../../../models/catalog/Product';
 import { AppError } from '../../../utils/AppError';
 import { auditLogRepo } from '../../../repositories';
 

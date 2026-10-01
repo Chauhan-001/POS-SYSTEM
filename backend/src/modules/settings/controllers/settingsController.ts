@@ -14,7 +14,7 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../../../middleware/authMiddleware';
 import { AppError } from '../../../utils/AppError';
-import Restaurant from '../../../models/Restaurant';
+import Restaurant from '../../../models/core/Restaurant';
 import { settingsService, SettingsService } from '../services/settingsService';
 
 function actorOf(req: AuthenticatedRequest) {

@@ -1,5 +1,5 @@
-import Subscription from '../../models/Subscription';
-import SubscriptionPlan from '../../models/SubscriptionPlan';
+import Subscription from '../../models/core/Subscription';
+import SubscriptionPlan from '../../models/core/SubscriptionPlan';
 
 const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** Warning window after a subscription expires — then fall back to the free tier. */

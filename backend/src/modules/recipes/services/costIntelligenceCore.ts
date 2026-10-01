@@ -18,7 +18,7 @@
 
 import mongoose from 'mongoose';
 import { Recipe, Product, Purchase, InventoryEvent } from '../../../models';
-import Offer from '../../../models/Offer';
+import Offer from '../../../models/marketing/Offer';
 import { AppError } from '../../../utils/AppError';
 import { round2 } from './unitConversion';
 import { profitabilityService } from './profitabilityService';

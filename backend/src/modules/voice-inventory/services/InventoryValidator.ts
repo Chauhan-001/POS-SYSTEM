@@ -18,8 +18,8 @@
  */
 
 import mongoose from 'mongoose';
-import Product from '../../../models/Product';
-import Employee from '../../../models/Employee';
+import Product from '../../../models/catalog/Product';
+import Employee from '../../../models/core/Employee';
 import type { ParsedItem, InventoryValidationResult } from '../types';
 
 // ====================================================================

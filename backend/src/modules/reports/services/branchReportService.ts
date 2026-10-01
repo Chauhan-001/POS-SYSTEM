@@ -12,10 +12,10 @@
  */
 
 import mongoose from 'mongoose';
-import Bill from '../../../models/Bill';
-import Expense from '../../../models/Expense';
-import Employee from '../../../models/Employee';
-import Branch from '../../../models/Branch';
+import Bill from '../../../models/intelligence/Bill';
+import Expense from '../../../models/finance/Expense';
+import Employee from '../../../models/core/Employee';
+import Branch from '../../../models/core/Branch';
 import { dateRange } from './salesReportService';
 import type { ReportScope } from '../types';
 

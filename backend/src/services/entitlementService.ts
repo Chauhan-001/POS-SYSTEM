@@ -16,11 +16,11 @@
  *   if (!canCreate.allowed) { return res.status(403).json({ ... }); }
  */
 
-import Subscription from '../models/Subscription';
-import SubscriptionPlan from '../models/SubscriptionPlan';
-import Branch from '../models/Branch';
-import Employee from '../models/Employee';
-import Table from '../models/Table';
+import Subscription from '../models/core/Subscription';
+import SubscriptionPlan from '../models/core/SubscriptionPlan';
+import Branch from '../models/core/Branch';
+import Employee from '../models/core/Employee';
+import Table from '../models/orders/Table';
 import { effectiveFeatures } from '../utils/subscriptionFeatures';
 
 export interface EntitlementResult {

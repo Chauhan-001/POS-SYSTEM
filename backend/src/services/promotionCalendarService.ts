@@ -18,8 +18,8 @@ import { getTopComboOpportunities } from './comboOpportunityService';
 import { getTopAddOnOpportunities } from './addOnOpportunityService';
 import { detectAllDemandAnomalies } from './demandAnomalyService';
 import { assessDataSufficiency } from './dataSufficiencyService';
-import ProductModel from '../models/Product';
-import OfferModel from '../models/Offer';
+import ProductModel from '../models/catalog/Product';
+import OfferModel from '../models/marketing/Offer';
 
 export interface CalendarDay {
   date: string; // YYYY-MM-DD

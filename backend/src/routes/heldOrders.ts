@@ -12,7 +12,7 @@ import {
   createHeldOrder,
   updateHeldOrder,
   deleteHeldOrder,
-} from '../controllers/heldOrdersController';
+} from '../controllers/orders/heldOrdersController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import { createHeldOrderSchema, updateHeldOrderSchema, heldOrderQuerySchema, heldOrderParamsSchema } from '../validation';

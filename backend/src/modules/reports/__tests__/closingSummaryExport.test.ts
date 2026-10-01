@@ -2,12 +2,12 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
-import CashLedger from '../../../models/CashLedger';
-import MonthlySummary from '../../../models/MonthlySummary';
-import YearlySummary from '../../../models/YearlySummary';
-import DailySummary from '../../../models/DailySummary';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
+import CashLedger from '../../../models/finance/CashLedger';
+import MonthlySummary from '../../../models/finance/MonthlySummary';
+import YearlySummary from '../../../models/finance/YearlySummary';
+import DailySummary from '../../../models/finance/DailySummary';
 import { closingReportService, summaryService } from '../services';
 import { buildCsv, buildXlsx, buildPdf, streamCsv } from '../services/exportService';
 

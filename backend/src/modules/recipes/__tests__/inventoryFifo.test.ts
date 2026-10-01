@@ -14,7 +14,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import { stockMovementService } from '../../../services/stockMovementService';
 import { inventoryReportService } from '../../reports/services';
 

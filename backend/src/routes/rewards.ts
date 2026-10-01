@@ -12,7 +12,7 @@ import {
   createReward,
   updateReward,
   deleteReward,
-} from '../controllers/rewardsController';
+} from '../controllers/customers/rewardsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

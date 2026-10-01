@@ -12,8 +12,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { updateAllSegments, getSegments } from '../segmentEngine';
-import Customer from '../../models/Customer';
-import CustomerSegment from '../../models/CustomerSegment';
+import Customer from '../../models/customers/Customer';
+import CustomerSegment from '../../models/customers/CustomerSegment';
 
 let mongod: MongoMemoryServer;
 

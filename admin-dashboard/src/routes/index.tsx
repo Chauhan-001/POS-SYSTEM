@@ -29,29 +29,30 @@ import { DashboardLayout } from '../layouts/DashboardLayout'
 import { ProtectedRoute } from '../components/ui/ProtectedRoute'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 
-const Login = lazy(() => import('../pages/Login'))
-const Dashboard = lazy(() => import('../pages/Dashboard'))
-const Restaurants = lazy(() => import('../pages/Restaurants'))
-const RestaurantDetails = lazy(() => import('../pages/RestaurantDetails'))
-const RestaurantCrm = lazy(() => import('../pages/RestaurantCrm'))
-const CustomerCrm = lazy(() => import('../pages/CustomerCrm'))
-const FinanceConsole = lazy(() => import('../pages/FinanceConsole'))
-const RestaurantFinance = lazy(() => import('../pages/RestaurantFinance'))
-const ReportsConsole = lazy(() => import('../pages/ReportsConsole'))
-const RestaurantReports = lazy(() => import('../pages/RestaurantReports'))
-const AdminReports = lazy(() => import('../pages/AdminReports'))
-const Owners = lazy(() => import('../pages/Owners'))
-const Subscriptions = lazy(() => import('../pages/Subscriptions'))
-const SubscriptionPlans = lazy(() => import('../pages/SubscriptionPlans'))
-const SubscriptionRevenue = lazy(() => import('../pages/SubscriptionRevenue'))
-const Devices = lazy(() => import('../pages/Devices'))
-const Analytics = lazy(() => import('../pages/Analytics'))
+const Login = lazy(() => import('../pages/core/Login'))
+const Dashboard = lazy(() => import('../pages/core/Dashboard'))
+const Restaurants = lazy(() => import('../pages/restaurants/Restaurants'))
+const RestaurantDetails = lazy(() => import('../pages/restaurants/RestaurantDetails'))
+const RestaurantCrm = lazy(() => import('../pages/restaurants/RestaurantCrm'))
+const CustomerCrm = lazy(() => import('../pages/marketing/CustomerCrm'))
+const CalendarManager = lazy(() => import('../pages/marketing/CalendarManager'))
+const FinanceConsole = lazy(() => import('../pages/finance/FinanceConsole'))
+const RestaurantFinance = lazy(() => import('../pages/restaurants/RestaurantFinance'))
+const ReportsConsole = lazy(() => import('../pages/reports/ReportsConsole'))
+const RestaurantReports = lazy(() => import('../pages/restaurants/RestaurantReports'))
+const AdminReports = lazy(() => import('../pages/reports/AdminReports'))
+const Owners = lazy(() => import('../pages/platform/Owners'))
+const Subscriptions = lazy(() => import('../pages/platform/Subscriptions'))
+const SubscriptionPlans = lazy(() => import('../pages/platform/SubscriptionPlans'))
+const SubscriptionRevenue = lazy(() => import('../pages/platform/SubscriptionRevenue'))
+const Devices = lazy(() => import('../pages/platform/Devices'))
+const Analytics = lazy(() => import('../pages/platform/Analytics'))
 // AIUsage page removed (Phase 3 — AI-only admin page)
-const Support = lazy(() => import('../pages/Support'))
-const AuditLog = lazy(() => import('../pages/AuditLog'))
-const Security = lazy(() => import('../pages/Security'))
-const Settings = lazy(() => import('../pages/Settings'))
-const Profile = lazy(() => import('../pages/Profile'))
+const Support = lazy(() => import('../pages/admin/Support'))
+const AuditLog = lazy(() => import('../pages/admin/AuditLog'))
+const Security = lazy(() => import('../pages/admin/Security'))
+const Settings = lazy(() => import('../pages/core/Settings'))
+const Profile = lazy(() => import('../pages/core/Profile'))
 
 function LazyFallback() {
   return (
@@ -102,6 +103,10 @@ export const router = createBrowserRouter([
       {
         path: 'customer-crm',
         element: <Suspense fallback={<LazyFallback />}><CustomerCrm /></Suspense>,
+      },
+      {
+        path: 'calendar',
+        element: <Suspense fallback={<LazyFallback />}><CalendarManager /></Suspense>,
       },
       {
         path: 'restaurants/:id/finance',

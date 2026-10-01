@@ -11,14 +11,14 @@
  */
 
 import mongoose from 'mongoose';
-import MarketingAutomation from '../models/MarketingAutomation';
-import CustomerSegment from '../models/CustomerSegment';
-import Campaign from '../models/Campaign';
-import CampaignHistory from '../models/CampaignHistory';
-import Restaurant from '../models/Restaurant';
+import MarketingAutomation from '../models/marketing/MarketingAutomation';
+import CustomerSegment from '../models/customers/CustomerSegment';
+import Campaign from '../models/marketing/Campaign';
+import CampaignHistory from '../models/marketing/CampaignHistory';
+import Restaurant from '../models/core/Restaurant';
 import { auditLogRepo } from '../repositories';
 import { campaignService } from './index';
-import type { MarketingAutomationType } from '../models/MarketingAutomation';
+import type { MarketingAutomationType } from '../models/marketing/MarketingAutomation';
 
 function objectId(v: string): mongoose.Types.ObjectId {
   return new mongoose.Types.ObjectId(v);

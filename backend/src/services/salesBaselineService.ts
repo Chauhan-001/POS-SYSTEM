@@ -10,9 +10,9 @@
  */
 
 import mongoose from 'mongoose';
-import BillModel from '../models/Bill';
-import BillItemModel from '../models/BillItem';
-import ProductModel from '../models/Product';
+import BillModel from '../models/intelligence/Bill';
+import BillItemModel from '../models/intelligence/BillItem';
+import ProductModel from '../models/catalog/Product';
 
 export interface TimeGranularity {
   daily: boolean;

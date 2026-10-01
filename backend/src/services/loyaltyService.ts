@@ -27,14 +27,14 @@
  */
 
 import mongoose from 'mongoose';
-import Customer from '../models/Customer';
-import CustomerVisit from '../models/CustomerVisit';
-import LoyaltyTier from '../models/LoyaltyTier';
-import LoyaltySettings from '../models/LoyaltySettings';
-import LoyaltyTransaction from '../models/LoyaltyTransaction';
+import Customer from '../models/customers/Customer';
+import CustomerVisit from '../models/customers/CustomerVisit';
+import LoyaltyTier from '../models/customers/LoyaltyTier';
+import LoyaltySettings from '../models/customers/LoyaltySettings';
+import LoyaltyTransaction from '../models/customers/LoyaltyTransaction';
 import { AppError } from '../utils/AppError';
 import { customerRepo, loyaltyTierRepo, loyaltySettingsRepo, loyaltyTransactionRepo, customerVisitRepo, customerActivityRepo, auditLogRepo } from '../repositories';
-import type { CustomerTier } from '../models/Customer';
+import type { CustomerTier } from '../models/customers/Customer';
 
 // ─── Helpers ────────────────────────────────────────────────────
 

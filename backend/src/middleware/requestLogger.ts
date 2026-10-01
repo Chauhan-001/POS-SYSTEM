@@ -20,7 +20,7 @@
  */
 
 import { NextFunction, Request, Response } from 'express';
-import AuditLog from '../models/AuditLog';
+import AuditLog from '../models/admin/AuditLog';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 

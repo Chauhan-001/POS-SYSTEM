@@ -5,9 +5,9 @@ import { createServer } from 'http';
 import type { AddressInfo } from 'net';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import Restaurant from '../../../models/Restaurant';
-import Reward from '../../../models/Reward';
-import Offer from '../../../models/Offer';
+import Restaurant from '../../../models/core/Restaurant';
+import Reward from '../../../models/customers/Reward';
+import Offer from '../../../models/marketing/Offer';
 import { securityHeaders } from '../../../middleware/securityHeaders';
 import { publicLimiter } from '../../../middleware/rateLimiter';
 import publicStoreRouter from '../routes/publicStore';

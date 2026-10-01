@@ -24,7 +24,7 @@ import {
   moveOrder,
   mergeTables,
   bulkReplaceTables,
-} from '../controllers/tablesController';
+} from '../controllers/orders/tablesController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validate';
 import {

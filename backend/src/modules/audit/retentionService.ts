@@ -12,7 +12,7 @@
  * The scheduler is opt-in (started from server.ts) and never runs in tests.
  */
 
-import AuditLog from '../../models/AuditLog';
+import AuditLog from '../../models/admin/AuditLog';
 import { AuditLogArchive, AuditLegalHold, AUDIT_META_ID } from './models';
 import { AuditChainMeta } from './models';
 import { auditService } from './auditService';

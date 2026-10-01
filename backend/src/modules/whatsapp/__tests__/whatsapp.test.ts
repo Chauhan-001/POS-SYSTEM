@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { encrypt, decrypt } from '../services/credentialCrypto';
 import { WhatsAppIntegration } from '../../../models';
-import WebhookEvent from '../../../models/WebhookEvent';
+import WebhookEvent from '../../../models/orders/WebhookEvent';
 
 // ---------------------------------------------------------------------------
 // 1. Credential crypto

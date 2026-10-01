@@ -98,6 +98,9 @@ import authRouter from './routes/auth';
 import sessionsRouter from './routes/sessions';
 import adminRouter from './routes/admin';
 import adminReportsRouter from './routes/adminReports';
+import calendarRouter from './modules/calendar/routes/calendar';
+import cricketRouter from './context/sports/cricket/cricketRoutes';
+import competitionRouter from './context/competition/competitionRoutes';
 import productsRouter from './routes/products';
 import ordersRouter from './routes/orders';
 import availabilityRouter from './routes/availability';
@@ -149,6 +152,9 @@ import receiptRouter from './modules/public-store/routes/receipt';
 import legalRouter from './modules/legal/routes/legal';
 import helpAnalyticsRouter from './modules/help-analytics/routes/helpAnalytics';
 import marketingRouter from './routes/marketing';
+import mlPipelineRouter from './modules/ml-pipeline/mlPipelineRoutes';
+import { startMLSyncScheduler } from './modules/ml-pipeline/mlSyncScheduler';
+import marketingAgentRouter from './ai/agents/marketingAgentRoutes';
 
 import { renderPublicStorePage } from './modules/public-store/publicStorePage';
 import { initSocket } from './socket';
@@ -271,6 +277,21 @@ app.use('/api', (req, res, next) => {
   return next();
 }, adminRouter, adminReportsRouter);
 
+// Context Calendar (Phase 1) — platform-admin managed at /api/calendar.
+// Mounted after the admin limiter block; it uses its own requireAdminAuth
+// guard so the admin-dashboard JWT is the only accepted credential.
+app.use('/api/calendar', calendarRouter);
+
+// Cricket Context (Phase 2) — read-only admin surface at /api/sports/cricket.
+// Same guard model as the calendar router: requireAdminAuth accepts only the
+// admin-dashboard JWT; the CricAPI key/base URL never leave the backend.
+app.use('/api/sports', cricketRouter);
+
+// Competition Context (Phase 2) — authenticated read-only surface at
+// /api/competition. Tenant identity comes only from requireAuth; the Google
+// key/base URL never leave the backend. Refresh is explicit on-demand only.
+app.use('/api/competition', competitionRouter);
+
 // Health check — public endpoint
 // Not cached because dbConnected must always be fresh per-request
 // Includes the server version so ops can identify the running build.
@@ -359,6 +380,8 @@ app.use('/api/referrals', referralsRouter);
 app.use('/api/campaigns', campaignsRouter);
 app.use('/api/automations', automationsRouter);
 app.use('/api/customer-reports', customerReportsRouter);
+app.use('/api/ml-pipeline', mlPipelineRouter);
+app.use('/api/ai/marketing-agent', marketingAgentRouter);
 app.use('/api', recipesRouter);
 app.use('/api', promotionsRouter);
 app.use('/api', mediaRouter);
@@ -448,6 +471,13 @@ async function start() {
   responseCache.startCleanup(2 * 60_000);
   // ─── 3. Start subscription state transition scheduler ─────────
   startSubscriptionScheduler();
+
+  // ─── 3.05. ML pipeline daily sync scheduler (opt-in via ML_SYNC_ENABLED=on) ──
+  try {
+    startMLSyncScheduler();
+  } catch (err) {
+    console.warn('[MLSyncScheduler] startup failed:', (err as Error)?.message);
+  }
 
   // ─── 3.1. Start the marketing delivery worker + scheduler ─────
   // Campaign delivery is queued in-process and drained by a background worker

@@ -11,7 +11,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { beforeAll as viBeforeAll, afterAll as viAfterAll } from 'vitest';
 import { objectId } from '../validation/common';
-import { CampaignProposal, CampaignProposalObjective, CampaignProposalStrategy, CampaignProposalApprovalStatus, CampaignProposalExecutionStatus } from '../../models/CampaignProposal';
+import { CampaignProposal, CampaignProposalObjective, CampaignProposalStrategy, CampaignProposalApprovalStatus, CampaignProposalExecutionStatus } from '../../models/marketing/CampaignProposal';
 import { CampaignService } from '../../services';
 import { Restaurant } from '../../models';
 import { CustomerSegment } from '../../models';

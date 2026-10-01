@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { vendorService, expenseService } from '../index';
-import Vendor from '../../models/Vendor';
-import Expense from '../../models/Expense';
+import Vendor from '../../models/catalog/Vendor';
+import Expense from '../../models/finance/Expense';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId().toString();

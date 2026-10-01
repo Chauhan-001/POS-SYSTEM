@@ -38,8 +38,8 @@
  */
 
 import mongoose from 'mongoose';
-import AdvisorRecommendationModel, { AdvisorGoal } from '../models/AdvisorRecommendation';
-import BillItemModel from '../models/BillItem';
+import AdvisorRecommendationModel, { AdvisorGoal } from '../models/intelligence/AdvisorRecommendation';
+import BillItemModel from '../models/intelligence/BillItem';
 import { buildRecommendationContext, deriveSurplusItems } from './recommendationContext';
 import type { RecommendationContext, OfferSuggestion } from './offerEngine';
 import { generateRecommendations } from './offerEngine';

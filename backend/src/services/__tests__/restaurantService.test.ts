@@ -22,19 +22,19 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { restaurantService } from '../restaurantService';
 
-import Restaurant from '../../models/Restaurant';
-import Subscription from '../../models/Subscription';
-import SubscriptionPlan from '../../models/SubscriptionPlan';
-import Branch from '../../models/Branch';
-import Payment from '../../models/Payment';
-import Invoice from '../../models/Invoice';
-import User from '../../models/User';
-import Device from '../../models/Device';
-import DeviceActivity from '../../models/DeviceActivity';
-import Bill from '../../models/Bill';
-import Product from '../../models/Product';
-import Customer from '../../models/Customer';
-import Order from '../../models/Order';
+import Restaurant from '../../models/core/Restaurant';
+import Subscription from '../../models/core/Subscription';
+import SubscriptionPlan from '../../models/core/SubscriptionPlan';
+import Branch from '../../models/core/Branch';
+import Payment from '../../models/orders/Payment';
+import Invoice from '../../models/orders/Invoice';
+import User from '../../models/core/User';
+import Device from '../../models/core/Device';
+import DeviceActivity from '../../models/core/DeviceActivity';
+import Bill from '../../models/intelligence/Bill';
+import Product from '../../models/catalog/Product';
+import Customer from '../../models/customers/Customer';
+import Order from '../../models/orders/Order';
 
 let mongod: MongoMemoryServer;
 
@@ -455,5 +455,42 @@ describe('restaurantService.regenerateCredentials', () => {
     expect(after!.secretKey).not.toBe(before!.secretKey);
     expect(after!.apiKey).not.toBe(before!.apiKey);
     expect(after!.auditTrail!.some((e) => e.action.includes('Regenerated'))).toBe(true);
+  });
+});
+
+describe('restaurantService — establishedDate (real establishment date)', () => {
+  it('persists establishedDate during admin onboarding', async () => {
+    const { id } = await createRestaurant('cash', { establishedDate: '2019-04-15' });
+    const restaurant = await Restaurant.findById(id).lean().exec();
+    expect(restaurant!.establishedDate).toBeTruthy();
+    expect(new Date(restaurant!.establishedDate!).toISOString()).toMatch(/^2019-04-15T00:00:00\.000Z$/);
+  });
+
+  it('omits establishedDate when not provided', async () => {
+    const { id } = await createRestaurant('cash');
+    const restaurant = await Restaurant.findById(id).lean().exec();
+    expect(restaurant!.establishedDate ?? null).toBeNull();
+  });
+
+  it('updates and clears establishedDate via update', async () => {
+    const { id } = await createRestaurant('cash');
+
+    await restaurantService.update(id, { establishedDate: '2020-01-31' }, admin);
+    let restaurant = await Restaurant.findById(id).lean().exec();
+    expect(new Date(restaurant!.establishedDate!).toISOString()).toMatch(/^2020-01-31T00:00:00\.000Z$/);
+
+    await restaurantService.update(id, { establishedDate: '' }, admin);
+    restaurant = await Restaurant.findById(id).lean().exec();
+    expect(restaurant!.establishedDate ?? null).toBeNull();
+  });
+
+  it('rejects a future establishment date at create', async () => {
+    const future = new Date();
+    future.setUTCFullYear(future.getUTCFullYear() + 1);
+    const futureStr = future.toISOString().slice(0, 10);
+
+    await expect(
+      createRestaurant('cash', { establishedDate: futureStr }),
+    ).rejects.toThrow();
   });
 });

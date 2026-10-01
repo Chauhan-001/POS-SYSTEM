@@ -14,7 +14,7 @@
 import mongoose from 'mongoose';
 import { productRepo, productVariantRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
-import Offer from '../models/Offer';
+import Offer from '../models/marketing/Offer';
 
 /**
  * Deterministic alias seeding for a new product (Phase 3 — replaces the LLM

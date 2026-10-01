@@ -11,7 +11,7 @@
  * opaque predictions.
  */
 
-import IRecommendationOutcome from '../models/RecommendationOutcome';
+import IRecommendationOutcome from '../models/intelligence/RecommendationOutcome';
 import mongoose from 'mongoose';
 
 const PROFILE_WINDOW_DAYS = 180; // 6 months of history

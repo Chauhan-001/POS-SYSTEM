@@ -13,7 +13,7 @@
  */
 
 import mongoose from 'mongoose';
-import Payment from '../../../models/Payment';
+import Payment from '../../../models/orders/Payment';
 import { Restaurant } from '../../../models';
 import { RevenueEvent, IRevenueEvent, RevenueEventType } from '../models';
 import {

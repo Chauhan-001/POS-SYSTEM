@@ -22,7 +22,7 @@
  */
 
 import { Router } from 'express';
-import { login, refresh, logout, me, checkOwnerExists, registerOwner, createRegisterOrder, generateCredentials } from '../controllers/authController';
+import { login, refresh, logout, me, checkOwnerExists, registerOwner, createRegisterOrder, generateCredentials } from '../controllers/core/authController';
 import { authIpLimiter, accountBackoff, publicLimiter } from '../middleware/rateLimiter';
 import { validate } from '../middleware/validate';
 import { loginSchema, refreshTokenSchema, logoutSchema, ownerRegistrationSchema, registerOrderSchema, generateCredentialsSchema } from '../validation';

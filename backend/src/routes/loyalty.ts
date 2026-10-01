@@ -16,7 +16,7 @@ import {
   listTiers, createTier, updateTier, deleteTier,
   redeemPoints, redeemReward, adjustPoints,
   creditWallet, debitWallet, runExpiry, getTransactions,
-} from '../controllers/loyaltyController';
+} from '../controllers/customers/loyaltyController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

@@ -16,7 +16,7 @@ import {
   runLearningCycleHandler,
   getExperimentDesignHandler,
   validateExperimentHandler,
-} from '../controllers/intelligenceController';
+} from '../controllers/intelligence/intelligenceController';
 
 const router = Router();
 

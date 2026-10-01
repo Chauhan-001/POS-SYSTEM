@@ -9,7 +9,7 @@
  * and a time heatmap. All queries run against the active collection.
  */
 
-import AuditLog from '../../models/AuditLog';
+import AuditLog from '../../models/admin/AuditLog';
 
 const DAY = 24 * 60 * 60 * 1000;
 

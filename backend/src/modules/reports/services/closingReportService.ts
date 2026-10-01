@@ -13,7 +13,7 @@
  */
 
 import mongoose from 'mongoose';
-import Bill from '../../../models/Bill';
+import Bill from '../../../models/intelligence/Bill';
 import { cashLedgerService } from '../../../services';
 import { dateRange, ReportScope } from './salesReportService';
 

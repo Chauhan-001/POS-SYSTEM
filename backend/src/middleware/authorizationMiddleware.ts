@@ -17,9 +17,9 @@
  */
 
 import { Response, NextFunction } from 'express';
-import Authorization from '../models/Authorization';
+import Authorization from '../models/core/Authorization';
 import type { AuthenticatedRequest } from './authMiddleware';
-import type { AuthorizationAction } from '../models/Authorization';
+import type { AuthorizationAction } from '../models/core/Authorization';
 
 /**
  * Middleware factory — returns middleware that checks if the authenticated user

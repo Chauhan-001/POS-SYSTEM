@@ -20,7 +20,7 @@ import { AppError } from '../../../utils/AppError';
 import RestaurantSettings, { SettingsScope } from '../models/RestaurantSettings';
 import { SettingsPatchInput, SettingsRollbackInput, EffectiveSettingsResult } from '../types';
 import { deepMerge } from '../utils/deepMerge';
-import AuditLog from '../../../models/AuditLog';
+import AuditLog from '../../../models/admin/AuditLog';
 import { ensurePublicToken } from '../../../utils/publicToken';
 import { config } from '../../../config';
 

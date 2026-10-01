@@ -19,10 +19,10 @@
  */
 
 import mongoose from 'mongoose';
-import Product from '../../../models/Product';
-import Purchase from '../../../models/Purchase';
-import InventoryEvent from '../../../models/InventoryEvent';
-import AuditLog from '../../../models/AuditLog';
+import Product from '../../../models/catalog/Product';
+import Purchase from '../../../models/catalog/Purchase';
+import InventoryEvent from '../../../models/catalog/InventoryEvent';
+import AuditLog from '../../../models/admin/AuditLog';
 import { inventoryEventRepo } from '../../../repositories';
 import type { ParsedItem } from '../types';
 

@@ -14,9 +14,9 @@
  */
 
 import mongoose from 'mongoose';
-import ProductModel from '../models/Product';
-import OfferModel from '../models/Offer';
-import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/IntelligenceSignal';
+import ProductModel from '../models/catalog/Product';
+import OfferModel from '../models/marketing/Offer';
+import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 import { findComboCandidates, findAddOnCandidates } from './basketAnalysisService';
 import { computeProductBaselines, ProductBaseline } from './salesBaselineService';
 

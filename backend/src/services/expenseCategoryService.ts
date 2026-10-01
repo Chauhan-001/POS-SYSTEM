@@ -10,7 +10,7 @@
 
 import mongoose from 'mongoose';
 import { expenseCategoryRepo, auditLogRepo } from '../repositories';
-import Expense from '../models/Expense';
+import Expense from '../models/finance/Expense';
 import { AppError } from '../utils/AppError';
 
 export interface SystemCategoryDef {

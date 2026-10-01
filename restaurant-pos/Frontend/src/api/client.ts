@@ -387,7 +387,7 @@ export async function checkOwnerExists(): Promise<boolean> {
   }
 }
 
-/** POST /api/auth/register-owner — Register the first Owner (first-time setup) */
+/** POST /api/auth/register-owner — Register the first Owner (must be YYYY-MM-DD, not in the future) */
 export async function registerOwner(data: {
   fullName: string;
   phone: string;
@@ -395,6 +395,8 @@ export async function registerOwner(data: {
   password: string;
   confirmPassword: string;
   restaurantName: string;
+  /** Real establishment date (YYYY-MM-DD) — when the restaurant started operating. */
+  establishedDate?: string;
   userId?: string;
   planId?: string;
   paymentOrderId?: string;
@@ -1913,6 +1915,10 @@ export async function fetchSummariesMonthly(startDate?: string, endDate?: string
 }
 export async function fetchBranchSummary(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
   return getCached('branch-summary', { startDate, endDate }, `/reports/branch-summary?${reportParams(startDate, endDate)}`);
+}
+/** GET /api/reports/branch-compare — multi-branch comparison intelligence (Owner/Manager). */
+export async function fetchBranchCompare(startDate?: string, endDate?: string): Promise<ReportFetchResult<any>> {
+  return getCached('branch-compare', { startDate, endDate }, `/reports/branch-compare?${reportParams(startDate, endDate)}`);
 }
 export async function fetchReportExport(report: string, format: 'csv' | 'xlsx' | 'pdf', startDate?: string, endDate?: string): Promise<string | null> {
   const p = reportParams(startDate, endDate, { report, format });
@@ -3698,4 +3704,165 @@ export async function sendTestMessage(params: {
 /** GET /api/integrations/whatsapp/status — POS-safe WhatsApp connection status */
 export async function fetchWhatsAppStatus() {
   return get<any>('/integrations/whatsapp/status');
+}
+
+// ─── ML Insights (ml-pipeline: Demand · Basket · Uplit) ──────────
+// One authenticated Node surface (/api/ml-pipeline/*) fronts all three ML
+// services; tenant identity is always server-derived from the JWT.
+
+export interface MlServiceStatus {
+  configured: boolean;
+  baseUrl: string | null;
+  serviceTokenSet: boolean;
+  timeoutMs: number | null;
+}
+
+export interface MlPipelineStatus {
+  success: boolean;
+  demandModel: MlServiceStatus;
+  basketModel: MlServiceStatus;
+  uplitModel: MlServiceStatus;
+  segmentModel?: MlServiceStatus;
+}
+
+export interface StoredDemandPrediction {
+  entityId: string;
+  predictionFor: string;
+  expected: number;
+  lower: number | null;
+  upper: number | null;
+  modelVersion: string;
+  dataMode: string | null;
+  confidenceLevel: string | null;
+  generatedAt: string;
+}
+
+export interface StoredComboPrediction {
+  entityId: string;
+  predictionFor: string;
+  productAId: string;
+  productBId: string;
+  expectedPurchases7d: number | null;
+  estimatedFutureProfit: number | null;
+  modelVersion: string;
+  generatedAt: string;
+}
+
+export interface UpliftCustomerRow {
+  customer_id: string;
+  uplift_score: number;
+  uplift_percentage_points: number;
+  status?: string;
+}
+
+/** GET /api/ml-pipeline/status — which ML services are configured. */
+export async function fetchMlPipelineStatus(): Promise<MlPipelineStatus | null> {
+  const res = await get<MlPipelineStatus>('/ml-pipeline/status');
+  return res?.data || res || null;
+}
+
+// ── Demand model ──
+
+/** GET /api/ml-pipeline/demand/predictions — stored forecasts (ml_predictions). */
+export async function fetchDemandPredictions(params: { productId?: string; fromDate?: string; toDate?: string; limit?: number } = {}) {
+  const qs = new URLSearchParams();
+  if (params.productId) qs.set('productId', params.productId);
+  if (params.fromDate) qs.set('fromDate', params.fromDate);
+  if (params.toDate) qs.set('toDate', params.toDate);
+  if (params.limit) qs.set('limit', String(params.limit));
+  const res = await get<any>(`/ml-pipeline/demand/predictions?${qs.toString()}`);
+  return res?.data || res;
+}
+
+/** POST /api/ml-pipeline/demand/predictions/pull — refresh from the Demand model. */
+export async function pullDemandPredictions(productIds: string[], horizonDays = 7) {
+  return post<any>('/ml-pipeline/demand/predictions/pull', { productIds, horizonDays });
+}
+
+/** POST /api/ml-pipeline/demand/sync — push bills to the Demand model. */
+export async function syncDemandModel(params: { fromDate?: string; toDate?: string; limitBills?: number } = {}) {
+  return post<any>('/ml-pipeline/demand/sync', params);
+}
+
+/** GET /api/ml-pipeline/demand/preview — extraction preview (no push). */
+export async function previewDemandExtraction(limitBills = 500) {
+  const res = await get<any>(`/ml-pipeline/demand/preview?limitBills=${limitBills}`);
+  return res?.data || res;
+}
+
+// ── Basket model (combo intelligence) ──
+
+/** GET /api/ml-pipeline/basket/predictions — stored combo predictions. */
+export async function fetchComboPredictions(limit = 100) {
+  const res = await get<any>(`/ml-pipeline/basket/predictions?limit=${limit}`);
+  return res?.data || res;
+}
+
+/** POST /api/ml-pipeline/basket/predictions/pull — refresh combos. */
+export async function pullComboPredictions() {
+  return post<any>('/ml-pipeline/basket/predictions/pull', {});
+}
+
+/** POST /api/ml-pipeline/basket/sync — push bills as transactions. */
+export async function syncBasketModel(params: { fromDate?: string; toDate?: string; limitBills?: number } = {}) {
+  return post<any>('/ml-pipeline/basket/sync', params);
+}
+
+/** POST /api/ml-pipeline/basket/train — per-tenant training trigger (gated). */
+export async function trainBasketModel() {
+  return post<any>('/ml-pipeline/basket/train', {});
+}
+
+/** GET /api/ml-pipeline/basket/preview — extraction preview (no push). */
+export async function previewBasketExtraction(limitBills = 500) {
+  const res = await get<any>(`/ml-pipeline/basket/preview?limitBills=${limitBills}`);
+  return res?.data || res;
+}
+
+// ── Uplit model (customer uplift) ──
+
+/** GET /api/ml-pipeline/uplift/customers — ranked uplift customers (proxy). */
+export async function fetchUpliftCustomers(limit = 50): Promise<{ success: boolean; total_eligible?: number; customers?: UpliftCustomerRow[] } | null> {
+  const res = await get<any>(`/ml-pipeline/uplift/customers?limit=${limit}`);
+  return res?.data || res || null;
+}
+
+/** POST /api/ml-pipeline/experiments/push — export ledger to Uplit. */
+export async function pushUpliftExperiments() {
+  return post<any>('/ml-pipeline/experiments/push', {});
+}
+
+/** POST /api/ml-pipeline/experiments/assign — record a treatment assignment. */
+export async function recordOfferAssignment(customerId: string, offerId?: string) {
+  return post<any>('/ml-pipeline/experiments/assign', { customerId, offerId });
+}
+
+/** POST /api/ml-pipeline/experiments/convert — record a redemption outcome. */
+export async function recordOfferConversion(customerId: string, offerId?: string, redeemedBillId?: string) {
+  return post<any>('/ml-pipeline/experiments/convert', { customerId, offerId, redeemedBillId });
+}
+
+// ── Customer segmentation (4th model) ──
+
+export interface StoredSegmentRow {
+  entityId: string;
+  segment: string;
+  method: string;
+  isTrained: boolean;
+  recencyDays: number | null;
+  frequency: number | null;
+  monetary: number | null;
+  modelVersion: string;
+  generatedAt: string;
+}
+
+/** GET /api/ml-pipeline/segments — stored customer segments. */
+export async function fetchStoredSegments(limit = 500) {
+  const res = await get<any>(`/ml-pipeline/segments?limit=${limit}`);
+  return res?.data || res;
+}
+
+/** POST /api/ml-pipeline/segments/sync — extract → push → gated train → store. */
+export async function syncCustomerSegments() {
+  return post<any>('/ml-pipeline/segments/sync', {});
 }

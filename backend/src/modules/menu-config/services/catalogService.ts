@@ -16,7 +16,7 @@
  */
 
 import mongoose from 'mongoose';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import ConfigurationTemplate from '../models/ConfigurationTemplate';
 import { resolveGroup, ResolvedProductConfiguration, ResolvedConfigGroup } from './configurationResolver';
 import { ConfigType } from '../constants';

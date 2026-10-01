@@ -7,10 +7,10 @@
  */
 
 import mongoose from 'mongoose';
-import CustomerModel from '../models/Customer';
-import CustomerSegmentModel from '../models/CustomerSegment';
-import BillModel from '../models/Bill';
-import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/IntelligenceSignal';
+import CustomerModel from '../models/customers/Customer';
+import CustomerSegmentModel from '../models/customers/CustomerSegment';
+import BillModel from '../models/intelligence/Bill';
+import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 
 export interface CustomerSegmentOpportunity {
   segmentId: string;

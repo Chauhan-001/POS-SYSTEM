@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import {
   listReferrals, validateReferral, createReferral, completeReferral, getReferralAnalytics,
-} from '../controllers/referralController';
+} from '../controllers/customers/referralController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

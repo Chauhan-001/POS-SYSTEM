@@ -10,12 +10,12 @@
  */
 
 import mongoose from 'mongoose';
-import BillModel from '../models/Bill';
-import BillItemModel from '../models/BillItem';
-import ProductModel from '../models/Product';
-import CustomerModel from '../models/Customer';
-import OfferModel from '../models/Offer';
-import PromotionCandidateModel from '../models/PromotionCandidate';
+import BillModel from '../models/intelligence/Bill';
+import BillItemModel from '../models/intelligence/BillItem';
+import ProductModel from '../models/catalog/Product';
+import CustomerModel from '../models/customers/Customer';
+import OfferModel from '../models/marketing/Offer';
+import PromotionCandidateModel from '../models/marketing/PromotionCandidate';
 
 export type DataConfidenceLevel =
   | 'INSUFFICIENT_DATA'

@@ -14,7 +14,7 @@ import {
   updatePurchase,
   deletePurchase,
   supplierSummary,
-} from '../controllers/purchasesController';
+} from '../controllers/catalog/purchasesController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { invalidateCacheTags } from '../utils/ResponseCache';

@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import {
   listCategories, createCategory, updateCategory, deleteCategory,
-} from '../controllers/expenseCategoryController';
+} from '../controllers/finance/expenseCategoryController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

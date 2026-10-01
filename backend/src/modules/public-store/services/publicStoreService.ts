@@ -17,11 +17,11 @@
  */
 
 import { AppError } from '../../../utils/AppError';
-import Restaurant from '../../../models/Restaurant';
-import Reward from '../../../models/Reward';
-import Offer from '../../../models/Offer';
-import LoyaltyTier from '../../../models/LoyaltyTier';
-import LoyaltySettings from '../../../models/LoyaltySettings';
+import Restaurant from '../../../models/core/Restaurant';
+import Reward from '../../../models/customers/Reward';
+import Offer from '../../../models/marketing/Offer';
+import LoyaltyTier from '../../../models/customers/LoyaltyTier';
+import LoyaltySettings from '../../../models/customers/LoyaltySettings';
 import QrToken from '../../qr-ordering/models/QrToken';
 
 const TOKEN_PATTERN = /^pbl_[A-Za-z0-9]{10,64}$/;

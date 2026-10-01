@@ -12,7 +12,7 @@
  */
 
 import crypto from 'crypto';
-import Restaurant from '../models/Restaurant';
+import Restaurant from '../models/core/Restaurant';
 
 /** Mint a new public token (cryptographic random, URL-safe-ish). */
 export function generatePublicToken(): string {

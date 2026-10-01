@@ -22,7 +22,7 @@ import { FEATURE_CATALOG } from '../../../constants/planFeatures';
 const mockSave = vi.fn();
 const mockExec = vi.fn();
 
-vi.mock('../../../models/Subscription', () => {
+vi.mock('../../../models/core/Subscription', () => {
   const Subscription: Record<string, any> = vi.fn();
   Subscription.findOne = vi.fn(() => ({ exec: mockExec }));
   Subscription.findOneAndUpdate = vi.fn(() => ({ exec: mockExec }));
@@ -31,7 +31,7 @@ vi.mock('../../../models/Subscription', () => {
   return { default: Subscription, ISubscription: Symbol('ISubscription') };
 });
 
-vi.mock('../../../models/SubscriptionPlan', () => {
+vi.mock('../../../models/core/SubscriptionPlan', () => {
   const SubscriptionPlan: Record<string, any> = vi.fn();
   SubscriptionPlan.find = vi.fn(() => ({ sort: vi.fn(() => ({ exec: mockExec })) }));
   SubscriptionPlan.findOne = vi.fn(() => ({ exec: mockExec }));
@@ -39,7 +39,7 @@ vi.mock('../../../models/SubscriptionPlan', () => {
   return { default: SubscriptionPlan };
 });
 
-vi.mock('../../../models/Payment', () => {
+vi.mock('../../../models/orders/Payment', () => {
   const Payment: Record<string, any> = vi.fn();
   Payment.findOne = vi.fn(() => ({ exec: mockExec }));
   Payment.exists = vi.fn(() => ({ exec: mockExec }));
@@ -53,7 +53,7 @@ vi.mock('../../../models/Payment', () => {
   return { default: Payment };
 });
 
-vi.mock('../../../models/Invoice', () => {
+vi.mock('../../../models/orders/Invoice', () => {
   const Invoice: Record<string, any> = vi.fn();
   Invoice.findOne = vi.fn(() => ({ exec: mockExec }));
   Invoice.create = vi.fn(() => ({ invoiceNumber: 'SUB-2026-000001' }));
@@ -61,19 +61,19 @@ vi.mock('../../../models/Invoice', () => {
   return { default: Invoice };
 });
 
-vi.mock('../../../models/InvoiceCounter', () => {
+vi.mock('../../../models/orders/InvoiceCounter', () => {
   const InvoiceCounter: Record<string, any> = vi.fn();
   InvoiceCounter.findOneAndUpdate = vi.fn(() => ({ exec: mockExec }));
   return { default: InvoiceCounter };
 });
 
-vi.mock('../../../models/Restaurant', () => {
+vi.mock('../../../models/core/Restaurant', () => {
   const Restaurant: Record<string, any> = vi.fn();
   Restaurant.findById = vi.fn(() => ({ exec: mockExec }));
   return { default: Restaurant };
 });
 
-vi.mock('../../../models/WebhookEvent', () => {
+vi.mock('../../../models/orders/WebhookEvent', () => {
   const WebhookEvent: Record<string, any> = vi.fn();
   WebhookEvent.findOne = vi.fn(() => ({ exec: mockExec }));
   WebhookEvent.create = vi.fn();
@@ -81,7 +81,7 @@ vi.mock('../../../models/WebhookEvent', () => {
   return { default: WebhookEvent };
 });
 
-vi.mock('../../../models/AuditLog', () => {
+vi.mock('../../../models/admin/AuditLog', () => {
   const AuditLog: Record<string, any> = vi.fn();
   AuditLog.create = vi.fn();
   return { default: AuditLog };
@@ -187,7 +187,7 @@ describe('SubscriptionService', () => {
       mockExec.mockResolvedValueOnce(null);
 
       // Mock: create subscription returns a trial sub
-      const Subscription = (await import('../../../models/Subscription')).default;
+      const Subscription = (await import('../../../models/core/Subscription')).default;
       (Subscription.create as any).mockResolvedValueOnce(mockSub());
 
       // Mock: restaurant lookup
@@ -473,7 +473,7 @@ describe('SubscriptionService', () => {
     it('auto-seeds default plan when no plans exist', async () => {
       mockExec.mockResolvedValueOnce([]); // No plans found
 
-      const SubscriptionPlan = (await import('../../../models/SubscriptionPlan')).default;
+      const SubscriptionPlan = (await import('../../../models/core/SubscriptionPlan')).default;
       (SubscriptionPlan.create as any).mockResolvedValueOnce(mockPlan());
 
       const plans = await service.getPlans();
@@ -691,7 +691,7 @@ describe('SubscriptionService', () => {
       mockExec.mockResolvedValueOnce({ sequence: 1001 }); // InvoiceCounter
       mockExec.mockResolvedValueOnce(sub); // Subscription.findOneAndUpdate
 
-      const { default: Payment } = await import('../../../models/Payment');
+      const { default: Payment } = await import('../../../models/orders/Payment');
       const result = await service.manualRenew('rest_id_123', { billingPeriod: 'yearly' });
 
       expect(result.amount).toBe(4999);

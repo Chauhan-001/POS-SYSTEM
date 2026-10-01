@@ -12,7 +12,7 @@
  * ARE the product.
  */
 
-import type { InventoryItem, Purchase, WasteEntry } from '../../components/inventory/types';
+import type { InventoryItem, Purchase, WasteEntry } from '../components/inventory/types';
 
 // ============================================================
 // RESULT PROVENANCE

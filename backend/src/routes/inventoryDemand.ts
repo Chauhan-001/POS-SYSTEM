@@ -12,7 +12,7 @@ import {
   predictIngredientConsumptionHandler,
   getStockoutRisksHandler,
   getReorderSuggestionsHandler,
-} from '../controllers/inventoryDemandController';
+} from '../controllers/catalog/inventoryDemandController';
 import { requireAuth } from '../middleware/authMiddleware';
 
 const router = Router();

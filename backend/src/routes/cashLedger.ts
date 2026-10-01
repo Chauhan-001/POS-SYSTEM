@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import {
   getLedger, getBalance, openCash, addEntry, closeShift,
-} from '../controllers/cashLedgerController';
+} from '../controllers/finance/cashLedgerController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

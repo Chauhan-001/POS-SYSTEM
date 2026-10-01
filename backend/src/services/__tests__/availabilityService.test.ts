@@ -15,8 +15,8 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { availabilityService } from '../availabilityService';
-import MenuAvailability from '../../models/MenuAvailability';
-import AuditLog from '../../models/AuditLog';
+import MenuAvailability from '../../models/catalog/MenuAvailability';
+import AuditLog from '../../models/admin/AuditLog';
 
 let mongod: MongoMemoryServer;
 const REST = new mongoose.Types.ObjectId();

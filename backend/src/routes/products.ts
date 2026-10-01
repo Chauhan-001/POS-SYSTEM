@@ -15,7 +15,7 @@ import {
   adjustProductStock,
   resolveProductQuery,
   productPriceIntelligence,
-} from '../controllers/productsController';
+} from '../controllers/catalog/productsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { invalidateCacheTags } from '../utils/ResponseCache';

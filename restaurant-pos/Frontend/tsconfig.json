@@ -26,5 +26,5 @@
     "noImplicitAny": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "components"]
+  "include": ["src"]
 }

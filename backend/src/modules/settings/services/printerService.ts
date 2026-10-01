@@ -14,7 +14,7 @@
 import { AppError } from '../../../utils/AppError';
 import Printer, { IPrinter } from '../models/Printer';
 import { PrinterInput, PrinterTestResult } from '../types';
-import AuditLog from '../../../models/AuditLog';
+import AuditLog from '../../../models/admin/AuditLog';
 import net from 'net';
 
 export interface PrinterActor {

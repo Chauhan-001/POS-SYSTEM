@@ -15,8 +15,8 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import Subscription from '../models/Subscription';
-import SubscriptionPlan from '../models/SubscriptionPlan';
+import Subscription from '../models/core/Subscription';
+import SubscriptionPlan from '../models/core/SubscriptionPlan';
 import { effectiveFeatures } from '../utils/subscriptionFeatures';
 
 /**

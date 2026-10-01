@@ -27,7 +27,7 @@
  */
 
 import mongoose from 'mongoose';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import type { LearnRequest } from '../types';
 
 // ====================================================================

@@ -19,7 +19,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import ConfigurationTemplate from '../models/ConfigurationTemplate';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import * as templateService from '../services/templateService';
 import * as productConfigService from '../services/productConfigService';
 import { resolveProductConfiguration, resolveGroup, summarizeConfigurations } from '../services/configurationResolver';

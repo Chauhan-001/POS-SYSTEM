@@ -15,6 +15,7 @@ import {
   salesReportService, productReportService, inventoryReportService,
   employeeReportService, closingReportService, branchReportService, summaryService,
 } from '../services';
+import { branchCompareService } from '../services/branchCompareService';
 import { exportService, ExportMeta, ExportTable } from '../services/exportService';
 import type { ReportScope, ReportUser } from '../types';
 
@@ -189,6 +190,17 @@ export async function employeeAuditActivity(req: Request, res: Response): Promis
 
 export async function branchSummary(req: Request, res: Response): Promise<void> {
   ok(res, await branchReportService.branchSummary(scopeOf(req)));
+}
+
+/**
+ * GET /api/reports/branch-compare — multi-branch comparison intelligence.
+ * Per-branch KPIs + growth vs previous period, best sellers, cross-branch
+ * product comparison, and deterministic owner insights. Owner/Manager only;
+ * tenant-scoped by the authenticated restaurant; optional ?branchId narrows
+ * (provided by an owner viewing one branch).
+ */
+export async function branchCompare(req: Request, res: Response): Promise<void> {
+  ok(res, await branchCompareService.compare(scopeOf(req)));
 }
 
 // ─── Closing (Owner/Manager only) ────────────────────────────────

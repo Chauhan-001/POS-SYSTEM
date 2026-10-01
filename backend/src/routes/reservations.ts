@@ -21,7 +21,7 @@ import {
   removeWaitingEntry,
   seatReservation,
   markNoShow,
-} from '../controllers/reservationsController';
+} from '../controllers/orders/reservationsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { validate } from '../middleware/validate';

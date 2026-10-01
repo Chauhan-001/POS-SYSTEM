@@ -39,10 +39,13 @@ import {
   buildParsedJson,
 } from '../services/AuditLogger';
 import { updateInventory, undoInventory } from '../services/InventoryService';
+import { transcribeAudio, getSTTConfig } from '../services/SpeechService';
+import { recordSttUsage, usageFromResult } from '../services/SttUsageService';
+import { MAX_TRANSCRIBE_AUDIO_BYTES, MAX_TRANSCRIBE_DURATION_SEC } from '../validators/voiceInventory';
 import { issuePendingAction, consumePendingAction, rejectPendingAction, verifyPendingAction } from '../services/PendingActionService';
 import ItemAlias from '../models/ItemAlias';
 import VoiceAuditLog from '../models/VoiceAuditLog';
-import Product from '../../../models/Product';
+import Product from '../../../models/catalog/Product';
 import { learnFromCorrection } from '../services/SelfLearningService';
 import type { ParsedItem, VoiceInventoryResponse, ConfirmationRequest } from '../types';
 
@@ -118,12 +121,147 @@ function buildDeterministicAliases(productName: string, category?: string): stri
 // the AI module. The deterministic resolution pipeline simply skips stage 8.
 
 // ====================================================================
-// POST /api/voice-inventory/transcribe — REMOVED (Phase 3)
+// POST /api/voice-inventory/transcribe — RESTORED (Phase B re-integration)
 // ====================================================================
-// Server-side STT (Groq Whisper et al.) was AI-only execution and has been
-// removed together with SpeechService/SttUsageService. Voice input continues
-// via the browser's SpeechRecognition API, which posts plain transcripts to
-// /parse (deterministic keyword/rule parser).
+// Server-side STT is back: recovered from the pre-"removed ai" implementation
+// (commit ecf6df6) and adapted to the current deterministic pipeline. Voice
+// input can be raw audio (mic) or an already-transcribed string — both paths
+// converge on the same /parse flow and the same InventoryService authority.
+
+const TRANSCRIBE_STT_PROVIDER_NAME = 'groq';
+
+/**
+ * Transcribe a base64 audio clip to text using the configured STT provider
+ * (Groq Whisper primary when the LLM points at Groq; Google Cloud STT
+ * fallback when keyed).
+ *
+ * Request body (validated by voiceTranscribeSchema):
+ *   { audio: string (base64), audioMimeType?: string, language?: 'en' | 'hi' | 'hi-en' }
+ *
+ * Response:
+ *   { success, transcript, confidence, provider, latencyMs }
+ *
+ * SAFETY: audio is processed in-memory and never persisted; the key never
+ * leaves the backend; failures are provider-agnostic and never leak internals.
+ */
+export async function transcribeVoiceAudio(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const startTime = Date.now();
+  const authReq = req as AuthenticatedRequest;
+  const { audio, audioMimeType = 'audio/webm', language = 'hi-en' } = req.body as {
+    audio: string;
+    audioMimeType?: string;
+    language?: 'en' | 'hi' | 'hi-en';
+  };
+
+  try {
+    if (!audio || typeof audio !== 'string' || audio.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Audio (base64) is required',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    // Decode base64 → Buffer → Blob for the STT provider.
+    const buffer = Buffer.from(audio, 'base64');
+    const audioBlob = new Blob([new Uint8Array(buffer)], { type: audioMimeType });
+
+    // ── Audio size / duration caps (enforced BEFORE any provider call) ──
+    if (buffer.length > MAX_TRANSCRIBE_AUDIO_BYTES) {
+      res.status(413).json({
+        success: false,
+        error: `Audio too large (${Math.round(buffer.length / 1024)} KB). Max ${Math.round(MAX_TRANSCRIBE_AUDIO_BYTES / 1024)} KB.`,
+        code: 'AUDIO_TOO_LARGE',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+    // ~16 KB/s WebM/Opus — cap estimated duration so a long/hung recording is
+    // rejected instead of racking up STT cost.
+    const estimatedDurationSec = buffer.length / 16_000;
+    if (estimatedDurationSec > MAX_TRANSCRIBE_DURATION_SEC) {
+      res.status(413).json({
+        success: false,
+        error: `Audio too long (~${Math.round(estimatedDurationSec)}s > ${MAX_TRANSCRIBE_DURATION_SEC}s). Please re-record a shorter clip.`,
+        code: 'AUDIO_TOO_LONG',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    const cfg = getSTTConfig();
+    if (cfg.provider === 'none') {
+      res.status(503).json({
+        success: false,
+        error: 'Voice service is temporarily unavailable.',
+        code: 'STT_NOT_CONFIGURED',
+        latencyMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    console.log(
+      `[VoiceInventory] transcribe: ${Math.round(buffer.length / 1024)} KB, mime=${audioMimeType}, language=${language}, sttProvider=${cfg.provider}`,
+    );
+
+    const result = await transcribeAudio(audioBlob, { language });
+    const totalLatency = Date.now() - startTime;
+
+    // Fire-and-forget cost/usage telemetry — never blocks the response.
+    void recordSttUsage(
+      usageFromResult(
+        {
+          restaurantId: authReq?.user?.restaurantId || '',
+          branchId: authReq?.user?.branchIds?.[0],
+          employeeId: authReq?.user?.userId,
+          provider: result.provider || TRANSCRIBE_STT_PROVIDER_NAME,
+          model: cfg.model,
+          audioBytes: buffer.length,
+          audioSeconds: estimatedDurationSec,
+          latencyMs: totalLatency,
+        },
+        result,
+      ),
+    );
+
+    if (!result.transcript.trim()) {
+      res.json({
+        success: false,
+        transcript: '',
+        error: 'No speech detected. Please try again.',
+        code: 'EMPTY_TRANSCRIPT',
+        confidence: result.confidence,
+        provider: result.provider,
+        latencyMs: totalLatency,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      transcript: result.transcript,
+      confidence: result.confidence,
+      provider: result.provider,
+      latencyMs: totalLatency,
+    });
+  } catch (err) {
+    // Provider-agnostic safe error — no internals, no keys, no stack traces.
+    console.warn(`[VoiceInventory] transcribe failed: ${err instanceof Error ? err.message : String(err)}`);
+    const notConfigured = err instanceof Error && err.name === 'STTNotConfigured';
+    res.status(notConfigured ? 503 : 502).json({
+      success: false,
+      error: notConfigured
+        ? 'Voice service is temporarily unavailable.'
+        : 'Could not understand the audio. Please try again.',
+      code: notConfigured ? 'STT_NOT_CONFIGURED' : 'STT_FAILED',
+      latencyMs: Date.now() - startTime,
+    });
+  }
+}
 
 
 // ====================================================================

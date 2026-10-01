@@ -71,6 +71,8 @@ export interface Restaurant {
   fssai?: string
   pan?: string
   businessRegNumber?: string
+  /** Real establishment date (ISO) — when the restaurant started operating. */
+  establishedDate?: string | null
   taxMode?: string
   printerType?: string
   receiptWidth?: string

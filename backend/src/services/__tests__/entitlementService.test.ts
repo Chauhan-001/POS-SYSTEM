@@ -24,11 +24,11 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { entitlementService, EntitlementService } from '../entitlementService';
 
 // ─── Models ───────────────────────────────────────────────────────────────
-import Subscription from '../../models/Subscription';
-import SubscriptionPlan from '../../models/SubscriptionPlan';
-import Branch from '../../models/Branch';
-import Employee from '../../models/Employee';
-import Table from '../../models/Table';
+import Subscription from '../../models/core/Subscription';
+import SubscriptionPlan from '../../models/core/SubscriptionPlan';
+import Branch from '../../models/core/Branch';
+import Employee from '../../models/core/Employee';
+import Table from '../../models/orders/Table';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 let mongod: MongoMemoryServer;
@@ -40,7 +40,7 @@ const enterprisePlanId  = 'enterprise_integration';
 
 async function seedData(): Promise<void> {
   // ---- Restaurant ----
-  const Restaurant = (await import('../../models/Restaurant')).default;
+  const Restaurant = (await import('../../models/core/Restaurant')).default;
   const restaurant = await Restaurant.create({
     restaurantId: 'INTEGRATION_TEST',
     name: 'Integration Test Restaurant',
@@ -275,7 +275,7 @@ describe('canCreateBranch', () => {
 
   it('blocks branch creation when plan has no multi_branch feature', async () => {
     // Create a 3rd restaurant with active subscription on the basic plan (no multi_branch, 1 branch limit)
-    const Restaurant = (await import('../../models/Restaurant')).default;
+    const Restaurant = (await import('../../models/core/Restaurant')).default;
     const basicRest = await Restaurant.create({
       restaurantId: 'BASIC_TEST',
       name: 'Basic Plan Restaurant',

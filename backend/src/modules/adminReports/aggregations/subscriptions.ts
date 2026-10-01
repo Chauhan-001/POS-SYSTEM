@@ -284,7 +284,7 @@ export async function getSubscriptionReport(
  * contributes its monthly-equivalent, not its full face value. */
 async function subscriptionMrrFromPayments(window: DateWindow): Promise<number> {
   try {
-    const { default: Payment } = await import('../../../models/Payment');
+    const { default: Payment } = await import('../../../models/orders/Payment');
     const rows = await Payment.aggregate([
       { $match: { status: 'success', createdAt: { $gte: window.from, $lte: window.to } } },
       {

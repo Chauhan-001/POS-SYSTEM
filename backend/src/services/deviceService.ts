@@ -28,12 +28,12 @@
  */
 
 import mongoose from 'mongoose';
-import Device from '../models/Device';
-import DeviceActivity, { DeviceActivityEvent } from '../models/DeviceActivity';
-import RefreshToken from '../models/RefreshToken';
-import Restaurant from '../models/Restaurant';
-import Branch from '../models/Branch';
-import User from '../models/User';
+import Device from '../models/core/Device';
+import DeviceActivity, { DeviceActivityEvent } from '../models/core/DeviceActivity';
+import RefreshToken from '../models/core/RefreshToken';
+import Restaurant from '../models/core/Restaurant';
+import Branch from '../models/core/Branch';
+import User from '../models/core/User';
 import { auditLogRepo, refreshTokenRepo } from '../repositories';
 import { AppError } from '../utils/AppError';
 import { parsePagination, parseSearch, parseDateRange } from '../utils/queryParser';

@@ -13,7 +13,7 @@
 import { Request, Response } from 'express';
 import type { AuthenticatedRequest } from '../../../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import Branch from '../../../models/Branch';
+import Branch from '../../../models/core/Branch';
 import QROrderingSession from '../models/QROrderingSession';
 import CustomerRequest from '../models/CustomerRequest';
 import type { IQRRequest, IQRSession } from '../types';

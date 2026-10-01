@@ -8,7 +8,7 @@
  */
 
 import { Router } from 'express';
-import { recommend, recordAction, recordOutcome, history, markConverted } from '../controllers/advisorController';
+import { recommend, recordAction, recordOutcome, history, markConverted } from '../controllers/marketing/advisorController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 
 const router = Router();

@@ -26,7 +26,7 @@
  *   DETERIORATION_PP  = 5    — margin must have dropped ≥ 5 pp to be "deteriorating"
  */
 
-import ProductModel from '../models/Product';
+import ProductModel from '../models/catalog/Product';
 import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
 import { resolveMenuProductScope } from './productService';
 

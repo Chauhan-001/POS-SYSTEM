@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
-import AuditLog from '../../../models/AuditLog';
+import AuditLog from '../../../models/admin/AuditLog';
 import { auditService, recomputeDocHash } from '../auditService';
 import { maskSecrets, maskPii, isSensitiveKey, isPiiKey } from '../masking';
 import {

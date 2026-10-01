@@ -19,7 +19,7 @@ const { createFn, countDocumentsFn, aggregateFn, findFn } = vi.hoisted(() => ({
   findFn: vi.fn(),
 }));
 
-vi.mock('../../../models/Payment', () => {
+vi.mock('../../../models/orders/Payment', () => {
   const Payment: Record<string, any> = vi.fn();
   Payment.aggregate = aggregateFn;
   Payment.find = findFn;

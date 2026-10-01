@@ -11,7 +11,7 @@
  */
 
 import { z } from 'zod';
-import { objectId, optString, optBool } from './common';
+import { objectId, optString, optBool, pastDateString } from './common';
 
 /** Supported onboarding modes — see adminRestaurantsController.createRestaurant. */
 export const onboardingModeSchema = z.enum(['cash', 'trial', 'create_only']);
@@ -34,6 +34,8 @@ const restaurantBaseFields = {
   fssai: optString,
   pan: optString,
   businessRegNumber: optString,
+  /** Real establishment date (YYYY-MM-DD); must be a valid, non-future date. */
+  establishedDate: pastDateString.optional(),
   ownerName: optString,
   ownerPhone: optString,
   ownerEmail: optString,

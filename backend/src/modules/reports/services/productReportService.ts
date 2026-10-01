@@ -10,9 +10,9 @@
  */
 
 import mongoose from 'mongoose';
-import Bill from '../../../models/Bill';
-import BillItem from '../../../models/BillItem';
-import Product from '../../../models/Product';
+import Bill from '../../../models/intelligence/Bill';
+import BillItem from '../../../models/intelligence/BillItem';
+import Product from '../../../models/catalog/Product';
 import { dateClause, ReportScope } from './salesReportService';
 
 function objectId(v: string): mongoose.Types.ObjectId {

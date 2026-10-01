@@ -3,10 +3,10 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 import { customerService, loyaltyService } from '../index';
-import Customer from '../../models/Customer';
-import LoyaltySettings from '../../models/LoyaltySettings';
-import LoyaltyTier from '../../models/LoyaltyTier';
-import LoyaltyTransaction from '../../models/LoyaltyTransaction';
+import Customer from '../../models/customers/Customer';
+import LoyaltySettings from '../../models/customers/LoyaltySettings';
+import LoyaltyTier from '../../models/customers/LoyaltyTier';
+import LoyaltyTransaction from '../../models/customers/LoyaltyTransaction';
 import { AppError } from '../../utils/AppError';
 
 let mongod: MongoMemoryServer;

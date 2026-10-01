@@ -27,8 +27,8 @@
  *   Both carry .status and .code so controllers can map them consistently.
  */
 
-import Device from '../models/Device';
-import Subscription from '../models/Subscription';
+import Device from '../models/core/Device';
+import Subscription from '../models/core/Subscription';
 
 // ─── Typed errors (status + code for consistent controller mapping) ─────────
 

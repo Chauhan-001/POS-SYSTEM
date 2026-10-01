@@ -20,6 +20,7 @@ import {
   PieChart,
   BadgePercent,
   Shield,
+  CalendarDays,
 } from 'lucide-react'
 import { cn } from '../utils/cn'
 import { useSidebar } from '../context/SidebarContext'
@@ -29,6 +30,7 @@ const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
   { label: 'Restaurants', icon: Store, to: '/restaurants' },
   { label: 'Customer CRM', icon: Users, to: '/customer-crm' },
+  { label: 'Calendar', icon: CalendarDays, to: '/calendar' },
   { label: 'Finance', icon: Wallet, to: '/finance' },
   { label: 'Reports', icon: PieChart, to: '/reports' },
   { label: 'Admin Reports', icon: BarChart3, to: '/admin-reports' },

@@ -37,7 +37,7 @@
  */
 
 import mongoose from 'mongoose';
-import Product, { IProduct } from '../../../models/Product';
+import Product, { IProduct } from '../../../models/catalog/Product';
 import {
   fuzzySimilarity,
   applyPhoneticBonus,

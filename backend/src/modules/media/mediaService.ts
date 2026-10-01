@@ -23,9 +23,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import Restaurant, { IRestaurantMediaMeta } from '../../models/Restaurant';
-import Subscription from '../../models/Subscription';
-import SubscriptionPlan from '../../models/SubscriptionPlan';
+import Restaurant, { IRestaurantMediaMeta } from '../../models/core/Restaurant';
+import Subscription from '../../models/core/Subscription';
+import SubscriptionPlan from '../../models/core/SubscriptionPlan';
 import { auditLogRepo } from '../../repositories';
 import { AppError } from '../../utils/AppError';
 import { config } from '../../config';

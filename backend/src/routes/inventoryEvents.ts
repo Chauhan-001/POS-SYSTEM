@@ -8,7 +8,7 @@
  */
 
 import { Router } from 'express';
-import { createInventoryEvent, listInventoryEvents, deleteInventoryEvent } from '../controllers/inventoryEventsController';
+import { createInventoryEvent, listInventoryEvents, deleteInventoryEvent } from '../controllers/catalog/inventoryEventsController';
 import { requireAuth, requireRole } from '../middleware/authMiddleware';
 import { requireFeature } from '../middleware/subscriptionMiddleware';
 import { invalidateCacheTags } from '../utils/ResponseCache';

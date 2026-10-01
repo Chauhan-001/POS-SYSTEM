@@ -16,8 +16,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { authService } from '../index';
 import { config } from '../../config';
 import { ALL_FEATURES } from '../../constants/planFeatures';
-import Subscription from '../../models/Subscription';
-import Restaurant from '../../models/Restaurant';
+import Subscription from '../../models/core/Subscription';
+import Restaurant from '../../models/core/Restaurant';
 
 let mongod: MongoMemoryServer;
 
@@ -43,6 +43,7 @@ describe('registerOwner — 14-day all-features trial (no plan selection)', () =
       password: 'secret123',
       restaurantName: 'Trial Bistro',
       userId: 'trial_owner',
+      establishedDate: '2018-11-20',
     });
 
     expect(result.employee).toBeTruthy();
@@ -50,6 +51,10 @@ describe('registerOwner — 14-day all-features trial (no plan selection)', () =
 
     const restaurant = await Restaurant.findOne({ name: 'Trial Bistro' }).lean().exec();
     expect(restaurant).toBeTruthy();
+
+    // Real establishment date is persisted (distinct from the signup date).
+    expect(restaurant!.establishedDate).toBeTruthy();
+    expect(new Date(restaurant!.establishedDate!).toISOString()).toMatch(/^2018-11-20T00:00:00\.000Z$/);
 
     const sub = await Subscription.findOne({ restaurantId: restaurant!._id }).lean().exec();
     expect(sub).toBeTruthy();
