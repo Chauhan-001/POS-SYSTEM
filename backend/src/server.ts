@@ -155,6 +155,8 @@ import marketingRouter from './routes/marketing';
 import mlPipelineRouter from './modules/ml-pipeline/mlPipelineRoutes';
 import { startMLSyncScheduler } from './modules/ml-pipeline/mlSyncScheduler';
 import marketingAgentRouter from './ai/agents/marketingAgentRoutes';
+import inventoryAgentRouter from './ai/agents/inventoryAgentRoutes';
+import { startCricketCalendarScheduler } from './context/sports/cricket/cricketCalendarScheduler';
 
 import { renderPublicStorePage } from './modules/public-store/publicStorePage';
 import { initSocket } from './socket';
@@ -382,6 +384,7 @@ app.use('/api/automations', automationsRouter);
 app.use('/api/customer-reports', customerReportsRouter);
 app.use('/api/ml-pipeline', mlPipelineRouter);
 app.use('/api/ai/marketing-agent', marketingAgentRouter);
+app.use('/api/ai/inventory-agent', inventoryAgentRouter);
 app.use('/api', recipesRouter);
 app.use('/api', promotionsRouter);
 app.use('/api', mediaRouter);
@@ -477,6 +480,14 @@ async function start() {
     startMLSyncScheduler();
   } catch (err) {
     console.warn('[MLSyncScheduler] startup failed:', (err as Error)?.message);
+  }
+
+  // ─── 3.06. Cricket → Calendar interval sync (CricAPI fixtures into the
+  // Context Calendar so offer recommendations read MongoDB, not the API) ──
+  try {
+    startCricketCalendarScheduler();
+  } catch (err) {
+    console.warn('[CricketCalendarScheduler] startup failed:', (err as Error)?.message);
   }
 
   // ─── 3.1. Start the marketing delivery worker + scheduler ─────

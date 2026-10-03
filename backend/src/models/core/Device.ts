@@ -64,7 +64,7 @@ export interface IDevice extends Document {
 const DeviceSchema = new Schema<IDevice>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', index: true },
+    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant' },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null },
     deviceId: { type: String, required: true, trim: true },
     deviceName: { type: String, trim: true, default: '' },

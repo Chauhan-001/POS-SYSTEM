@@ -54,6 +54,10 @@ const router = Router();
 // Read + preview (all staff)
 router.get('/', requireAuth, requireFeature('loyalty'), validate({ query: campaignQuerySchema }), listCampaigns);
 router.post('/preview', requireAuth, requireFeature('loyalty'), previewCampaign);
+// NOTE: GET /proposals MUST be registered before GET /:id — otherwise
+// "/proposals" is captured by "/:id" and fails ObjectId validation (400),
+// which made the proposal inbox unreachable.
+router.get('/proposals', requireAuth, requireFeature('loyalty'), validate({ query: proposalInboxQuerySchema }), listProposalInbox);
 router.get('/:id', requireAuth, requireFeature('loyalty'), validate({ params: campaignParamsSchema }), getCampaign);
 
 // Write (Owner/Manager)
@@ -74,7 +78,7 @@ router.post('/proposal/from-command', requireRole('Owner', 'Manager'), requireFe
 
 // ─── Proposal lifecycle (agent + owner drafts) ───────────────────────────
 // Same feature gate as the other proposal routes for consistency.
-router.get('/proposals', requireAuth, requireFeature('loyalty'), validate({ query: proposalInboxQuerySchema }), listProposalInbox);
+// (GET /proposals itself is registered above GET /:id — see the note there.)
 router.post('/proposals/:id/submit', requireRole('Owner', 'Manager'), requireFeature('loyalty'), validate({ params: proposalActionParamsSchema }), submit);
 router.post('/proposals/:id/approve', requireRole('Owner'), requireFeature('loyalty'), validate({ params: proposalActionParamsSchema }), approve);
 router.post('/proposals/:id/reject', requireRole('Owner', 'Manager'), requireFeature('loyalty'), validate({ params: proposalActionParamsSchema, body: proposalRejectSchema }), reject);

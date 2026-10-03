@@ -381,8 +381,9 @@ describe('CampaignProposal - state transitions', () => {
     expect(campaignService.canApproveTransition('pending', 'validating')).toBe(true);
     expect(campaignService.canApproveTransition('validating', 'ready_for_approval')).toBe(true);
     expect(campaignService.canApproveTransition('ready_for_approval', 'approved')).toBe(true);
-    expect(campaignService.canApproveTransition('approved', 'scheduled')).toBe(true);
-    expect(campaignService.canApproveTransition('approved', 'cancelled')).toBe(true);
+    // 'approved' is approval-terminal: scheduling is an execution-status move.
+    expect(campaignService.canApproveTransition('approved', 'scheduled' as any)).toBe(false);
+    expect(campaignService.canApproveTransition('approved', 'rejected')).toBe(false); // terminal
     expect(campaignService.canApproveTransition('rejected', 'pending')).toBe(false); // terminal
   });
 
@@ -392,6 +393,7 @@ describe('CampaignProposal - state transitions', () => {
     expect(campaignService.canExecuteTransition('active', 'completed')).toBe(true);
     expect(campaignService.canExecuteTransition('active', 'paused')).toBe(true);
     expect(campaignService.canExecuteTransition('paused', 'active')).toBe(true);
-    expect(campaignService.canExecuteTransition('completed', 'measured')).toBe(false); // terminal
+    expect(campaignService.canExecuteTransition('completed', 'measured')).toBe(true); // measured records outcomes, then terminal
+    expect(campaignService.canExecuteTransition('measured', 'active')).toBe(false); // terminal
   });
 });

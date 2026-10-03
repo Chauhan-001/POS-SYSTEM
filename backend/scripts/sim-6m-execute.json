@@ -1,0 +1,337 @@
+{
+  "generatedAt": "2026-10-02T22:35:25.648Z",
+  "restaurant": "SIM_RESTAURANT_6M_001",
+  "restaurantObjectId": "6ac031900f636f7cc8ab6f8f",
+  "login": {
+    "userId": "sim_urban_tadka",
+    "pin": "246810",
+    "endpoint": "POST /api/auth/login { username, password }"
+  },
+  "window": {
+    "start": "2025-10-01",
+    "end": "2026-03-29",
+    "days": 180
+  },
+  "seed": 20261002,
+  "counts": {
+    "Restaurant": 1,
+    "Branch": 3,
+    "Product": 63,
+    "Purchase": 723,
+    "InventoryEvent": 4230,
+    "Supplier": 0,
+    "Customer": 1200,
+    "CouponRedemption": 7386,
+    "CustomerSegment": 25,
+    "Bill": 19722,
+    "BillItem": 0,
+    "Offer": 13,
+    "Campaign": 7,
+    "CampaignHistory": 7,
+    "OfferAnalytics": 863,
+    "OfferExperimentEvent": 5432,
+    "MLPrediction": 0,
+    "DailySummary": 540,
+    "MonthlySummary": 18,
+    "CalendarEvent": 20,
+    "Recipe": 44,
+    "RecipeConsumption": 19722
+  },
+  "offers": {
+    "O1": {
+      "title": "First Order — 25% Off",
+      "redemptions": 5963,
+      "discount": 620603.75,
+      "revenue": 2198421.25
+    },
+    "O2": {
+      "title": "Launch Offer — 10% Off",
+      "redemptions": 78,
+      "discount": 3704.3,
+      "revenue": 34355.7
+    },
+    "O3": {
+      "title": "Diwali Family Feast — 15% Off",
+      "redemptions": 16,
+      "discount": 1221.05,
+      "revenue": 7090.95
+    },
+    "O4": {
+      "title": "Weekday Lunch — ₹50 Off",
+      "redemptions": 23,
+      "discount": 1150,
+      "revenue": 9929
+    },
+    "O5": {
+      "title": "Buy 1 Get 1 Momos",
+      "redemptions": 133,
+      "discount": 0,
+      "revenue": 80413
+    },
+    "O6": {
+      "title": "Winter Family Combo ₹599",
+      "redemptions": 55,
+      "discount": 5900,
+      "revenue": 53997
+    },
+    "O7": {
+      "title": "New Year — ₹100 Off",
+      "redemptions": 17,
+      "discount": 1700,
+      "revenue": 9589
+    },
+    "O8": {
+      "title": "Republic Day — 15% Off",
+      "redemptions": 35,
+      "discount": 2428.15,
+      "revenue": 14283.85
+    },
+    "O9": {
+      "title": "We Miss You — 20% Off",
+      "redemptions": 85,
+      "discount": 7366.8,
+      "revenue": 30966.2
+    },
+    "O10": {
+      "title": "Flat 15% Off — Sitewide",
+      "redemptions": 539,
+      "discount": 40208.65,
+      "revenue": 227908.35
+    },
+    "O11": {
+      "title": "Cricket Nights — Burger Combo ₹249",
+      "redemptions": 9,
+      "discount": 450,
+      "revenue": 4463
+    },
+    "O12": {
+      "title": "Weekend Free Dessert",
+      "redemptions": 433,
+      "discount": 0,
+      "revenue": 322121
+    }
+  },
+  "campaigns": [
+    {
+      "key": "O2",
+      "audience": 441,
+      "delivered": 426,
+      "failed": 15,
+      "redemptions": 78,
+      "revenue": 34355.7
+    },
+    {
+      "key": "O3",
+      "audience": 406,
+      "delivered": 379,
+      "failed": 27,
+      "redemptions": 16,
+      "revenue": 7090.95
+    },
+    {
+      "key": "O6",
+      "audience": 514,
+      "delivered": 478,
+      "failed": 36,
+      "redemptions": 55,
+      "revenue": 53997
+    },
+    {
+      "key": "O7",
+      "audience": 232,
+      "delivered": 224,
+      "failed": 8,
+      "redemptions": 17,
+      "revenue": 9589
+    },
+    {
+      "key": "O9",
+      "audience": 488,
+      "delivered": 446,
+      "failed": 42,
+      "redemptions": 85,
+      "revenue": 30966.2
+    },
+    {
+      "key": "O10",
+      "audience": 1823,
+      "delivered": 1681,
+      "failed": 142,
+      "redemptions": 539,
+      "revenue": 227908.35
+    },
+    {
+      "key": "O11",
+      "audience": 205,
+      "delivered": 200,
+      "failed": 5,
+      "redemptions": 9,
+      "revenue": 4463
+    }
+  ],
+  "experiments": [
+    {
+      "experimentId": "EXP_SIM_6M_A",
+      "variantId": "control",
+      "assigned": 300,
+      "converted": 75,
+      "conversionRate": 0.25,
+      "attributedRevenue": 60025.43
+    },
+    {
+      "experimentId": "EXP_SIM_6M_A",
+      "variantId": "variant-a",
+      "assigned": 300,
+      "converted": 91,
+      "conversionRate": 0.3,
+      "attributedRevenue": 62386.29
+    },
+    {
+      "experimentId": "EXP_SIM_6M_B",
+      "variantId": "control",
+      "assigned": 200,
+      "converted": 34,
+      "conversionRate": 0.17,
+      "attributedRevenue": 23879.14
+    },
+    {
+      "experimentId": "EXP_SIM_6M_B",
+      "variantId": "variant-a",
+      "assigned": 200,
+      "converted": 62,
+      "conversionRate": 0.31,
+      "attributedRevenue": 45670.58
+    }
+  ],
+  "stockoutDays": [
+    {
+      "item": "Chicken",
+      "day": "2026-03-24"
+    },
+    {
+      "item": "Chicken",
+      "day": "2026-03-25"
+    },
+    {
+      "item": "Chicken",
+      "day": "2026-03-26"
+    }
+  ],
+  "finalStock": [
+    {
+      "item": "Basmati Rice",
+      "stock": 26.13,
+      "unit": "kg",
+      "avgCost": 92
+    },
+    {
+      "item": "Chicken",
+      "stock": 0,
+      "unit": "kg",
+      "avgCost": 356.25
+    },
+    {
+      "item": "Paneer",
+      "stock": 0,
+      "unit": "kg",
+      "avgCost": 340
+    },
+    {
+      "item": "Onion",
+      "stock": 16.07,
+      "unit": "kg",
+      "avgCost": 30.78
+    },
+    {
+      "item": "Tomato",
+      "stock": 16.13,
+      "unit": "kg",
+      "avgCost": 38.02
+    },
+    {
+      "item": "Capsicum",
+      "stock": 7.85,
+      "unit": "kg",
+      "avgCost": 60
+    },
+    {
+      "item": "Cooking Oil",
+      "stock": 4.54,
+      "unit": "L",
+      "avgCost": 145
+    },
+    {
+      "item": "Wheat Flour",
+      "stock": 0,
+      "unit": "kg",
+      "avgCost": 39
+    },
+    {
+      "item": "Milk",
+      "stock": 6.84,
+      "unit": "L",
+      "avgCost": 62
+    },
+    {
+      "item": "Fresh Cream",
+      "stock": 2.7,
+      "unit": "L",
+      "avgCost": 210
+    },
+    {
+      "item": "Mixed Vegetables",
+      "stock": 0,
+      "unit": "kg",
+      "avgCost": 65
+    },
+    {
+      "item": "Spice Mix",
+      "stock": 0,
+      "unit": "kg",
+      "avgCost": 420
+    },
+    {
+      "item": "Sugar",
+      "stock": 6.12,
+      "unit": "kg",
+      "avgCost": 46
+    },
+    {
+      "item": "Cheese",
+      "stock": 7.67,
+      "unit": "kg",
+      "avgCost": 380
+    },
+    {
+      "item": "Noodles",
+      "stock": 6.58,
+      "unit": "kg",
+      "avgCost": 90
+    },
+    {
+      "item": "Eggs",
+      "stock": 46.24,
+      "unit": "pcs",
+      "avgCost": 7
+    },
+    {
+      "item": "Beverage Base",
+      "stock": 0.8,
+      "unit": "L",
+      "avgCost": 180
+    },
+    {
+      "item": "Packaging",
+      "stock": 0,
+      "unit": "pcs",
+      "avgCost": 7
+    },
+    {
+      "item": "Dal",
+      "stock": 6.76,
+      "unit": "kg",
+      "avgCost": 120
+    }
+  ],
+  "warnings": []
+}

@@ -41,6 +41,8 @@ describe('runMarketingAgent honesty ladder', () => {
     expect(result.offerDraft).toBeNull();
     expect(result.nextActions.length).toBeGreaterThan(0);
     expect(result.targetingScope).toMatch(/no ML signal/i);
+    // Context-only evidence must degrade to null, never fabricate a line.
+    expect(result.basketContext).toBeNull();
   });
 
   it('falls back to ML_SEGMENTS when the uplift gate fails, with the gate reasons surfaced', async () => {

@@ -32,6 +32,7 @@ export type OfferRecommendationSource =
   | 'high_margin_promotion'
   | 'combo_upsell'
   | 'time_based'
+  | 'sports_event'
   | 'weekend'
   | 'slow_day'
   | 'weak_category'

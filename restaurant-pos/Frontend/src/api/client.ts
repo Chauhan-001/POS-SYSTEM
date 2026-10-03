@@ -2991,6 +2991,185 @@ export async function fetchOfferRecommendations(limit = 10) {
   return result;
 }
 
+// ─── Marketing Agent (deterministic targeting) ────────────────────
+
+export interface AgentTargetRow {
+  refId: string;
+  refType: 'customer' | 'segment';
+  score: number | null;
+  label?: string;
+  trainedCount?: number;
+  untrainedCount?: number;
+}
+
+export interface AgentOfferDraft {
+  offerId: string | null;
+  title: string;
+  status: 'draft';
+  rationale: string;
+}
+
+// Mirrors backend MarketingAgentResult (ai/agents/marketingAgent.ts) — keep
+// the two in sync. Context lines are neutral evidence only and degrade to null.
+export interface MarketingAgentResult {
+  targetingSource: 'CAUSAL_UPLIFT' | 'RESPONSE_MODEL' | 'ML_SEGMENTS' | 'NONE';
+  targetingReason: string;
+  targetingScope: string;
+  targets: AgentTargetRow[];
+  offerDraft: AgentOfferDraft | null;
+  festivalContext: string | null;
+  sportsContext: string | null;
+  sportsSignals: string[];
+  competitionContext: string | null;
+  competitionSignals: string[];
+  basketContext: string | null;
+  nextActions: string[];
+  generatedAt: string;
+}
+
+export interface AgentProposalOutcome {
+  created: boolean;
+  skipReason?: string;
+  proposalId?: string;
+  proposal?: unknown;
+  readiness?: { canSchedule: boolean; blockers: string[]; audienceCount: number };
+}
+
+/**
+ * POST without the offline-queue replay used by writeOfflineAware. Agent
+ * endpoints are owner-invoked actions, not optimistic local-first mutations:
+ * a queued replay of /ai/marketing-agent/proposal would silently create a
+ * CampaignProposal the owner never saw, so failures must surface as null.
+ */
+async function postNoQueue<T>(path: string, body: unknown): Promise<T | null> {
+  if (isBrowserOffline()) return null;
+  const result = await request('POST', path, body);
+  if (!result) { apiLog('POST', path, null); return null; }
+  if (!result.ok) { apiLog('POST', path, result.status); return null; }
+  return result.json?.data ?? result.json;
+}
+
+/**
+ * POST /api/ai/marketing-agent/recommend — run the deterministic marketing
+ * agent and return its targeting recommendation + offer draft (read-only;
+ * the agent never creates offers).
+ */
+export async function runMarketingAgent(body: { minimumExperimentSize?: number } = {}) {
+  // BACKEND CALLED — agent targeting recommendation
+  return postNoQueue<{ success: boolean; result: MarketingAgentResult }>('/ai/marketing-agent/recommend', body);
+}
+
+/**
+ * POST /api/ai/marketing-agent/proposal — run the agent and persist the
+ * recommendation as a pending CampaignProposal draft for owner approval.
+ */
+export async function createMarketingAgentProposal(body: { minimumExperimentSize?: number } = {}) {
+  // BACKEND CALLED — persist the agent recommendation as a pending proposal
+  return postNoQueue<{ success: boolean; result: MarketingAgentResult; proposal: AgentProposalOutcome }>('/ai/marketing-agent/proposal', body);
+}
+
+// ─── Campaign Proposal inbox (agent + owner drafts) ───────────────
+
+export interface CampaignProposal {
+  _id: string;
+  name: string;
+  description?: string;
+  objective?: string;
+  strategy?: string;
+  audience?: {
+    segmentIds?: string[];
+    segmentNames?: string[];
+    customerPhones?: string[];
+  };
+  approvalStatus: 'pending' | 'validating' | 'ready_for_approval' | 'approved' | 'rejected';
+  executionStatus: 'pending' | 'scheduled' | 'active' | 'paused' | 'completed' | 'measured';
+  source?: 'owner' | 'agent' | 'command';
+  channels?: string[];
+  createdAt?: string;
+}
+
+/** GET /api/campaigns/proposals — proposal inbox (agent + owner drafts). */
+export async function fetchCampaignProposals(params: { approvalStatus?: string; source?: string; limit?: number } = {}) {
+  const qs = new URLSearchParams();
+  if (params.approvalStatus) qs.set('approvalStatus', params.approvalStatus);
+  if (params.source) qs.set('source', params.source);
+  if (params.limit) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  // BACKEND CALLED — proposal inbox listing
+  return get<{ proposals: CampaignProposal[] }>(`/campaigns/proposals${query ? '?' + query : ''}`);
+}
+
+/** POST /api/campaigns/proposals/:id/submit — validate + move toward approval. */
+export async function submitCampaignProposal(id: string) {
+  // BACKEND CALLED — submit proposal for approval (owner-invoked, no offline replay)
+  return postNoQueue<{ success: boolean }>(`/campaigns/proposals/${id}/submit`, {});
+}
+
+/** POST /api/campaigns/proposals/:id/approve — owner approval of a proposal. */
+export async function approveCampaignProposal(id: string) {
+  // BACKEND CALLED — approve proposal (owner-invoked, no offline replay)
+  return postNoQueue<{ success: boolean }>(`/campaigns/proposals/${id}/approve`, {});
+}
+
+/** POST /api/campaigns/proposals/:id/reject — reject with optional feedback. */
+export async function rejectCampaignProposal(id: string, body: { rating?: 'positive' | 'neutral' | 'negative'; comment?: string } = {}) {
+  // BACKEND CALLED — reject proposal (owner-invoked, no offline replay)
+  return postNoQueue<{ success: boolean }>(`/campaigns/proposals/${id}/reject`, body);
+}
+
+// ─── Inventory Agent (deterministic action plan) ─────────────
+
+// Mirrors backend InventoryAgentResult (ai/agents/inventoryAgent.ts) — keep
+// the two in sync. All fields are evidence-backed or null — never invented.
+export interface InventoryPurchaseRecommendation {
+  item: string;
+  reason: string;
+  suggestedQty: string;
+  urgency: 'low' | 'medium' | 'high';
+  estimatedCost: number | null;
+}
+
+export interface InventoryStockoutPrediction {
+  item: string;
+  daysUntilOut: number;
+  severity: 'warning' | 'critical';
+  currentStock: number;
+  unit: string;
+  suggestedAction: string;
+}
+
+export interface InventoryAgentResult {
+  mode: 'deterministic';
+  status: 'ready' | 'insufficient_data';
+  summary: string;
+  purchaseRecommendations: InventoryPurchaseRecommendation[];
+  stockoutPredictions: InventoryStockoutPrediction[];
+  expiryRisks: Array<{
+    itemId: string;
+    itemName: string;
+    currentStock: number;
+    expiryDate: string | Date;
+    daysUntilExpiry: number;
+    severity: 'warning' | 'critical';
+    canPromote: boolean;
+    recommendedActions: string[];
+  }>;
+  wastageSignals: Array<{ name: string; qty: number; unit?: string; cost: number }>;
+  nextActions: string[];
+  evidenceSources: { inventory: boolean; demandForecast: boolean; expiry: boolean; wastage: boolean };
+  generatedAt: string;
+}
+
+/**
+ * POST /api/ai/inventory-agent/recommend — run the deterministic inventory
+ * agent (stock levels + stockout forecast + expiry + wastage). Read-only; the
+ * agent never writes to inventory.
+ */
+export async function runInventoryAgentRecommendation() {
+  // BACKEND CALLED — inventory action plan
+  return postNoQueue<{ success: boolean; result: InventoryAgentResult }>('/ai/inventory-agent/recommend', {});
+}
+
 // ─── Recipe Manager (Cost Intelligence) ───────────────────────────
 
 /** GET /api/recipes — List recipes (search/status filter). */
@@ -3758,7 +3937,8 @@ export interface UpliftCustomerRow {
 /** GET /api/ml-pipeline/status — which ML services are configured. */
 export async function fetchMlPipelineStatus(): Promise<MlPipelineStatus | null> {
   const res = await get<MlPipelineStatus>('/ml-pipeline/status');
-  return res?.data || res || null;
+  // `get` already unwraps `{ data }` — res.data never exists on the typed result.
+  return res ?? null;
 }
 
 // ── Demand model ──

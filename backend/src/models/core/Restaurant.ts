@@ -89,7 +89,7 @@ export interface IRestaurant extends Document {
 
 const RestaurantSchema = new Schema<IRestaurant>(
   {
-    restaurantId: { type: String, required: true, unique: true, trim: true, uppercase: true, index: true },
+    restaurantId: { type: String, required: true, unique: true, trim: true, uppercase: true },
     name: { type: String, required: true, trim: true },
     legalName: { type: String, trim: true },
     brandName: { type: String, trim: true },
@@ -198,6 +198,7 @@ const RestaurantSchema = new Schema<IRestaurant>(
 );
 
 RestaurantSchema.index({ isActive: 1 });
-RestaurantSchema.index({ restaurantId: 1 });
+// restaurantId has a unique index from the field's `unique: true` — a second
+// explicit index here triggers Mongoose's duplicate-index warning.
 
 export default mongoose.model<IRestaurant>('Restaurant', RestaurantSchema);

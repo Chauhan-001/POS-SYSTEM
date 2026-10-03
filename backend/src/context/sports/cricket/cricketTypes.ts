@@ -59,6 +59,18 @@ export interface SportsContextOutput {
   dataStatus?: 'fresh' | 'stale';
   lastFetchedAt?: string;
   providerAvailable?: boolean;
+  /**
+   * API key-pool quota state (counts + cooldown only — NEVER key values).
+   * Present when quota affected this response so callers can see why data
+   * may be stale and when the pool recovers.
+   */
+  quotaState?: {
+    totalKeys: number;
+    blockedKeys: number;
+    allBlocked: boolean;
+    nextRetryAt: number | null;
+    cooldownMinutesRemaining: number | null;
+  };
   /** Cache metadata for observability (never contains secrets). */
   cacheInfo?: { hit: boolean; fetchedAt: string };
   generatedAt: string;

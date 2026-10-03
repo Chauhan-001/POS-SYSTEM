@@ -93,6 +93,8 @@ function evidenceLines(r: MarketingAgentResult): string[] {
   if (r.festivalContext) lines.push(r.festivalContext);
   if (r.sportsContext) lines.push(r.sportsContext);
   if (r.competitionContext) lines.push(r.competitionContext);
+  if (r.basketContext) lines.push(r.basketContext);
+  if (r.demandContext) lines.push(r.demandContext);
   return lines;
 }
 

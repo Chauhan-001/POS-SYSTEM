@@ -16,7 +16,14 @@
  */
 
 import { config } from '../../../config';
-import { getMatches, getCricketProviderConfig, CricketProviderError, type CricApiMatchRaw } from './cricketProvider';
+import {
+  getMatches,
+  getCricketProviderConfig,
+  markCricketKeyQuotaBlocked,
+  getCricketKeyQuotaState,
+  CricketProviderError,
+  type CricApiMatchRaw,
+} from './cricketProvider';
 import { normalizeMatch, withRelevance, type RelevantCricketEvent } from './cricketNormalizer';
 import { readCricketCache, writeCricketCache } from './cricketCache';
 import type { CricketMatchContext, CricketContextCache, SportsContextOutput } from './cricketTypes';
@@ -38,6 +45,11 @@ interface FetchOutcome {
  * Fetch up to maxMatches, page by page. CricAPI /v1/matches returns the
  * full list sliced by offset; we stop when a page returns no NEW matches
  * (safe regardless of whether pagination metadata exists, spec §5).
+ *
+ * Key pool: when the current key is quota-blocked (HTTP 200 + a `reason`,
+ * surfaced as rate_limited), the fetch retries with the next key in the pool
+ * (primary → fallbacks). Exhausted keys get a cooldown so the pool skips
+ * them until the daily quota reset.
  */
 export async function fetchAllMatches(): Promise<FetchOutcome> {
   const cfg = getCricketProviderConfig();
@@ -49,12 +61,38 @@ export async function fetchAllMatches(): Promise<FetchOutcome> {
   const cap = maxMatches();
   const startedAt = Date.now();
 
+  const keysToTry = [cfg.apiKey, ...cfg.fallbackApiKeys].filter(
+    (k, i, arr) => k && arr.indexOf(k) === i,
+  );
+  let activeKeyIndex = 0;
+  let rotated = false;
+
+  const fetchWithKeyPool = async (offset: number): Promise<CricApiMatchesResponse> => {
+    let lastError: CricketProviderError | null = null;
+    for (let i = activeKeyIndex; i < keysToTry.length; i++) {
+      try {
+        const res = await getMatches({ ...cfg, apiKey: keysToTry[i] }, offset);
+        activeKeyIndex = i; // this key works — pin it for subsequent pages
+        return res;
+      } catch (err) {
+        if (err instanceof CricketProviderError && err.kind === 'rate_limited') {
+          markCricketKeyQuotaBlocked(keysToTry[i]);
+          lastError = err;
+          rotated = true;
+          continue; // next key in the pool
+        }
+        throw err; // non-quota failures are not fixable by rotating keys
+      }
+    }
+    throw lastError ?? new CricketProviderError('all cricket API keys exhausted', 'rate_limited');
+  };
+
   // Offset pages: CricAPI slices by offset (each page advances by page size);
   // defensive loop stops on empty/no-new page or cap.
   let pages = 0;
   for (let offset = 0; collected.length < cap && offset <= 20; offset++) {
     pages = offset + 1;
-    const res = await getMatches(cfg, offset);
+    const res = await fetchWithKeyPool(offset);
     const raw: CricApiMatchRaw[] = Array.isArray(res.data) ? res.data : [];
     if (raw.length === 0) break;
 
@@ -72,7 +110,7 @@ export async function fetchAllMatches(): Promise<FetchOutcome> {
 
   // Observability: counts + duration only. No key, no full URL.
   console.log(
-    `[cricket] provider=cricapi durationMs=${Date.now() - startedAt} pages=${pages} normalized=${collected.length}/${maxMatches()}`,
+    `[cricket] provider=cricapi durationMs=${Date.now() - startedAt} pages=${pages} normalized=${collected.length}/${maxMatches()}${rotated ? ' keyRotated=true' : ''}`,
   );
 
   return { matches: collected, fetchedAt, pages };
@@ -110,6 +148,29 @@ export async function getUpcomingCricketContext(
     return finalizeOutput(cached, 'fresh', true, true, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt });
   }
 
+  // 2b. Quota-aware throttle: when every key in the pool is quota-blocked, a
+  // provider call cannot succeed — skip the refresh entirely (serves stale if
+  // available) so blocked-key requests are not wasted (cost guard).
+  const quota = getCricketKeyQuotaState(now.getTime());
+  if (quota.allBlocked) {
+    if (lastGood) {
+      console.warn(
+        `[cricket] all ${quota.totalKeys} API keys quota-blocked — skipping refresh (retry in ~${quota.cooldownMinutesRemaining}m), serving stale cache`,
+      );
+      return finalizeOutput(lastGood, 'stale', false, false, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt, quotaState: quota });
+    }
+    return {
+      sport: 'cricket',
+      available: false,
+      reason: 'provider_error',
+      events: [],
+      dataStatus: 'stale',
+      providerAvailable: false,
+      quotaState: quota,
+      generatedAt,
+    };
+  }
+
   // 3. Refresh: fetch → normalize → dedup → cache. Failure falls back to the
   // last good payload, marked STALE — never silently presented as fresh (§16).
   try {
@@ -133,6 +194,7 @@ export async function getUpcomingCricketContext(
       events: [],
       dataStatus: 'stale',
       providerAvailable: false,
+      quotaState: getCricketKeyQuotaState(now.getTime()),
       generatedAt,
     };
   }
@@ -144,6 +206,8 @@ interface FinalizeOptions {
   horizon: number;
   restaurantId?: string;
   generatedAt: string;
+  /** Quota state surfaced when quota affected this response (no key values). */
+  quotaState?: ReturnType<typeof getCricketKeyQuotaState>;
 }
 
 /**
@@ -188,6 +252,7 @@ async function finalizeOutput(
     dataStatus,
     lastFetchedAt: payload.fetchedAt,
     providerAvailable,
+    quotaState: opts.quotaState,
     cacheInfo: { hit: cacheHit, fetchedAt: payload.fetchedAt },
     generatedAt: opts.generatedAt,
   };

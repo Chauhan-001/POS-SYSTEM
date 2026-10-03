@@ -81,6 +81,18 @@ export interface SportsContextToolOutput {
   /** 'fresh' | 'stale' — stale data is labeled, never silent (spec §16). */
   dataStatus?: 'fresh' | 'stale';
   providerAvailable?: boolean;
+  /**
+   * API key-pool quota state (counts + cooldown only — NEVER key values).
+   * Lets the agent (and the owner) see WHY data may be stale and when the
+   * pool recovers, instead of an unexplained empty window.
+   */
+  quotaState?: {
+    totalKeys: number;
+    blockedKeys: number;
+    allBlocked: boolean;
+    nextRetryAt: number | null;
+    cooldownMinutesRemaining: number | null;
+  };
   /** Cache freshness so the agent knows how recent the data is. */
   fetchedAt?: string;
   generatedAt: string;
@@ -133,6 +145,7 @@ export async function executeGetSportsContext(
     })),
     dataStatus: result.dataStatus,
     providerAvailable: result.providerAvailable,
+    quotaState: result.quotaState,
     fetchedAt: result.cacheInfo?.fetchedAt,
     contextSignals: (result.relevantMatches ?? []).flatMap((m) =>
       m.signals.map((s) => ({

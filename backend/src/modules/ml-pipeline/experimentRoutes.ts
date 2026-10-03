@@ -124,8 +124,34 @@ router.post(
   }
 );
 
+// ─── Diagnostics (static path — MUST precede GET /:experimentId) ───────
+
+/**
+ * GET /experiments/diagnostics — uplift randomization diagnostics for the
+ * whole tenant (gate behind the uplift tool's evaluable flag). Registered
+ * before /:experimentId so "diagnostics" is never captured as an id.
+ */
+router.get(
+  '/diagnostics',
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    const authReq = req as AuthenticatedRequest;
+    try {
+      const restaurantId = getVerifiedRestaurantId(authReq);
+      const minRaw = asString(req.query.min);
+      const min = minRaw && Number.isFinite(Number(minRaw)) ? Math.max(1, Number(minRaw)) : 100;
+      const diagnostics = await evaluateExperimentRandomization(restaurantId, min);
+      res.json({ success: true, diagnostics });
+    } catch (err) {
+      handleError(res, err);
+    }
+  }
+);
+
 /**
  * GET /experiments/:experimentId — fetch one experiment definition (tenant-scoped).
+ * NOTE: static GET routes (/diagnostics) MUST be registered BEFORE this
+ * param route, otherwise "diagnostics" is captured as an experimentId.
  */
 router.get(
   '/:experimentId',
@@ -294,27 +320,6 @@ router.get(
       const restaurantId = getVerifiedRestaurantId(authReq);
       const analysis = await analyzeExperimentById(restaurantId, req.params.experimentId);
       res.json({ success: true, analysis });
-    } catch (err) {
-      handleError(res, err);
-    }
-  }
-);
-
-/**
- * GET /experiments/diagnostics — uplift randomization diagnostics for the
- * whole tenant (gate behind the uplift tool's evaluable flag).
- */
-router.get(
-  '/diagnostics',
-  requireAuth,
-  async (req: Request, res: Response, next: NextFunction) => {
-    const authReq = req as AuthenticatedRequest;
-    try {
-      const restaurantId = getVerifiedRestaurantId(authReq);
-      const minRaw = asString(req.query.min);
-      const min = minRaw && Number.isFinite(Number(minRaw)) ? Math.max(1, Number(minRaw)) : 100;
-      const diagnostics = await evaluateExperimentRandomization(restaurantId, min);
-      res.json({ success: true, diagnostics });
     } catch (err) {
       handleError(res, err);
     }

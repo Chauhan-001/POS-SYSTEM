@@ -16,7 +16,7 @@ import { AppError } from '../../utils/AppError';
 export async function listBills(req: Request, res: Response): Promise<void> {
   try {
     const auth = (req as AuthenticatedRequest).user;
-    const { date, branchId, paymentMethod, startDate, endDate } = req.query;
+    const { date, branchId, paymentMethod, startDate, endDate, limit, offset } = req.query;
     const result = await billService.list({
       date: date as string,
       branchId: branchId as string,
@@ -24,6 +24,8 @@ export async function listBills(req: Request, res: Response): Promise<void> {
       startDate: startDate as string,
       endDate: endDate as string,
       restaurantId: auth?.restaurantId,
+      limit: limit ? parseInt(String(limit), 10) : undefined,
+      offset: offset ? parseInt(String(offset), 10) : undefined,
     });
     res.json({ data: result.data, total: result.total });
   } catch (error) {

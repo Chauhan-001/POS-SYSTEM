@@ -37,13 +37,78 @@ export interface CricApiMatchesResponse {
 export interface CricketProviderConfig {
   baseUrl: string;
   apiKey: string;
+  /** Fallback keys rotated in when the primary is quota-blocked (same provider). */
+  fallbackApiKeys: string[];
   timeoutMs: number;
 }
 
+/**
+ * Quota cooldowns: keys that returned a quota-block get a cool-down so the
+ * pool does not hammer exhausted keys on every refresh. Process-lifetime —
+ * quotas reset daily, so a short cooldown plus key re-check is sufficient.
+ */
+const KEY_COOLDOWN_MS = 60 * 60 * 1000; // 1h
+const keyCooldownUntil = new Map<string, number>();
+
+function keyUsable(key: string, now = Date.now()): boolean {
+  const until = keyCooldownUntil.get(key);
+  return until === undefined || until <= now;
+}
+
+/** Mark a key quota-blocked — cool it down so the pool skips it. */
+export function markCricketKeyQuotaBlocked(key: string): void {
+  keyCooldownUntil.set(key, Date.now() + KEY_COOLDOWN_MS);
+}
+
+export interface CricketKeyQuotaState {
+  /** Keys configured in the pool (never the key values themselves). */
+  totalKeys: number;
+  /** Keys currently under quota cooldown. */
+  blockedKeys: number;
+  /** True when EVERY configured key is quota-blocked — the pool cannot serve
+   *  a refresh until the daily quota resets; callers must not spend requests. */
+  allBlocked: boolean;
+  /** Earliest time a blocked key becomes usable again (ms epoch), or null. */
+  nextRetryAt: number | null;
+  /** Minutes until the next key cooldown expires (rounded), or null. */
+  cooldownMinutesRemaining: number | null;
+}
+
+/** Quota state of the key pool — safe to surface (no key material). */
+export function getCricketKeyQuotaState(now = Date.now()): CricketKeyQuotaState {
+  const pool = keyPool();
+  const blocked = pool.filter((k) => !keyUsable(k, now));
+  const nextRetryAt = blocked.length > 0
+    ? Math.min(...blocked.map((k) => keyCooldownUntil.get(k) ?? now))
+    : null;
+  return {
+    totalKeys: pool.length,
+    blockedKeys: blocked.length,
+    allBlocked: pool.length > 0 && blocked.length === pool.length,
+    nextRetryAt,
+    cooldownMinutesRemaining: nextRetryAt !== null ? Math.max(0, Math.ceil((nextRetryAt - now) / 60_000)) : null,
+  };
+}
+
+/** Test hook — clear all cooldowns. */
+export function clearCricketKeyCooldowns(): void {
+  keyCooldownUntil.clear();
+}
+
+/** All configured keys in rotation order: primary first, then fallbacks. */
+function keyPool(): string[] {
+  const { apiKey, fallbackApiKeys } = config.cricket;
+  return [apiKey, ...fallbackApiKeys].filter((k, i, arr) => k && arr.indexOf(k) === i);
+}
+
 export function getCricketProviderConfig(): CricketProviderConfig | null {
-  const { enabled, apiKey, baseUrl, timeoutMs } = config.cricket;
+  const { enabled, apiKey, baseUrl, timeoutMs, fallbackApiKeys } = config.cricket;
   if (!enabled || !apiKey) return null;
-  return { baseUrl: baseUrl.replace(/\/$/, ''), apiKey, timeoutMs };
+  // Prefer the first usable key; fall back to a cooled-down key only if the
+  // whole pool is exhausted (better to try than to report no data at all).
+  const pool = keyPool();
+  const usable = pool.find((k) => keyUsable(k)) ?? pool[0];
+  return { baseUrl: baseUrl.replace(/\/$/, ''), apiKey: usable, fallbackApiKeys, timeoutMs };
 }
 
 export class CricketProviderError extends Error {
@@ -57,7 +122,9 @@ export class CricketProviderError extends Error {
   }
 }
 
-/** Fetch one page of matches. Offset follows CricAPI's ?offset= semantics. */
+/** Fetch one page of matches. Offset follows CricAPI's ?offset= semantics.
+ *  On a quota-block (HTTP 200 + reason), the caller rotates to the next key
+ *  in the pool via the retry wrapper in cricketService. */
 export async function getMatches(cfg: CricketProviderConfig, offset = 0): Promise<CricApiMatchesResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
@@ -75,8 +142,16 @@ export async function getMatches(cfg: CricketProviderConfig, offset = 0): Promis
       throw new CricketProviderError(`CricAPI /matches failed (HTTP ${res.status})`, 'http_error', res.status);
     }
     try {
-      return (await res.json()) as CricApiMatchesResponse;
-    } catch {
+      const body = (await res.json()) as CricApiMatchesResponse;
+      // CricAPI signals quota exhaustion/blocking with HTTP 200 + a `reason`
+      // and an empty data list — surface that as rate_limited instead of
+      // silently reporting "no matches" (spec §19 honest availability).
+      if (body.reason && (!Array.isArray(body.data) || body.data.length === 0)) {
+        throw new CricketProviderError(`CricAPI blocked the request: ${String(body.reason)}`, 'rate_limited');
+      }
+      return body;
+    } catch (err) {
+      if (err instanceof CricketProviderError) throw err;
       throw new CricketProviderError('CricAPI returned invalid JSON', 'invalid_json');
     }
   } catch (err) {

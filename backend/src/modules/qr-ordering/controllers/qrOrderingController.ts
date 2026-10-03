@@ -233,7 +233,9 @@ export async function listCustomerRequests(req: Request, res: Response): Promise
     
     const requests = await CustomerRequest.find(filter)
       .sort({ createdAt: -1 })
-      .limit(Math.min(Math.max(parseInt(String(limit || '0'), 10) || 0, 0), 500))
+      // Bounded default: limit(0) in mongoose means UNLIMITED, which over a
+      // large ledger serializes huge payloads and starves the poller.
+      .limit(Math.min(Math.max(parseInt(String(limit || '200'), 10) || 200, 1), 500))
       .populate('assignedTo', 'name role')
       .lean();
     

@@ -53,7 +53,7 @@ const WhatsAppUsageSchema = new Schema<IWhatsAppUsage>(
       index: true,
     },
     timestamp: { type: Date, required: true, default: Date.now, index: true },
-    metaMessageId: { type: String, trim: true, index: true },
+    metaMessageId: { type: String, trim: true },
     errorCode: { type: String, trim: true, default: null },
     errorMessage: { type: String, trim: true, default: null },
     cost: { type: Number, min: 0, default: null },

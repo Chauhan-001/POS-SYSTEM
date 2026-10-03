@@ -1,0 +1,743 @@
+{
+  "generatedAt": "2026-10-02T22:36:41.123Z",
+  "restaurant": "SIM_RESTAURANT_6M_001",
+  "restaurantObjectId": "6ac031900f636f7cc8ab6f8f",
+  "login": {
+    "userId": "sim_urban_tadka",
+    "pin": "246810"
+  },
+  "window": {
+    "start": "2025-10-01",
+    "end": "2026-03-29"
+  },
+  "counts": {
+    "Restaurant": 1,
+    "Branch": 3,
+    "Product": 63,
+    "Purchase": 723,
+    "InventoryEvent": 4230,
+    "Supplier": 0,
+    "Customer": 1200,
+    "CouponRedemption": 7386,
+    "CustomerSegment": 25,
+    "Bill": 19722,
+    "BillItem": 0,
+    "Offer": 13,
+    "Campaign": 7,
+    "CampaignHistory": 7,
+    "OfferAnalytics": 863,
+    "OfferExperimentEvent": 5432,
+    "MLPrediction": 0,
+    "DailySummary": 540,
+    "MonthlySummary": 18,
+    "CalendarEvent": 20,
+    "Recipe": 44,
+    "RecipeConsumption": 19722
+  },
+  "sales": {
+    "_id": null,
+    "revenue": 8603712.3,
+    "orders": 19722,
+    "discount": 684732.7,
+    "gst": 409704.7
+  },
+  "monthly": [
+    {
+      "_id": "2025-10",
+      "revenue": 887589.65,
+      "orders": 2033
+    },
+    {
+      "_id": "2025-11",
+      "revenue": 1293080.75,
+      "orders": 2948
+    },
+    {
+      "_id": "2025-12",
+      "revenue": 1391551.75,
+      "orders": 3138
+    },
+    {
+      "_id": "2026-01",
+      "revenue": 1673527.75,
+      "orders": 3867
+    },
+    {
+      "_id": "2026-02",
+      "revenue": 1522111.85,
+      "orders": 3504
+    },
+    {
+      "_id": "2026-03",
+      "revenue": 1835850.55,
+      "orders": 4232
+    }
+  ],
+  "topProducts": [
+    {
+      "_id": "Family Biryani Combo",
+      "qty": 1912,
+      "revenue": 1336488
+    },
+    {
+      "_id": "Chicken Biryani",
+      "qty": 1975,
+      "revenue": 570775
+    },
+    {
+      "_id": "Butter Chicken",
+      "qty": 1558,
+      "revenue": 512582
+    },
+    {
+      "_id": "Paneer Tikka",
+      "qty": 1716,
+      "revenue": 461604
+    },
+    {
+      "_id": "Masala Fries",
+      "qty": 3430,
+      "revenue": 408170
+    },
+    {
+      "_id": "Chicken Tikka",
+      "qty": 1354,
+      "revenue": 404846
+    },
+    {
+      "_id": "Lunch Thali",
+      "qty": 1122,
+      "revenue": 335478
+    },
+    {
+      "_id": "Burger Combo",
+      "qty": 1121,
+      "revenue": 335179
+    },
+    {
+      "_id": "Kadai Paneer",
+      "qty": 1174,
+      "revenue": 327546
+    },
+    {
+      "_id": "Chilli Chicken",
+      "qty": 1014,
+      "revenue": 323466
+    },
+    {
+      "_id": "Kadai Chicken",
+      "qty": 953,
+      "revenue": 304007
+    },
+    {
+      "_id": "Dal Makhani",
+      "qty": 1280,
+      "revenue": 293120
+    },
+    {
+      "_id": "Shahi Paneer",
+      "qty": 1055,
+      "revenue": 283795
+    },
+    {
+      "_id": "Hakka Noodles",
+      "qty": 1234,
+      "revenue": 270246
+    },
+    {
+      "_id": "Classic Chicken Burger",
+      "qty": 1325,
+      "revenue": 263675
+    }
+  ],
+  "bottomProducts": [
+    {
+      "_id": "Butter Naan",
+      "qty": 1106,
+      "revenue": 76314
+    },
+    {
+      "_id": "Garlic Naan",
+      "qty": 1107,
+      "revenue": 65313
+    },
+    {
+      "_id": "Lachha Paratha",
+      "qty": 1072,
+      "revenue": 58960
+    },
+    {
+      "_id": "Gulab Jamun",
+      "qty": 593,
+      "revenue": 52777
+    },
+    {
+      "_id": "Masala Chai",
+      "qty": 847,
+      "revenue": 41503
+    },
+    {
+      "_id": "Tandoori Roti",
+      "qty": 1096,
+      "revenue": 38360
+    },
+    {
+      "_id": "Green Salad",
+      "qty": 485,
+      "revenue": 38315
+    },
+    {
+      "_id": "Masala Papad",
+      "qty": 412,
+      "revenue": 32548
+    },
+    {
+      "_id": "Brownie Sundae",
+      "qty": 164,
+      "revenue": 24436
+    },
+    {
+      "_id": "Rasmalai",
+      "qty": 180,
+      "revenue": 17820
+    }
+  ],
+  "segments": [
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bef",
+      "name": "Dormant (90 Days)",
+      "customerCount": 1200,
+      "averageSpend": 4449.72
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf8",
+      "name": "Loyalty Members",
+      "customerCount": 1087,
+      "averageSpend": 4912.29
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be5",
+      "name": "Returning Customers",
+      "customerCount": 978,
+      "averageSpend": 5409.76
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf3",
+      "name": "Weekend Customers",
+      "customerCount": 536,
+      "averageSpend": 5044.09
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be6",
+      "name": "Frequent Customers",
+      "customerCount": 471,
+      "averageSpend": 8951.37
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be4",
+      "name": "New Customers",
+      "customerCount": 113,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be9",
+      "name": "Low Spending",
+      "customerCount": 14,
+      "averageSpend": 230.97
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be8",
+      "name": "High Spending",
+      "customerCount": 11,
+      "averageSpend": 2028.36
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be1",
+      "name": "Visited Today",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be2",
+      "name": "Visited This Week",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be3",
+      "name": "Visited This Month",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4be7",
+      "name": "VIP Customers",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bea",
+      "name": "Dormant (7 Days)",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4beb",
+      "name": "Dormant (15 Days)",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bec",
+      "name": "Dormant (30 Days)",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bed",
+      "name": "Dormant (45 Days)",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bee",
+      "name": "Dormant (60 Days)",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf0",
+      "name": "Birthday Today",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf1",
+      "name": "Birthday Tomorrow",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf2",
+      "name": "Birthday This Week",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf4",
+      "name": "Lunch Customers",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf5",
+      "name": "Dinner Customers",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf6",
+      "name": "Family Orders",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf7",
+      "name": "Online Orders",
+      "customerCount": 0,
+      "averageSpend": 0
+    },
+    {
+      "_id": "6ac031aa0f636f7cc8ad4bf9",
+      "name": "Reward Redeemers",
+      "customerCount": 0,
+      "averageSpend": 0
+    }
+  ],
+  "offers": [
+    {
+      "title": "First Order — 25% Off",
+      "type": "coupon",
+      "redemptions": 5963,
+      "discountGiven": 620603.75,
+      "currentUses": 5963
+    },
+    {
+      "title": "Flat 15% Off — Sitewide",
+      "type": "percentage",
+      "redemptions": 539,
+      "discountGiven": 40208.65,
+      "currentUses": 539
+    },
+    {
+      "title": "Weekend Free Dessert",
+      "type": "bogo",
+      "redemptions": 433,
+      "discountGiven": 0,
+      "currentUses": 433
+    },
+    {
+      "title": "Buy 1 Get 1 Momos",
+      "type": "bogo",
+      "redemptions": 133,
+      "discountGiven": 0,
+      "currentUses": 133
+    },
+    {
+      "title": "We Miss You — 20% Off",
+      "type": "coupon",
+      "redemptions": 85,
+      "discountGiven": 7366.8,
+      "currentUses": 85
+    },
+    {
+      "title": "Launch Offer — 10% Off",
+      "type": "percentage",
+      "redemptions": 78,
+      "discountGiven": 3704.3,
+      "currentUses": 78
+    },
+    {
+      "title": "Winter Family Combo ₹599",
+      "type": "combo",
+      "redemptions": 55,
+      "discountGiven": 5900,
+      "currentUses": 55
+    },
+    {
+      "title": "Republic Day — 15% Off",
+      "type": "festival",
+      "redemptions": 35,
+      "discountGiven": 2428.15,
+      "currentUses": 35
+    },
+    {
+      "title": "Weekday Lunch — ₹50 Off",
+      "type": "flat",
+      "redemptions": 23,
+      "discountGiven": 1150,
+      "currentUses": 23
+    },
+    {
+      "title": "New Year — ₹100 Off",
+      "type": "flat",
+      "redemptions": 17,
+      "discountGiven": 1700,
+      "currentUses": 17
+    },
+    {
+      "title": "Diwali Family Feast — 15% Off",
+      "type": "festival",
+      "redemptions": 16,
+      "discountGiven": 1221.05,
+      "currentUses": 16
+    },
+    {
+      "title": "Cricket Nights — Burger Combo ₹249",
+      "type": "combo",
+      "redemptions": 9,
+      "discountGiven": 450,
+      "currentUses": 9
+    },
+    {
+      "title": "Experiment Arm Offer (controlled test)",
+      "type": "percentage",
+      "redemptions": 0,
+      "discountGiven": 0,
+      "currentUses": 0
+    }
+  ],
+  "waste": [
+    {
+      "_id": "Chicken",
+      "qty": 35.92,
+      "value": 10429.8
+    },
+    {
+      "_id": "Paneer",
+      "qty": 25.28,
+      "value": 8595.2
+    },
+    {
+      "_id": "Milk",
+      "qty": 37.1,
+      "value": 2300.2
+    },
+    {
+      "_id": "Cheese",
+      "qty": 5.63,
+      "value": 2139.4
+    },
+    {
+      "_id": "Fresh Cream",
+      "qty": 7.93,
+      "value": 1665.3
+    },
+    {
+      "_id": "Onion",
+      "qty": 33.77,
+      "value": 1192.91
+    },
+    {
+      "_id": "Capsicum",
+      "qty": 18.3,
+      "value": 1098
+    },
+    {
+      "_id": "Tomato",
+      "qty": 19.05,
+      "value": 844.02
+    },
+    {
+      "_id": "Mixed Vegetables",
+      "qty": 12.97,
+      "value": 843.0500000000001
+    },
+    {
+      "_id": "Eggs",
+      "qty": 65.5,
+      "value": 458.5
+    }
+  ],
+  "lowStock": [
+    {
+      "_id": "6ac031910f636f7cc8ab6f94",
+      "name": "Chicken",
+      "currentStock": 0,
+      "unit": "kg",
+      "reorderLevel": 15.75
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f95",
+      "name": "Paneer",
+      "currentStock": 0,
+      "unit": "kg",
+      "reorderLevel": 6.3
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f99",
+      "name": "Cooking Oil",
+      "currentStock": 4.54,
+      "unit": "L",
+      "reorderLevel": 5.25
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9a",
+      "name": "Wheat Flour",
+      "currentStock": 0,
+      "unit": "kg",
+      "reorderLevel": 7
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9b",
+      "name": "Milk",
+      "currentStock": 6.84,
+      "unit": "L",
+      "reorderLevel": 10.5
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9d",
+      "name": "Mixed Vegetables",
+      "currentStock": 0,
+      "unit": "kg",
+      "reorderLevel": 8.75
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9e",
+      "name": "Spice Mix",
+      "currentStock": 0,
+      "unit": "kg",
+      "reorderLevel": 1.4
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa3",
+      "name": "Beverage Base",
+      "currentStock": 0.8,
+      "unit": "L",
+      "reorderLevel": 2.1
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa4",
+      "name": "Packaging",
+      "currentStock": 0,
+      "unit": "pcs",
+      "reorderLevel": 140
+    }
+  ],
+  "expiryRisk": [
+    {
+      "_id": "6ac031910f636f7cc8ab6f93",
+      "name": "Basmati Rice",
+      "currentStock": 26.13,
+      "unit": "kg",
+      "expiryDate": "2026-05-29"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f94",
+      "name": "Chicken",
+      "currentStock": 0,
+      "unit": "kg",
+      "expiryDate": "2025-10-04"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f95",
+      "name": "Paneer",
+      "currentStock": 0,
+      "unit": "kg",
+      "expiryDate": "2025-10-07"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f96",
+      "name": "Onion",
+      "currentStock": 16.07,
+      "unit": "kg",
+      "expiryDate": "2025-10-21"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f97",
+      "name": "Tomato",
+      "currentStock": 16.13,
+      "unit": "kg",
+      "expiryDate": "2025-10-08"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f98",
+      "name": "Capsicum",
+      "currentStock": 7.85,
+      "unit": "kg",
+      "expiryDate": "2025-10-10"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f99",
+      "name": "Cooking Oil",
+      "currentStock": 4.54,
+      "unit": "L",
+      "expiryDate": "2026-03-30"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9a",
+      "name": "Wheat Flour",
+      "currentStock": 0,
+      "unit": "kg",
+      "expiryDate": "2025-12-30"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9b",
+      "name": "Milk",
+      "currentStock": 6.84,
+      "unit": "L",
+      "expiryDate": "2025-10-03"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9c",
+      "name": "Fresh Cream",
+      "currentStock": 2.7,
+      "unit": "L",
+      "expiryDate": "2025-10-06"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9d",
+      "name": "Mixed Vegetables",
+      "currentStock": 0,
+      "unit": "kg",
+      "expiryDate": "2025-10-07"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9e",
+      "name": "Spice Mix",
+      "currentStock": 0,
+      "unit": "kg",
+      "expiryDate": "2026-07-28"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6f9f",
+      "name": "Sugar",
+      "currentStock": 6.12,
+      "unit": "kg",
+      "expiryDate": "2026-10-01"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa0",
+      "name": "Cheese",
+      "currentStock": 7.67,
+      "unit": "kg",
+      "expiryDate": "2025-10-31"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa1",
+      "name": "Noodles",
+      "currentStock": 6.58,
+      "unit": "kg",
+      "expiryDate": "2026-01-29"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa2",
+      "name": "Eggs",
+      "currentStock": 46.24,
+      "unit": "pcs",
+      "expiryDate": "2025-10-15"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa3",
+      "name": "Beverage Base",
+      "currentStock": 0.8,
+      "unit": "L",
+      "expiryDate": "2026-04-19"
+    },
+    {
+      "_id": "6ac031910f636f7cc8ab6fa5",
+      "name": "Dal",
+      "currentStock": 6.76,
+      "unit": "kg",
+      "expiryDate": "2026-04-19"
+    }
+  ],
+  "checks": [
+    {
+      "name": "sales_reconciliation",
+      "status": "PASS",
+      "detail": "Sampled 300 bills: subtotal = Σ items and grandTotal = subtotal − discount held for 300/300."
+    },
+    {
+      "name": "inventory_reconciliation",
+      "status": "PASS",
+      "detail": "0/0 ingredients reconcile to the stored closing stock."
+    },
+    {
+      "name": "recipe_reconciliation",
+      "status": "PASS",
+      "detail": "19722 consumption records for 19722 bills (1:1 per bill)."
+    },
+    {
+      "name": "customer_reconciliation",
+      "status": "PASS",
+      "detail": "1200/1200 customer profiles match their bill aggregates exactly."
+    },
+    {
+      "name": "offer_reconciliation",
+      "status": "PASS",
+      "detail": "13/13 offers match their redemption ledger."
+    },
+    {
+      "name": "campaign_reconciliation",
+      "status": "PASS",
+      "detail": "7/7 campaigns match their delivery history."
+    },
+    {
+      "name": "tenant_isolation",
+      "status": "PASS",
+      "detail": "Every simulation row is scoped to SIM_RESTAURANT_6M_001; no cross-tenant leakage detected."
+    },
+    {
+      "name": "chronological_validation",
+      "status": "PASS",
+      "detail": "Bills span 2025-10-01 → 2026-03-29; 0 bills fall outside the simulated window."
+    },
+    {
+      "name": "ml_leakage_validation",
+      "status": "PASS",
+      "detail": "No post-treatment fields appear in pre-treatment feature snapshots."
+    }
+  ],
+  "inventoryLedger": []
+}

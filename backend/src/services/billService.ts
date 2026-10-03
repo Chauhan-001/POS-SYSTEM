@@ -272,7 +272,7 @@ export class BillService {
    * List bills with optional filtering by date, branch, payment method.
    * Restaurant isolation: scoped to the requesting restaurant when known.
    */
-  async list(params: { date?: string; branchId?: string; paymentMethod?: string; startDate?: string; endDate?: string; restaurantId?: string } = {}) {
+  async list(params: { date?: string; branchId?: string; paymentMethod?: string; startDate?: string; endDate?: string; restaurantId?: string; limit?: number; offset?: number } = {}) {
     const query: any = {};
     if (params.date) query.date = params.date;
     if (params.branchId) query.branchId = params.branchId;
@@ -284,7 +284,13 @@ export class BillService {
     // so historical data never disappears from Receipt History / reports.
     if (params.restaurantId) query.restaurantId = { $in: [params.restaurantId, null] };
 
-    const docs = await billRepo.findAll(query, { sort: { createdAt: -1 } });
+    // Bounded page — an unbounded list over a large ledger (tens of thousands
+    // of bills) serializes for minutes and starves the event loop, delaying
+    // every other request. Default: 500 most recent, hard cap 2000.
+    const limit = Math.min(Math.max(Number(params.limit) || 500, 1), 2000);
+    const offset = Math.max(Number(params.offset) || 0, 0);
+    const page = Math.floor(offset / limit) + 1;
+    const docs = await billRepo.findAll(query, { sort: { createdAt: -1 }, limit, page });
     // Lazy backfill receipt QR capabilities on legacy bills (best-effort,
     // never fails the list).
     try {
@@ -347,7 +353,9 @@ export class BillService {
     } catch (err: any) {
       console.warn('[BillService] item attachment failed:', err?.message);
     }
-    return docs;
+    // Shape stays { data, total } — total (from findAll) reflects the WHOLE
+    // ledger, so clients can show real counts while receiving only the page.
+    return { data: docs.data, total: docs.total };
   }
 
   /**

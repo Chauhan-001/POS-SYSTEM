@@ -34,6 +34,20 @@ export interface RecommendationContext {
     temperature: number;
     city: string;
   };
+  /**
+   * Upcoming sports events from the Context Calendar (MongoDB — synced from
+   * CricAPI by the interval worker). The offer engine never calls the sports
+   * provider itself; loading these is the controller's concern.
+   */
+  sportsEvents?: Array<{
+    eventId: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    venue?: string;
+    isIndiaMatch: boolean;
+    relevance: 'low' | 'medium' | 'high';
+  }>; 
   inventory?: Array<{
     id: string;
     name: string;
@@ -683,6 +697,49 @@ export class WastageRecommendationProvider implements RecommendationProvider {
 
 // ─── Time-Based Recommendations ─────────────────────────────
 
+// ─── Sports-Calendar Recommendations (reads MongoDB, not the sports API) ──
+
+/**
+ * Surfaces cricket fixtures (IPL, India matches, international series) that
+ * the Context Calendar already holds (synced from CricAPI by the interval
+ * worker). This provider NEVER calls the sports provider — per-request cost
+ * is zero and the calendar is the single source of truth for sports events.
+ */
+class SportsCalendarRecommendationProvider implements RecommendationProvider {
+  name = 'sports_calendar';
+
+  async getSuggestions(ctx: RecommendationContext): Promise<OfferSuggestion[]> {
+    // Calendar events feed this provider through ctx.sportsEvents (loaded by
+    // the controller from the Context Calendar — MongoDB only). Absence is
+    // honest: no synced events → no suggestions, no provider call.
+    const events = ctx.sportsEvents ?? [];
+    if (events.length === 0) return [];
+
+    return events.slice(0, 3).map((ev) => {
+      const daysUntil = Math.max(0, Math.ceil((new Date(ev.startDate).getTime() - Date.now()) / 86_400_000));
+      const timing = daysUntil === 0 ? 'today' : `in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
+      const isIndia = ev.isIndiaMatch;
+      return {
+        title: isIndia ? `${ev.name} — India Match Special` : `${ev.name} — Match Day Offer`,
+        type: isIndia ? 'combo' : 'percentage',
+        value: isIndia ? 15 : 10,
+        description: `Match-day offer timed to ${ev.name}${ev.venue ? ` (${ev.venue})` : ''} — ${timing}. Big-screen evenings drive longer dwell time and larger group orders.`,
+        recommendationSource: 'sports_event' as const,
+        recommendationReason: isIndia
+          ? `India match ${timing} (from the Context Calendar). India fixtures reliably lift dine-in traffic; a match-day combo captures group orders.`
+          : `Cricket fixture ${timing} (from the Context Calendar). Match evenings extend dwell time; a modest discount converts viewers into diners.`,
+        estimatedReach: Math.round(ctx.customerCount * (isIndia ? 0.55 : 0.35)),
+        expectedImpact: isIndia
+          ? 'Higher group orders and longer evening dwell time on match day'
+          : 'Moderate lift in evening footfall during the fixture window',
+        priority: isIndia && daysUntil <= 1 ? ('high' as const) : ('medium' as const),
+        applicableCategories: isIndia ? ['Beverages', 'Starters', 'Main Course'] : ['Beverages', 'Snacks'],
+        defaultDurationDays: 2,
+      };
+    });
+  }
+}
+
 class TimeBasedRecommendationProvider implements RecommendationProvider {
   name = 'time_based';
 
@@ -1228,6 +1285,7 @@ export class WeakComboRecommendationProvider implements RecommendationProvider {
 const ALL_PROVIDERS: RecommendationProvider[] = [
   new WeatherRecommendationProvider(),
   new FestivalRecommendationProvider(),
+  new SportsCalendarRecommendationProvider(),
   new InventoryRecommendationProvider(),
   new MarginSafetyRecommendationProvider(),
   new WastageRecommendationProvider(),

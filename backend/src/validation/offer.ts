@@ -151,7 +151,9 @@ export const offerQuerySchema = z
 
 export const offerParamsSchema = z
   .object({
-    id: z.string().min(1).max(100),
+    // Must be a real ObjectId — otherwise GET /offers/<anything> reaches the
+    // controller and Cast fails as an ugly 500 instead of a clean 400.
+    id: z.string().regex(/^[a-fA-F0-9]{24}$/, 'Invalid offer id format'),
   })
   .strict();
 

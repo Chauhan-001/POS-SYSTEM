@@ -18,6 +18,8 @@ export interface MarketingData {
   segments: any[];
   analytics: any;
   campaigns: any[];
+  /** CampaignProposal inbox — agent drafts + owner drafts awaiting approval. */
+  proposals: api.CampaignProposal[];
   loading: boolean;
   refreshing: boolean;
   /** Deterministic re-fetch (rule-based engine, no LLM). */
@@ -34,6 +36,7 @@ export function useMarketingData(): MarketingData {
   const [segments, setSegments] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
   const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [proposals, setProposals] = useState<api.CampaignProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [aiRefreshing, setAiRefreshing] = useState(false);
@@ -41,7 +44,7 @@ export function useMarketingData(): MarketingData {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [offerRes, recRes, segRes, anRes, campRes] = await Promise.all([
+      const [offerRes, recRes, segRes, anRes, campRes, propRes] = await Promise.all([
         api.fetchOfferList(),
         // 30 so low-priority safety warnings (margin protection, cost
         // increase, wastage) are not truncated off the Recommendations page.
@@ -49,12 +52,14 @@ export function useMarketingData(): MarketingData {
         api.fetchOfferSegments().catch(() => null),
         api.fetchOfferAnalytics().catch(() => null),
         api.fetchCampaigns({ limit: 100 }).catch(() => null),
+        api.fetchCampaignProposals({ limit: 50 }).catch(() => null),
       ]);
       if (offerRes && Array.isArray(offerRes.offers)) setOffers(offerRes.offers);
       if (recRes && Array.isArray(recRes.suggestions)) setRecommendations(recRes.suggestions);
       if (segRes && Array.isArray(segRes.segments)) setSegments(segRes.segments);
       if (anRes) setAnalytics(anRes);
       if (campRes && Array.isArray(campRes.data)) setCampaigns(campRes.data);
+      if (propRes && Array.isArray(propRes.proposals)) setProposals(propRes.proposals);
     } catch (err) {
       debugWarn('Marketing', 'data refresh failed:', err);
     } finally {
@@ -82,7 +87,7 @@ export function useMarketingData(): MarketingData {
     }
   }, [refresh]);
 
-  return { offers, recommendations, segments, analytics, campaigns, loading, refreshing, refresh, aiRefreshing, refreshWithAi };
+  return { offers, recommendations, segments, analytics, campaigns, proposals, loading, refreshing, refresh, aiRefreshing, refreshWithAi };
 }
 
 /** Estimate audience size for a friendly audience choice using real segment counts. */

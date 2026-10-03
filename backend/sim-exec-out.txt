@@ -1,0 +1,38 @@
+── Phase 0: cleanup (tenant-scoped) ──
+(node:15432) [MONGOOSE] Warning: mongoose: Duplicate schema index on {"restaurantId":1} for model "Restaurant". This is often due to declaring an index using both "index: true" and "schema.index()". Please remove the duplicate index definition.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15432) [MONGOOSE] Warning: mongoose: Duplicate schema index on {"restaurantId":1} for model "Device". This is often due to declaring an index using both "index: true" and "schema.index()". Please remove the duplicate index definition.
+(node:15432) [MONGOOSE] Warning: mongoose: Duplicate schema index on {"metaMessageId":1} for model "WhatsAppUsage". This is often due to declaring an index using both "index: true" and "schema.index()". Please remove the duplicate index definition.
+  removed: restaurants=1, branches=3, products=63, purchases=723, inventoryevents=4230, customers=1200, couponredemptions=7386, customersegments=25, bills=19722, offers=13, campaigns=7, campaignhistories=7, offeranalytics=863, offerexperimentevents=5432, dailysummaries=540, monthlysummaries=18, calendarevents=20, recipes=44, recipeconsumptions=19722
+── Phase 1: tenant ──
+  restaurant SIM_RESTAURANT_6M_001 (6ac031900f636f7cc8ab6f8f) · 3 branches · login sim_urban_tadka/246810
+── Phase 2: catalog + recipes ──
+  44 menu products, 19 ingredients, 44 recipes
+── Phase 3: calendar ──
+  20 events
+── Phase 4: offers ──
+  12 offers
+── Phase 5: customers ──
+  1200 customer profiles
+── Phase 6: six-month operating loop ──
+  … day 30/180 · bills=1917 items=4120
+  … day 60/180 · bills=4862 items=10655
+  … day 90/180 · bills=7965 items=17538
+  … day 120/180 · bills=11560 items=25394
+  … day 150/180 · bills=15320 items=33772
+  … day 180/180 · bills=19722 items=43643
+  bills=19722 billItems=43643 consumptions=19722 purchases=723 inventoryEvents=4230 redemptions=7386
+── Phase 7: campaigns ──
+  7 campaigns with delivery history
+── Phase 8: experiments ──
+  4 experiment arms, 1262 ledger rows
+── Phase 9: customer reconciliation + rule segments ──
+  1087 customers with history (+113 idle profiles), 25 rule segments
+── Phase 10: summaries ──
+  540 daily summaries, 18 monthly summaries
+── Phase 11: offer analytics backfill (real service) ──
+  863 offer snapshots from 7386 redemptions
+  offer.currentUses reconciled for 12 offers
+
+Generated. Wrote sim-6m-execute.json
+Login: username=sim_urban_tadka password=246810

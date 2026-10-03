@@ -77,6 +77,8 @@ export async function getOffer(req: Request, res: Response): Promise<void> {
     res.json(offer);
   } catch (error: any) {
     console.error('[Offers] get error:', error.message);
+    // Malformed ids (Cast failures) are client errors — 400, not a 500.
+    if (error?.name === 'CastError') { res.status(400).json({ error: 'Invalid offer id format' }); return; }
     res.status(500).json({ error: 'Failed to get offer' });
   }
 }

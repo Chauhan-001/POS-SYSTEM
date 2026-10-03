@@ -74,8 +74,13 @@ export const config = {
   /** MongoDB connection string */
   mongoUri: process.env.MONGODB_URI || 'mongodb://localhost:27017/pos',
 
-  /** HTTP server port (default: 3002) */
-  port: parseInt(process.env.PORT || '3002', 10),
+  /** HTTP server port (default: 3002). A host env like PORT=0 (common with
+   *  process managers / spawned shells) must never bind the API to an
+   *  ephemeral port — fall back to the documented default instead. */
+  port: (() => {
+    const p = parseInt(process.env.PORT || '3002', 10);
+    return Number.isFinite(p) && p > 0 ? p : 3002;
+  })(),
 
   /** CORS allowed origin(s) — comma-separated for multiple origins */
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
@@ -201,6 +206,15 @@ export const config = {
     enabled: (process.env.CRICKET_CONTEXT_ENABLED || 'true').trim().toLowerCase() !== 'false',
     /** CricAPI key — BACKEND ONLY. Never expose to clients or logs. */
     apiKey: (process.env.CRICKET_API_KEY || '').trim(),
+    /**
+     * Fallback keys (comma-separated, BACKEND ONLY). When the primary key is
+     * quota-blocked (CricAPI signals HTTP 200 + reason), the pool rotates to
+     * the next key; exhausted keys are cooled down before reuse.
+     */
+    fallbackApiKeys: (process.env.CRICKET_FALLBACK_API_KEYS || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean),
     /** Provider base URL (v1 matches API). */
     baseUrl: (process.env.CRICKET_API_BASE_URL || 'https://api.cricapi.com/v1').trim(),
     /** Cache refresh interval in hours. */

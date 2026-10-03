@@ -28,7 +28,17 @@ import { executeTool } from '../tools/registry/toolExecutor';
 import type { ToolContext } from '../tools/registry/toolTypes';
 import { getUpliftSignalsToolDefinition, type UpliftSignalsOutput } from '../tools/ml/getUpliftSignalsTool';
 import { getMLCustomerSegmentsToolDefinition, type MLSegmentsOutput } from '../tools/ml/getMLCustomerSegmentsTool';
+import {
+  getMarketBasketSignalsToolDefinition,
+  type MarketBasketSignalsOutput,
+  type MarketBasketSignalsUnavailable,
+} from '../tools/ml/getMarketBasketSignalsTool';
 import { getActiveOffersToolDefinition, type ActiveOffersOutput } from '../tools/marketing/marketingTools';
+import {
+  getDemandForecastToolDefinition,
+  type DemandForecastOutput,
+  type DemandForecastUnavailable,
+} from '../tools/ml/getDemandForecastTool';
 import { getFestivalContextToolDefinition } from '../tools/context/contextTools';
 import { getSportsContextToolDefinition, type SportsContextToolOutput } from '../tools/context/getSportsContextTool';
 import { getNearbyCompetitionToolDefinition, type NearbyCompetitionToolOutput } from '../tools/context/getNearbyCompetitionTool';
@@ -80,6 +90,17 @@ export interface MarketingAgentResult {
   competitionContext: string | null;
   /** Canonical competition signal types (COMPETITION_DENSITY_HIGH, …). */
   competitionSignals: string[];
+  /**
+   * Market-basket context: one neutral evidence line about available combo
+   * signals, or null. CONTEXT ONLY — never an offer trigger; rule-fallback
+   * rows are disclosed, never presented as model predictions (spec §19).
+   */
+  basketContext: string | null;
+  /**
+   * Demand-forecast context: one neutral evidence line about stored product
+   * demand predictions, or null. CONTEXT ONLY — never an offer trigger.
+   */
+  demandContext: string | null;
   nextActions: string[];
   generatedAt: string;
 }
@@ -91,10 +112,26 @@ const RESPONSE_SCOPE =
 const SEGMENT_SCOPE = 'segment membership — descriptive grouping; no per-customer model score';
 const NONE_SCOPE = 'no ML signal available';
 
-function festivalLine(festival: unknown): string | null {
-  const list = (festival as { festivals?: Array<{ name: string }> } | null)?.festivals;
-  if (Array.isArray(list) && list.length > 0) return `Upcoming festival context: ${list[0].name}.`;
-  return null;
+/**
+ * Build the human-readable festival evidence line from the festival tool's
+ * output ({ available, nearest, upcoming }). Exported for the contract test —
+ * it previously read a non-existent `festivals` field and NEVER produced a
+ * line, silently hiding working festival evidence from the owner.
+ */
+export function festivalLine(festival: unknown): string | null {
+  // Festival tool output shape: { available, nearest: { name, daysAway }, upcoming: [...] }.
+  const f = festival as
+    | {
+        available?: boolean;
+        nearest?: { name?: string; daysAway?: number } | null;
+        upcoming?: Array<{ name?: string; daysAway?: number }>;
+      }
+    | null;
+  if (!f?.available) return null;
+  const first = f.nearest ?? f.upcoming?.[0];
+  if (!first?.name) return null;
+  const when = typeof first.daysAway === 'number' ? ` in ${first.daysAway} day(s)` : '';
+  return `Upcoming festival context: ${first.name}${when}.`;
 }
 
 function sportsLine(sports: SportsContextToolOutput | null | undefined): string | null {
@@ -103,6 +140,30 @@ function sportsLine(sports: SportsContextToolOutput | null | undefined): string 
   const when = first.localDateTime ? first.localDateTime.replace('T', ' ') : first.date;
   const live = first.timeWindow === 'currently_live' ? ', live now' : '';
   return `Cricket context: ${first.name} — ${first.competition}, starts ${when}${first.timezone ? ` (${first.timezone})` : ''}, ${first.relevance} relevance${live}.`;
+}
+
+function basketLine(
+  basket: MarketBasketSignalsOutput | MarketBasketSignalsUnavailable | null | undefined,
+): string | null {
+  if (!basket?.available || basket.signals.length === 0) return null;
+  const n = basket.signals.length;
+  const version = basket.modelVersion ? ` (model version ${basket.modelVersion})` : '';
+  const heuristicNote =
+    basket.predictionSource === 'manager_table' && basket.recommendationMode !== 'model'
+      ? ' — rule-based fallback rows, not model predictions'
+      : '';
+  return `Market-basket context: ${n} product-pair combo signal${n === 1 ? '' : 's'} available${version}${heuristicNote}.`;
+}
+
+function demandLine(
+  demand: DemandForecastOutput | DemandForecastUnavailable | null | undefined,
+): string | null {
+  if (!demand?.available || !demand.predictions || demand.predictions.length === 0) return null;
+  // Top expected-demand day across the stored rows (honest aggregate of what
+  // was pulled — never extrapolated beyond the stored horizon).
+  const top = demand.predictions.reduce((a, b) => (b.expected > a.expected ? b : a));
+  const version = demand.modelVersion ? ` (model ${demand.modelVersion})` : '';
+  return `Demand-forecast context: ${demand.predictions.length} stored product-day forecast${demand.predictions.length === 1 ? '' : 's'} available${version}; peak expected demand ${top.expected} unit(s) on ${top.predictionFor}.`;
 }
 
 function competitionLine(comp: NearbyCompetitionToolOutput | null | undefined): string | null {
@@ -151,6 +212,14 @@ async function runCompetitionContext(ctx: ToolContext) {
   return executeTool(getNearbyCompetitionToolDefinition, {}, { tenant: ctx.tenant });
 }
 
+async function runBasketContext(ctx: ToolContext) {
+  return executeTool(getMarketBasketSignalsToolDefinition, { limit: 10 }, { tenant: ctx.tenant });
+}
+
+async function runDemandContext(ctx: ToolContext) {
+  return executeTool(getDemandForecastToolDefinition, { limit: 60 }, { tenant: ctx.tenant });
+}
+
 export async function runMarketingAgent(
   ctx: ToolContext,
   options: { minimumExperimentSize?: number } = {},
@@ -161,11 +230,13 @@ export async function runMarketingAgent(
   // Context is fetched once and never gates targeting by itself. Cricket is
   // cheap here (cache-first service — no provider call unless the cache is
   // expired) and runs alongside festival context; neither affects targeting.
-  const [festivalRes, activeRes, sportsRes, competitionRes] = await Promise.all([
+  const [festivalRes, activeRes, sportsRes, competitionRes, basketRes, demandRes] = await Promise.all([
     runFestival(ctx),
     runActiveOffers(ctx),
     runSportsContext(ctx),
     runCompetitionContext(ctx),
+    runBasketContext(ctx),
+    runDemandContext(ctx),
   ]);
   const festivalContext = festivalRes.ok ? festivalLine((festivalRes as { data?: unknown }).data) : null;
   const sportsOut = sportsRes.ok ? (sportsRes as { data: SportsContextToolOutput }).data : null;
@@ -175,6 +246,12 @@ export async function runMarketingAgent(
   const compOut = competitionRes.ok ? (competitionRes as { data: NearbyCompetitionToolOutput }).data : null;
   const competitionContext = competitionLine(compOut);
   const competitionSignals = (compOut?.signals ?? []).map((s) => s.signalType);
+  const basketContext = basketLine(
+    basketRes.ok ? (basketRes as { data?: MarketBasketSignalsOutput | MarketBasketSignalsUnavailable }).data : null,
+  );
+  const demandContext = demandLine(
+    demandRes.ok ? (demandRes as { data?: DemandForecastOutput | DemandForecastUnavailable }).data : null,
+  );
   // Neutral advisory only — the module never concludes an offer SHOULD exist.
   const sportsActions =
     topMatch && topMatch.relevance === 'high'
@@ -200,6 +277,8 @@ export async function runMarketingAgent(
         sportsSignals,
         competitionContext,
         competitionSignals,
+        basketContext,
+        demandContext,
         nextActions: [
           ...sportsActions,
           'Review the ranked customers, then create/confirm an offer in the offers workspace.',
@@ -238,6 +317,8 @@ export async function runMarketingAgent(
         sportsSignals,
         competitionContext,
         competitionSignals,
+        basketContext,
+        demandContext,
         nextActions: [
           ...sportsActions,
           'Segments are descriptive — verify the top segment manually before a send.',
@@ -262,6 +343,8 @@ export async function runMarketingAgent(
     sportsSignals,
     competitionContext,
     competitionSignals,
+    basketContext,
+    demandContext,
     nextActions: [
       ...sportsActions,
       'Accumulate experiment assignments through the offer experiment tracker (treatment AND control).',

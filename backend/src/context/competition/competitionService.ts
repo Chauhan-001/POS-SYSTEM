@@ -17,6 +17,7 @@
  * Determinism (spec §25): no LLM anywhere in this pipeline.
  */
 
+import { isValidObjectId } from 'mongoose';
 import { config } from '../../config';
 import {
   findNearbyRestaurants,
@@ -63,8 +64,17 @@ export async function getNearbyCompetition(
   if (!options.restaurantId) return unavailable('location_unavailable', generatedAt);
 
   // 2. Authoritative coordinates from the Restaurant record only (spec §27).
+  //    Tenant identity arrives as the authenticated tenant restaurantId (an
+  //    ObjectId string via JWT, spec §33) — but also accept the business key
+  //    so admin/manual callers can use either form.
   const { default: Restaurant } = await import('../../models/core/Restaurant');
-  const doc = await Restaurant.findOne({ restaurantId: options.restaurantId })
+  const idOrKey = options.restaurantId;
+  const doc = await Restaurant.findOne({
+    $or: [
+      ...(isValidObjectId(idOrKey) ? [{ _id: idOrKey }] : []),
+      { restaurantId: idOrKey },
+    ],
+  })
     .select('latitude longitude cuisineType name')
     .lean()
     .exec();

@@ -20,7 +20,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  ArrowLeft, LayoutGrid, Plus, Sparkles, Tag, Megaphone, BarChart3, MoreHorizontal, RefreshCw, CheckCircle, Briefcase, Package, ChevronDown, ArrowUpRight,
+  ArrowLeft, LayoutGrid, Plus, Sparkles, Tag, Megaphone, BarChart3, MoreHorizontal, RefreshCw, CheckCircle, Briefcase, Package, ChevronDown, ArrowUpRight, Inbox,
 } from 'lucide-react';
 import type { LoyaltyReward, SystemSettings, Product } from '../../types';
 import { useMarketingData } from './useMarketingData';
@@ -31,6 +31,7 @@ import OffersPage from './OffersPage';
 import PromotePage from './PromotePage';
 import AnalyticsOverview from './AnalyticsOverview';
 import MarketingSettingsPanel from './MarketingSettingsPanel';
+import ProposalsInbox from './ProposalsInbox';
 import CampaignWizard from './CampaignWizard';
 import RecommendationPreview from './RecommendationPreview';
 import BusinessAdvisor from './BusinessAdvisor';
@@ -38,7 +39,7 @@ import * as api from '../../api/client';
 import { debugWarn } from '../../utils/debugLog';
 
 
-export type MarketingTab = 'home' | 'advisory' | 'recommendations' | 'offers' | 'promote' | 'analytics' | 'settings';
+export type MarketingTab = 'home' | 'advisory' | 'recommendations' | 'offers' | 'promote' | 'approvals' | 'analytics' | 'settings';
 
 interface MarketingWorkspaceProps {
   onBack?: () => void;
@@ -301,6 +302,7 @@ export default function MarketingWorkspace({
     { id: 'recommendations', label: 'Recommendations', icon: Sparkles },
     { id: 'offers', label: 'Offers', icon: Tag },
     { id: 'promote', label: 'Promote', icon: Megaphone },
+    { id: 'approvals', label: 'Approvals', icon: Inbox },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'settings', label: 'More', icon: MoreHorizontal },
   ];
@@ -308,8 +310,11 @@ export default function MarketingWorkspace({
   const activeCounts = useMemo(() => {
     const live = data.offers.filter((o) => o.status === 'active').length;
     const recs = data.recommendations.length;
-    return { live, recs };
-  }, [data.offers, data.recommendations]);
+    // Proposals awaiting the owner's decision (draft or ready) — drives the
+    // Approvals tab badge so a saved agent plan is never forgotten.
+    const pendingProposals = data.proposals.filter((p) => p.approvalStatus === 'pending' || p.approvalStatus === 'ready_for_approval').length;
+    return { live, recs, pendingProposals };
+  }, [data.offers, data.recommendations, data.proposals]);
 
   // One refresh control for the whole module: the header button. It refreshes
   // everything; while on the Recommendations tab it also asks the LLM for
@@ -353,6 +358,11 @@ export default function MarketingWorkspace({
                   {t.id === 'recommendations' && activeCounts.recs > 0 && (
                     <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-purple-100 text-purple-700'}`}>
                       {activeCounts.recs}
+                    </span>
+                  )}
+                  {t.id === 'approvals' && activeCounts.pendingProposals > 0 && (
+                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                      {activeCounts.pendingProposals}
                     </span>
                   )}
                 </button>
@@ -429,7 +439,29 @@ export default function MarketingWorkspace({
               loading={data.loading}
               currencySymbol={currencySymbol}
               onCreate={goCreateWithSuggestion}
+              onProposalSaved={() => data.refresh()}
+              onOpenApprovals={() => setTab('approvals')}
             />
+          )}
+          {tab === 'approvals' && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">From the AI agent &amp; your drafts</p>
+                <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
+                  <Inbox className="w-4 h-4 text-amber-500" /> Campaign approvals
+                </h3>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Nothing is sent automatically — review each plan, then approve or reject. Approved plans move to Promote.
+                </p>
+              </div>
+              <ProposalsInbox
+                proposals={data.proposals}
+                loading={data.loading}
+                currencySymbol={currencySymbol}
+                onActionDone={() => data.refresh()}
+                showToast={showToast}
+              />
+            </div>
           )}
           {tab === 'offers' && (
             <OffersPage
