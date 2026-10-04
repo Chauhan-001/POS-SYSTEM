@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Offer-Response Model Client (spec Step 5) — Node-side proxy to the Uplift
- * service's /api/offer-response/* endpoints (MLmodels/Uplift). The model is
+ * service's /api/offer-response/* endpoints. The model itself lives in
+ * MLmodels/Offer_Response_Model and is re-exported by MLmodels/Uplift. The model is
  * a RESPONSE model: p(redeem | offer, pre-treatment features) — explicitly
  * NON-causal. Causal targeting stays with the uplift T-Learner endpoints.
  *
@@ -37,6 +38,18 @@ export function getOfferResponseClientConfig(): OfferResponseClientConfig | null
 
 export interface OfferResponseScoreResult {
   p_response: number | null;
+  is_trained: boolean;
+  model_version: string | null;
+  reason: string | null;
+  detail?: string[];
+  data?: Record<string, unknown>;
+  model?: string;
+  scope?: string;
+}
+
+export interface OfferResponseBatchScoreResult {
+  /** Aligned 1:1 with the submitted customers (same order). */
+  scores: Array<{ p_response: number | null }>;
   is_trained: boolean;
   model_version: string | null;
   reason: string | null;
@@ -127,6 +140,22 @@ export async function fetchOfferResponseScore(
   const cfg = getOfferResponseClientConfig();
   if (!cfg) throw new Error('ML_UPLIT_BASE_URL is not configured — offer-response scoring unavailable');
   return offerResponsePost(cfg, restaurantId, '/api/offer-response/score', { customer: features });
+}
+
+/**
+ * Batch p(respond | offer) for a list of PRE-TREATMENT feature snapshots —
+ * one HTTP round trip instead of N single /score calls. `scores` is aligned
+ * 1:1 with the input order (the caller maps them back to its own customer
+ * ids). Cold start passes through untouched: is_trained=false with the gate
+ * reasons and p_response=null per row — never fabricated.
+ */
+export async function fetchOfferResponseBatchScore(
+  restaurantId: string,
+  customers: Array<Record<string, unknown>>
+): Promise<OfferResponseBatchScoreResult> {
+  const cfg = getOfferResponseClientConfig();
+  if (!cfg) throw new Error('ML_UPLIT_BASE_URL is not configured — offer-response batch scoring unavailable');
+  return offerResponsePost(cfg, restaurantId, '/api/offer-response/score-batch', { customers });
 }
 
 export async function fetchOfferResponseEvaluation(

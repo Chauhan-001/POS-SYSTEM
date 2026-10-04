@@ -20,9 +20,12 @@ import {
   getMatches,
   getCricketProviderConfig,
   markCricketKeyQuotaBlocked,
+  markCricketKeyInvalid,
   getCricketKeyQuotaState,
+  isCricketKeyUsable,
   CricketProviderError,
   type CricApiMatchRaw,
+  type CricApiMatchesResponse,
 } from './cricketProvider';
 import { normalizeMatch, withRelevance, type RelevantCricketEvent } from './cricketNormalizer';
 import { readCricketCache, writeCricketCache } from './cricketCache';
@@ -70,13 +73,21 @@ export async function fetchAllMatches(): Promise<FetchOutcome> {
   const fetchWithKeyPool = async (offset: number): Promise<CricApiMatchesResponse> => {
     let lastError: CricketProviderError | null = null;
     for (let i = activeKeyIndex; i < keysToTry.length; i++) {
+      // Quota-aware: never spend a request on a key we KNOW is in cooldown —
+      // requests to blocked keys extend the provider's block window without
+      // producing data. The lastError keeps rotating for the usable ones.
+      if (!isCricketKeyUsable(keysToTry[i])) continue;
       try {
         const res = await getMatches({ ...cfg, apiKey: keysToTry[i] }, offset);
         activeKeyIndex = i; // this key works — pin it for subsequent pages
         return res;
       } catch (err) {
-        if (err instanceof CricketProviderError && err.kind === 'rate_limited') {
-          markCricketKeyQuotaBlocked(keysToTry[i]);
+        if (err instanceof CricketProviderError && (err.kind === 'rate_limited' || err.kind === 'invalid_key')) {
+          // A rejected key is dead for the day; a quota block cools for the
+          // provider's own window. Either way the pool rotates to the next key
+          // so one bad key never stalls the refresh.
+          if (err.kind === 'invalid_key') markCricketKeyInvalid(keysToTry[i]);
+          else markCricketKeyQuotaBlocked(keysToTry[i]);
           lastError = err;
           rotated = true;
           continue; // next key in the pool
@@ -141,17 +152,18 @@ export async function getUpcomingCricketContext(
   }
 
   // 2. Cache-first (spec §12/§16/§17) — enrichment is per-request, post-cache,
-  // so the cached payload stays restaurant-agnostic.
+  // so the cached payload stays restaurant-agnostic. Quota state rides along
+  // on every response so callers can always see the pool's health.
+  const quota = getCricketKeyQuotaState(now.getTime());
   const cached = await readCricketCache();
   if (cached) {
     lastGood = cached;
-    return finalizeOutput(cached, 'fresh', true, true, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt });
+    return finalizeOutput(cached, 'fresh', true, true, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt, quotaState: quota });
   }
 
   // 2b. Quota-aware throttle: when every key in the pool is quota-blocked, a
   // provider call cannot succeed — skip the refresh entirely (serves stale if
   // available) so blocked-key requests are not wasted (cost guard).
-  const quota = getCricketKeyQuotaState(now.getTime());
   if (quota.allBlocked) {
     if (lastGood) {
       console.warn(
@@ -178,23 +190,26 @@ export async function getUpcomingCricketContext(
     const payload: CricketContextCache = { matches: outcome.matches, fetchedAt: outcome.fetchedAt };
     await writeCricketCache(payload);
     lastGood = payload;
-    return finalizeOutput(payload, 'fresh', true, false, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt });
+    return finalizeOutput(payload, 'fresh', true, false, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt, quotaState: quota });
   } catch (err) {
     const kind = err instanceof CricketProviderError ? err.kind : 'provider_unavailable';
     console.warn(
       `[cricket] refresh failed kind=${kind}${err instanceof CricketProviderError && err.httpStatus ? ` httpStatus=${err.httpStatus}` : ''} — ${lastGood ? 'serving stale cache' : 'no cached fallback'}`,
     );
+    // Recompute AFTER the failed refresh — the keys just got marked blocked
+    // during rotation, so reporting the pre-fetch snapshot would lie.
+    const quotaAfter = getCricketKeyQuotaState(now.getTime());
     if (lastGood) {
-      return finalizeOutput(lastGood, 'stale', false, true, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt });
+      return finalizeOutput(lastGood, 'stale', false, true, { daysAhead, now, horizon, restaurantId: options.restaurantId, generatedAt, quotaState: quotaAfter });
     }
     return {
       sport: 'cricket',
       available: false,
-      reason: kind === 'rate_limited' ? 'provider_error' : 'provider_unavailable',
+      reason: kind === 'rate_limited' || kind === 'invalid_key' ? 'provider_error' : 'provider_unavailable',
       events: [],
       dataStatus: 'stale',
       providerAvailable: false,
-      quotaState: getCricketKeyQuotaState(now.getTime()),
+      quotaState: quotaAfter,
       generatedAt,
     };
   }

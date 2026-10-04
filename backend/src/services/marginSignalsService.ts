@@ -57,6 +57,18 @@ function objectId(v: string): mongoose.Types.ObjectId {
 }
 
 /**
+ * Product ids come from baseline rows, which may contain legacy or
+ * non-ObjectId values. Casting those blindly threw "input must be a 24
+ * character hex string" and made the whole margin-signal analysis fail
+ * (observed with lookback windows that reach older baseline rows). Only valid
+ * hex ids are queried; the rest cannot match a Product document anyway.
+ */
+const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+function objectIdIfValid(v: string): mongoose.Types.ObjectId | null {
+  return OBJECT_ID_HEX.test(v) ? new mongoose.Types.ObjectId(v) : null;
+}
+
+/**
  * Get ingredient cost changes from purchase data
  */
 async function getIngredientCostChanges(restaurantId: string, lookbackDays: number): Promise<Map<string, { current: number; previous: number; pctChange: number }>> {
@@ -98,7 +110,11 @@ export async function detectMarginSignals(opts: MarginSignalsOptions): Promise<M
   const productIds = Array.from(productMap.keys());
   const products = await ProductModel.find({
     restaurantId: objectId(restaurantId),
-    _id: { $in: productIds.map(objectId) },
+    _id: {
+      $in: productIds
+        .map(objectIdIfValid)
+        .filter((id): id is mongoose.Types.ObjectId => id !== null),
+    },
     isDeleted: { $ne: true },
   })
     .select('_id name category price averageCost currentStock minStock maxStock')

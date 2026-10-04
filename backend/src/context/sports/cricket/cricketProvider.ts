@@ -44,10 +44,23 @@ export interface CricketProviderConfig {
 
 /**
  * Quota cooldowns: keys that returned a quota-block get a cool-down so the
- * pool does not hammer exhausted keys on every refresh. Process-lifetime —
- * quotas reset daily, so a short cooldown plus key re-check is sufficient.
+ * pool does not hammer exhausted keys on every refresh. Process-lifetime.
+ * CricAPI reports "Blocked for 15 minutes" on quota exhaustion, so the
+ * default matches the provider's own block window (env-overridable) —
+ * an hour-long cooldown would delay recovery far past the real reset.
  */
-const KEY_COOLDOWN_MS = 60 * 60 * 1000; // 1h
+function quotaCooldownMs(): number {
+  const mins = parseInt(process.env.CRICKET_KEY_COOLDOWN_MINUTES || '', 10);
+  return (Number.isFinite(mins) && mins > 0 ? mins : 16) * 60_000;
+}
+
+/**
+ * Keys CricAPI rejects as "Invalid API Key" are dead for the day (the key
+ * was revoked or misconfigured). A long cooldown keeps rotation away from
+ * them without re-probing every cycle; they are still retried eventually so
+ * a restored key rejoins the pool.
+ */
+const DEAD_KEY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const keyCooldownUntil = new Map<string, number>();
 
 function keyUsable(key: string, now = Date.now()): boolean {
@@ -55,9 +68,21 @@ function keyUsable(key: string, now = Date.now()): boolean {
   return until === undefined || until <= now;
 }
 
+/** Public: is this key currently out of cooldown? Callers use it to SKIP
+ *  requests against keys the pool already knows are blocked — a request to
+ *  a blocked key extends the provider's block window and wastes nothing. */
+export function isCricketKeyUsable(key: string, now = Date.now()): boolean {
+  return keyUsable(key, now);
+}
+
 /** Mark a key quota-blocked — cool it down so the pool skips it. */
 export function markCricketKeyQuotaBlocked(key: string): void {
-  keyCooldownUntil.set(key, Date.now() + KEY_COOLDOWN_MS);
+  keyCooldownUntil.set(key, Date.now() + quotaCooldownMs());
+}
+
+/** Mark a key dead (rejected as invalid) — long cooldown, still recoverable. */
+export function markCricketKeyInvalid(key: string): void {
+  keyCooldownUntil.set(key, Date.now() + DEAD_KEY_COOLDOWN_MS);
 }
 
 export interface CricketKeyQuotaState {
@@ -114,7 +139,7 @@ export function getCricketProviderConfig(): CricketProviderConfig | null {
 export class CricketProviderError extends Error {
   constructor(
     message: string,
-    public readonly kind: 'http_error' | 'invalid_json' | 'timeout' | 'rate_limited',
+    public readonly kind: 'http_error' | 'invalid_json' | 'timeout' | 'rate_limited' | 'invalid_key',
     public readonly httpStatus?: number,
   ) {
     super(message);
@@ -146,8 +171,13 @@ export async function getMatches(cfg: CricketProviderConfig, offset = 0): Promis
       // CricAPI signals quota exhaustion/blocking with HTTP 200 + a `reason`
       // and an empty data list — surface that as rate_limited instead of
       // silently reporting "no matches" (spec §19 honest availability).
+      // A rejected key ("Invalid API Key") is a distinct, long-blocked state.
       if (body.reason && (!Array.isArray(body.data) || body.data.length === 0)) {
-        throw new CricketProviderError(`CricAPI blocked the request: ${String(body.reason)}`, 'rate_limited');
+        const reason = String(body.reason);
+        if (/invalid api key/i.test(reason)) {
+          throw new CricketProviderError('CricAPI rejected the API key', 'invalid_key');
+        }
+        throw new CricketProviderError(`CricAPI blocked the request: ${reason}`, 'rate_limited');
       }
       return body;
     } catch (err) {

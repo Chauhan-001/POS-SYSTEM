@@ -7,6 +7,7 @@
  *   - unconfigured → honest error (never a fake score)
  *   - score round-trip with tenant + service-token headers
  *   - honest cold-start payload passes through untouched
+ *   - batch score round-trip (features per customer, aligned scores)
  *   - evaluation + retrain round-trips
  */
 
@@ -15,6 +16,7 @@ import http from 'http';
 
 import {
   fetchOfferResponseScore,
+  fetchOfferResponseBatchScore,
   fetchOfferResponseEvaluation,
   triggerOfferResponseRetrain,
 } from '../offerResponseClient';
@@ -186,5 +188,68 @@ describe('offerResponseClient (mocked Uplift service)', () => {
     expect(result.reasons![0]).toMatch(/< 100 minimum/);
     expect(mockCalls[0].path).toBe('/api/offer-response/retrain');
     expect(mockCalls[0].headers['x-restaurant-id']).toBe(REST_A);
+  });
+
+  it('batch score round-trip sends {customers:[…]} and returns aligned scores', async () => {
+    const baseUrl = await startMockServer();
+    process.env.ML_UPLIT_BASE_URL = baseUrl;
+    process.env.ML_SERVICE_TOKEN = 'st_batch_789';
+
+    mockResponse = {
+      status: 200,
+      body: {
+        scores: [{ p_response: 0.71 }, { p_response: 0.22 }],
+        is_trained: true,
+        model_version: '2026-10-02T00:00:00Z',
+        reason: null,
+        data: { trained_rows: 260, trained_conversions: 130, response_rate_baseline: 0.5, requested: 2 },
+        model: 'offer_response',
+        scope: 'response (non-causal) — for causal targeting use /api/customers uplift ranking',
+      },
+    };
+
+    const result = await fetchOfferResponseBatchScore(REST_A, [
+      { visits_30d: 15, days_since_last_visit: 2 },
+      { visits_30d: 1, days_since_last_visit: 55 },
+    ]);
+
+    expect(result.is_trained).toBe(true);
+    // Scores stay aligned 1:1 with the submitted customers (same order).
+    expect(result.scores.map((s) => s.p_response)).toEqual([0.71, 0.22]);
+    expect(result.scope).toMatch(/non-causal/);
+    expect(mockCalls).toHaveLength(1);
+    expect(mockCalls[0].path).toBe('/api/offer-response/score-batch');
+    expect(mockCalls[0].headers['x-restaurant-id']).toBe(REST_A);
+    expect(mockCalls[0].headers['x-service-token']).toBe('st_batch_789');
+    expect(mockCalls[0].body.customers).toHaveLength(2);
+    expect(mockCalls[0].body.customers[0].visits_30d).toBe(15);
+  });
+
+  it('batch score passes the honest cold start through untouched (per-row nulls)', async () => {
+    const baseUrl = await startMockServer();
+    process.env.ML_UPLIT_BASE_URL = baseUrl;
+    mockResponse = {
+      status: 200,
+      body: {
+        scores: [{ p_response: null }, { p_response: null }],
+        is_trained: false,
+        model_version: null,
+        reason: 'insufficient_data',
+        detail: ['treated rows 30 < 100 minimum', 'conversions 4 < 20 minimum'],
+        data: { treated_rows: 30, conversions: 4, requested: 2 },
+        model: 'offer_response',
+        scope: 'response (non-causal) — for causal targeting use /api/customers uplift ranking',
+      },
+    };
+
+    const result = await fetchOfferResponseBatchScore(REST_A, [{ visits_30d: 3 }, { visits_30d: 4 }]);
+    expect(result.is_trained).toBe(false);
+    expect(result.scores).toEqual([{ p_response: null }, { p_response: null }]);
+    expect(result.reason).toBe('insufficient_data');
+    expect(result.detail).toHaveLength(2);
+  });
+
+  it('batch score rejects honestly when ML_UPLIT_BASE_URL is unset', async () => {
+    await expect(fetchOfferResponseBatchScore(REST_A, [{ visits_30d: 5 }])).rejects.toThrow(/ML_UPLIT_BASE_URL/);
   });
 });

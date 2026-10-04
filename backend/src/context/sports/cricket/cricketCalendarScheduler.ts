@@ -15,7 +15,7 @@
  *                                           avoids provider calls at boot)
  */
 
-import { config } from '../../config';
+import { config } from '../../../config';
 import { syncCricketEventsToCalendar } from './cricketCalendarSync';
 
 const DEFAULT_INTERVAL_HOURS = 6;

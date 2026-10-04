@@ -369,6 +369,9 @@ export async function listProposals(
   return CampaignProposal.find(q)
     .sort({ createdAt: -1 })
     .limit(Math.min(Math.max(params.limit ?? 50, 1), 200))
+    // Real offer details on the inbox card — the owner must see WHICH offer
+    // (title/deal) is attached, not a bare ObjectId.
+    .populate('offerId', 'title type value status endDate')
     .lean()
     .exec();
 }

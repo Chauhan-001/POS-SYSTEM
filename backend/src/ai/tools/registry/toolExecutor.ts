@@ -40,7 +40,12 @@ export async function executeTool<TInput, TOutput>(
       throw new AiError('TOOL_INPUT_INVALID', `Invalid input for '${tool.name}': ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
     }
 
-    const timeoutMs = Math.min(ctx.timeoutMs ?? tool.timeoutMs ?? 10_000, tool.timeoutMs ?? Infinity);
+    let timeoutMs = Math.min(ctx.timeoutMs ?? tool.timeoutMs ?? 10_000, tool.timeoutMs ?? Infinity);
+    // Bounded agent runs pass an absolute deadline: clamp the tool timeout to
+    // whatever budget time remains so a single tool cannot overrun the run.
+    if (typeof ctx.deadlineAt === 'number') {
+      timeoutMs = Math.min(timeoutMs, Math.max(1, ctx.deadlineAt - Date.now()));
+    }
     const output = await withTimeout(
       tool.execute(parsed.data as TInput, ctx),
       timeoutMs,

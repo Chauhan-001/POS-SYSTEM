@@ -25,6 +25,18 @@ export interface ToolContext {
   timeoutMs?: number;
   /** Correlates all calls within one agent execution for tracing. */
   executionId?: string;
+  /**
+   * Phase 1 (bounded agent loop): absolute epoch-ms deadline for the WHOLE
+   * agent run. The executor clamps every tool's timeout to the remaining
+   * time so one slow tool cannot blow the run's latency budget. Undefined
+   * outside a bounded loop → existing behavior unchanged.
+   */
+  deadlineAt?: number;
+  /**
+   * Phase 1: remaining tool-call allowance in this run (loop-enforced;
+   * carried on the context for tracing only — the executor never mutates it).
+   */
+  remainingToolCalls?: number;
 }
 
 export interface ToolDefinition<TInput, TOutput> {

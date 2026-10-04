@@ -6,6 +6,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import Bill from '../../../models/intelligence/Bill';
 import BillItem from '../../../models/intelligence/BillItem';
 import Product from '../../../models/catalog/Product';
+import { config } from '../../../config';
 import { extractBillsForDemandModel } from '../billExtractor';
 import { syncBillsToDemandModel } from '../demandModelClient';
 import { runDemandSync } from '../demandSyncService';
@@ -288,9 +289,19 @@ describe('demandIngestionContract chunking', () => {
 
 describe('demandModelClient + runDemandSync (mocked Demand model)', () => {
   it('rejects when ML_DEMAND_BASE_URL is unset', async () => {
-    await seedBill({ items: [{ menuItemId: PRODUCT_PIZZA.toString(), itemName: 'Margherita Pizza', priceAtSale: 220, quantity: 1 }] });
+    // "Unset" must mean BOTH sources: dotenv snapshots .env (which points at
+    // the live dev service) into config at import time, and the client falls
+    // back to config.mlPipeline.demandBaseUrl when the env var is deleted.
+    delete process.env.ML_DEMAND_BASE_URL;
+    const prevFallback = config.mlPipeline?.demandBaseUrl;
+    try {
+      if (config.mlPipeline) (config.mlPipeline as { demandBaseUrl?: string }).demandBaseUrl = '';
+      await seedBill({ items: [{ menuItemId: PRODUCT_PIZZA.toString(), itemName: 'Margherita Pizza', priceAtSale: 220, quantity: 1 }] });
 
-    await expect(runDemandSync(REST_A)).rejects.toThrow(/ML_DEMAND_BASE_URL/);
+      await expect(runDemandSync(REST_A)).rejects.toThrow(/ML_DEMAND_BASE_URL/);
+    } finally {
+      if (config.mlPipeline) (config.mlPipeline as { demandBaseUrl?: string }).demandBaseUrl = prevFallback;
+    }
   });
 
   it('performs the full extract→push cycle with service-token and tenant headers', async () => {

@@ -54,6 +54,18 @@ function objectId(v: string): mongoose.Types.ObjectId {
 }
 
 /**
+ * Product ids come from sales/units baselines, which may contain legacy or
+ * non-ObjectId values. Casting those blindly threw "input must be a 24
+ * character hex string" and made the whole menu-engineering analysis fail
+ * (observed with lookback windows that reach older baseline rows). Only valid
+ * hex ids are queried; the rest cannot match a Product document anyway.
+ */
+const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+function objectIdIfValid(v: string): mongoose.Types.ObjectId | null {
+  return OBJECT_ID_HEX.test(v) ? new mongoose.Types.ObjectId(v) : null;
+}
+
+/**
  * Calculate percentile rank within an array
  */
 function getPercentileRank(value: number, sortedValues: number[]): number {
@@ -215,9 +227,12 @@ export async function analyzeMenuEngineering(opts: MenuEngineeringOptions): Prom
 
   // Fetch product details (price, cost, category)
   const productIds = Array.from(productMap.keys());
+  const productObjectIds = productIds
+    .map(objectIdIfValid)
+    .filter((id): id is mongoose.Types.ObjectId => id !== null);
   const products = await ProductModel.find({
     restaurantId: objectId(restaurantId),
-    _id: { $in: productIds.map(objectId) },
+    _id: { $in: productObjectIds },
     isDeleted: { $ne: true },
   })
     .select('_id name category price averageCost currentStock minStock maxStock')

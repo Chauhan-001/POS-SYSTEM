@@ -10,6 +10,33 @@ import mongoose from 'mongoose';
 import PromotionCandidateModel, { IPromotionCandidate } from '../models/marketing/PromotionCandidate';
 import IntelligenceSignalModel from '../models/intelligence/IntelligenceSignal';
 import { generatePromotionCandidates, PromotionCandidate, deduplicateCandidates, PromotionCandidateOptions } from './promotionCandidateService';
+import { recordRecommendationLifecycleEvent } from '../ai/memory/memoryLearningService';
+
+/**
+ * Phase 8 hook — record the owner decision as a memory episode (fire-and-forget:
+ * learning must NEVER block or fail the recommendation lifecycle, so failures
+ * are swallowed by the callee's never-throw contract and the promise is not
+ * awaited). No second analytics system is introduced: the episode is written
+ * through the Phase 2 memory manager.
+ */
+function recordLifecycleEpisode(
+  restaurantId: string,
+  action: 'accepted' | 'rejected' | 'converted' | 'implemented',
+  recommendation: { id?: string; type?: string; title?: string; campaignId?: string | null; offerId?: string | null },
+): void {
+  void recordRecommendationLifecycleEvent({
+    tenant: { restaurantId },
+    action,
+    recommendationId: recommendation.id,
+    strategy: recommendation.type,
+    title: recommendation.title,
+    campaignRef: recommendation.campaignId ?? undefined,
+    evidence:
+      recommendation.id !== undefined
+        ? [{ kind: 'signal', ref: `recommendation:${recommendation.id}` }]
+        : [],
+  }).catch(() => undefined);
+}
 
 export type RecommendationStatus =
   | 'NEW'
@@ -283,6 +310,20 @@ export async function recordRecommendationAction(
 
   if (!doc) return null;
 
+  // Phase 8: feed the owner's decision back into restaurant memory.
+  // The lifecycle vocabulary ('accepted'/'rejected'/'implemented') maps to the
+  // Phase 2 episode-type map — pass the mapped action, never the raw one.
+  const episodeAction =
+    action === 'accept' ? 'accepted' : action === 'reject' ? 'rejected' : action === 'implement' ? 'implemented' : null;
+  if (episodeAction) {
+    recordLifecycleEpisode(restaurantId, episodeAction, {
+      id: String(doc._id),
+      type: String((doc as { type?: unknown }).type ?? ''),
+      title: String((doc as { title?: unknown }).title ?? ''),
+      campaignId: doc.campaignId ? String(doc.campaignId) : null,
+    });
+  }
+
   return {
     ...doc,
     id: String(doc._id),
@@ -320,6 +361,14 @@ export async function markRecommendationConverted(
   ).exec();
 
   if (!doc) return null;
+
+  // Phase 8: record the conversion as a launched episode for later learning.
+  recordLifecycleEpisode(restaurantId, 'converted', {
+    id: String(doc._id),
+    type: String((doc as { type?: unknown }).type ?? ''),
+    title: String((doc as { title?: unknown }).title ?? ''),
+    campaignId: campaignId ?? null,
+  });
 
   // Start cooldown
   await startCooldown(restaurantId, recommendationId, DEFAULT_COOLDOWN_DAYS);

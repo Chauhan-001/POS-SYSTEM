@@ -22,6 +22,7 @@ import {
   getOfferPerformanceToolDefinition,
   getCampaignPerformanceToolDefinition,
 } from './marketing/marketingTools';
+import { getPromotionCandidatesToolDefinition } from './marketing/getPromotionCandidatesTool';
 import { getRestaurantProfileToolDefinition, getBranchesToolDefinition } from './restaurant/restaurantTools';
 import { getFestivalContextToolDefinition, getWeatherContextToolDefinition } from './context/contextTools';
 import { getSportsContextToolDefinition } from './context/getSportsContextTool';
@@ -31,6 +32,7 @@ import { getMarketBasketSignalsToolDefinition } from './ml/getMarketBasketSignal
 import { getMLCustomerSegmentsToolDefinition } from './ml/getMLCustomerSegmentsTool';
 import { getUpliftSignalsToolDefinition } from './ml/getUpliftSignalsTool';
 import { getOfferResponsePredictionToolDefinition } from './ml/getOfferResponsePredictionTool';
+import { getOfferResponseBatchScoresToolDefinition } from './ml/getOfferResponseBatchScoresTool';
 
 function registerIfAbsent(definition: unknown): void {
   const tool = definition as { name: string };
@@ -62,6 +64,7 @@ export function registerAllTools(): void {
   registerIfAbsent(getActiveOffersToolDefinition);
   registerIfAbsent(getOfferPerformanceToolDefinition);
   registerIfAbsent(getCampaignPerformanceToolDefinition);
+  registerIfAbsent(getPromotionCandidatesToolDefinition);
 
   registerIfAbsent(getRestaurantProfileToolDefinition);
   registerIfAbsent(getBranchesToolDefinition);
@@ -76,6 +79,7 @@ export function registerAllTools(): void {
   registerIfAbsent(getMLCustomerSegmentsToolDefinition);
   registerIfAbsent(getUpliftSignalsToolDefinition);
   registerIfAbsent(getOfferResponsePredictionToolDefinition);
+  registerIfAbsent(getOfferResponseBatchScoresToolDefinition);
 
   registered = true;
 }

@@ -25,6 +25,7 @@ import BillModel from '../models/intelligence/Bill';
 import BillItemModel from '../models/intelligence/BillItem';
 import BranchModel from '../models/core/Branch';
 import type { RecommendationContext } from './offerEngine';
+import CalendarEvent from '../modules/calendar/models/CalendarEvent';
 import { resolveMenuProductScope } from './productService';
 import { costIntelligenceCore } from '../modules/recipes/services/costIntelligenceCore';
 import { getOfferPerformance } from './offerAnalyticsService';
@@ -449,6 +450,40 @@ export async function buildRecommendationContext(
     }
   }
 
+  // ── Sports calendar (Mongo only — CricAPI fixtures synced by the interval
+  // worker). Absence is honest: empty list → the sports provider emits no
+  // suggestions and no sports API call is ever made here.
+  let sportsEvents: RecommendationContext['sportsEvents'];
+  try {
+    const now = new Date();
+    const horizon = new Date(now.getTime() + 14 * 86_400_000);
+    const fixtures = await CalendarEvent.find({
+      status: 'active',
+      type: 'sports',
+      startDate: { $lte: horizon },
+      endDate: { $gte: now },
+    })
+      .select('name startDate endDate description tags marketingRelevance')
+      .sort({ startDate: 1 })
+      .limit(10)
+      .lean()
+      .exec();
+    if (fixtures.length > 0) {
+      sportsEvents = fixtures.map((ev) => ({
+        eventId: String(ev._id),
+        name: ev.name,
+        startDate: new Date(ev.startDate).toISOString(),
+        endDate: new Date(ev.endDate).toISOString(),
+        // Venue lives in the synced description — never invented when absent.
+        venue: /Venue: (.+?)\.?$/.exec(ev.description || '')?.[1] || undefined,
+        isIndiaMatch: (ev.tags || []).some((t) => /\bindia\b/i.test(t)) || /\bindia/i.test(ev.name),
+        relevance: ev.marketingRelevance as 'low' | 'medium' | 'high',
+      }));
+    }
+  } catch (e: any) {
+    console.warn('[RecommendationContext] sports calendar unavailable (recommendations continue):', e?.message);
+  }
+
   const ctx: RecommendationContext = {
     restaurantId,
     // Phase 9 — explicit scope so consumers can never confuse branch-level
@@ -480,6 +515,7 @@ export async function buildRecommendationContext(
     sales,
     margin,
     wastage,
+    sportsEvents,
   };
   return ctx;
 }

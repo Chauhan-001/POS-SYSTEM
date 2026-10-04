@@ -45,6 +45,56 @@ function daysBetween(from: Date, to: Date): number {
   return Math.max(0, Math.floor((to.getTime() - from.getTime()) / 86_400_000));
 }
 
+/** Customer fields the snapshot reads — all top-level on the Customer schema. */
+interface CustomerSnapshotDoc {
+  _id?: unknown;
+  phone?: string;
+  lastVisit?: Date | string | null;
+  visits?: number;
+  totalSpend?: number;
+  averageSpend?: number;
+  totalOrders?: number;
+  marketingOptIn?: boolean;
+  favoriteCategories?: string[];
+  favoriteItems?: string[];
+}
+
+/**
+ * Field mapping for the pre-treatment snapshot — the SINGLE source of truth
+ * for both the per-customer and the batch builder, so the leakage guard can
+ * never drift between them. Derived counters are computed from real
+ * timestamps; absent data is simply omitted (Uplit applies its own
+ * defaults) — never invented.
+ */
+function featuresFromCustomerDoc(
+  customer: CustomerSnapshotDoc,
+  priorAssignments: number,
+  now: Date,
+): Record<string, unknown> {
+  const features: Record<string, unknown> = {};
+
+  if (customer.lastVisit) features.days_since_last_visit = daysBetween(new Date(customer.lastVisit), now);
+  if (typeof customer.visits === 'number') features.visits_90d = customer.visits;
+  if (typeof customer.totalSpend === 'number') features.total_spend = customer.totalSpend;
+  if (typeof customer.averageSpend === 'number') features.average_order_value = customer.averageSpend;
+  if (typeof customer.totalOrders === 'number') features.orders_30d = customer.totalOrders; // best available counter (30d rollup not tracked)
+  if (customer.marketingOptIn !== undefined) features.opted_in = customer.marketingOptIn ? 1 : 0;
+
+  // Pre-treatment offer history from the experiment ledger itself (counters
+  // live here, NOT on Customer — audit item #8 keeps post-treatment state out
+  // of feature snapshots).
+  if (priorAssignments > 0) features.previous_offer_count = priorAssignments;
+
+  if (Array.isArray(customer.favoriteCategories) && customer.favoriteCategories.length > 0) {
+    features.favorite_category = customer.favoriteCategories[0];
+  }
+  if (Array.isArray(customer.favoriteItems) && customer.favoriteItems.length > 0) {
+    features.favorite_item = customer.favoriteItems[0];
+  }
+
+  return features;
+}
+
 /**
  * Pre-treatment customer features from the Customer document. Derived counters
  * are computed from real timestamps; absent data is simply omitted (Uplit
@@ -65,35 +115,75 @@ export async function snapshotPreTreatmentFeatures(restaurantId: string, custome
 
   if (!customer) return {};
 
-  const now = new Date();
-  const features: Record<string, unknown> = {};
-
-  // Field names verified against the Customer schema (all top-level).
-  if (customer.lastVisit) features.days_since_last_visit = daysBetween(new Date(customer.lastVisit), now);
-  if (typeof customer.visits === 'number') features.visits_90d = customer.visits;
-  if (typeof customer.totalSpend === 'number') features.total_spend = customer.totalSpend;
-  if (typeof customer.averageSpend === 'number') features.average_order_value = customer.averageSpend;
-  if (typeof customer.totalOrders === 'number') features.orders_30d = customer.totalOrders; // best available counter (30d rollup not tracked)
-  if (customer.marketingOptIn !== undefined) features.opted_in = customer.marketingOptIn ? 1 : 0;
-
-  // Pre-treatment offer history from the experiment ledger itself (counters
-  // live here, NOT on Customer — audit item #8 keeps post-treatment state out
-  // of feature snapshots).
+  // Pre-treatment offer history from the experiment ledger (counters live
+  // there, never on Customer).
   const priorAssignments = await OfferExperimentEvent.countDocuments({
     restaurantId,
     customerId,
     eventType: 'assigned',
   });
-  if (priorAssignments > 0) features.previous_offer_count = priorAssignments;
 
-  if (Array.isArray(customer.favoriteCategories) && customer.favoriteCategories.length > 0) {
-    features.favorite_category = customer.favoriteCategories[0];
-  }
-  if (Array.isArray(customer.favoriteItems) && customer.favoriteItems.length > 0) {
-    features.favorite_item = customer.favoriteItems[0];
+  return featuresFromCustomerDoc(customer as CustomerSnapshotDoc, priorAssignments, new Date());
+}
+
+/**
+ * Batch pre-treatment snapshots — ONE Customer query + ONE ledger query for N
+ * customers (the per-customer builder would do 2N). Same field mapping
+ * (featuresFromCustomerDoc) and the same identifier forms: entries may be
+ * ObjectIds or phone strings. An id with no customer document is simply
+ * ABSENT from the map — never a fabricated empty snapshot.
+ *
+ * Backs the marketing agent's RESPONSE_MODEL rung (batch per-customer
+ * scoring): features for a whole candidate pool without per-customer query
+ * cost.
+ */
+export async function snapshotPreTreatmentFeaturesBatch(
+  restaurantId: string,
+  customerIds: string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const map = new Map<string, Record<string, unknown>>();
+  const unique = [...new Set(customerIds.filter((id) => !!id))];
+  if (unique.length === 0) return map;
+
+  const objectIds = unique.filter((id) => /^[0-9a-f]{24}$/i.test(id));
+  const phones = unique.filter((id) => !/^[0-9a-f]{24}$/i.test(id));
+  const idClauses: Record<string, unknown>[] = [];
+  if (objectIds.length > 0) idClauses.push({ _id: { $in: objectIds } });
+  if (phones.length > 0) idClauses.push({ phone: { $in: phones } });
+  if (idClauses.length === 0) return map;
+
+  const docs = await Customer.find({ restaurantId, $or: idClauses }).lean();
+  const byKey = new Map<string, CustomerSnapshotDoc>();
+  for (const raw of docs) {
+    const doc = raw as CustomerSnapshotDoc;
+    if (doc._id !== undefined && doc._id !== null) byKey.set(String(doc._id), doc);
+    if (typeof doc.phone === 'string' && doc.phone) byKey.set(doc.phone, doc);
   }
 
-  return features;
+  // Prior-assignment counts for ALL requested ids in one query — the batched
+  // equivalent of the single builder's countDocuments (a find keeps
+  // mongoose's string→ObjectId casting; a raw aggregate would not cast and
+  // would silently match nothing).
+  const priorRows = await OfferExperimentEvent.find({
+    restaurantId,
+    customerId: { $in: unique },
+    eventType: 'assigned',
+  })
+    .select('customerId')
+    .lean();
+  const counts = new Map<string, number>();
+  for (const row of priorRows as Array<{ customerId?: unknown }>) {
+    const key = String(row.customerId ?? '');
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const now = new Date();
+  for (const id of unique) {
+    const doc = byKey.get(id);
+    if (!doc) continue;
+    map.set(id, featuresFromCustomerDoc(doc, counts.get(id) ?? 0, now));
+  }
+  return map;
 }
 
 // ─── Recording APIs ──────────────────────────────────────────────────────────

@@ -43,7 +43,12 @@ services:
       - "8000:8000"
 
   uplit-model:
-    build: ./Uplift
+    # Context is MLmodels/ (not ./Uplift): the Uplift service also serves the
+    # offer-response model, whose canonical code lives in the sibling
+    # Offer_Response_Model/ folder. See Uplift/Dockerfile.
+    build:
+      context: .
+      dockerfile: Uplift/Dockerfile
     environment:
       - DATABASE_URL=${UPLIT_DATABASE_URL:-sqlite:////app/data/restaurant_uplift.db}
       # Experiment events persist across restarts (volume-mounted JSON store).

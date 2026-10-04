@@ -26,6 +26,9 @@
 
 import { executeTool } from '../tools/registry/toolExecutor';
 import type { ToolContext } from '../tools/registry/toolTypes';
+import { runBoundedAgentLoop, type LoopLlmFn, type LoopMemoryFn } from './loop/agentLoop';
+import { marketingAgentPolicy, MARKETING_AGENT_BUDGET, type AgentPolicy } from './policies/marketingAgentPolicy';
+import type { AgentRunStatus } from '../shared/agentRunContext';
 import { getUpliftSignalsToolDefinition, type UpliftSignalsOutput } from '../tools/ml/getUpliftSignalsTool';
 import { getMLCustomerSegmentsToolDefinition, type MLSegmentsOutput } from '../tools/ml/getMLCustomerSegmentsTool';
 import {
@@ -43,6 +46,11 @@ import { getFestivalContextToolDefinition } from '../tools/context/contextTools'
 import { getSportsContextToolDefinition, type SportsContextToolOutput } from '../tools/context/getSportsContextTool';
 import { getNearbyCompetitionToolDefinition, type NearbyCompetitionToolOutput } from '../tools/context/getNearbyCompetitionTool';
 import type { OfferResponsePredictionOutput } from '../tools/ml/getOfferResponsePredictionTool';
+import {
+  getOfferResponseBatchScoresToolDefinition,
+  type OfferResponseBatchScoresOutput,
+  type OfferResponseBatchScoresUnavailable,
+} from '../tools/ml/getOfferResponseBatchScoresTool';
 
 export type TargetingSource = 'CAUSAL_UPLIFT' | 'RESPONSE_MODEL' | 'ML_SEGMENTS' | 'NONE';
 
@@ -103,6 +111,30 @@ export interface MarketingAgentResult {
   demandContext: string | null;
   nextActions: string[];
   generatedAt: string;
+  /**
+   * Phase 1 — bounded LLM investigation metadata (present only when the run
+   * executed with `agentic: true`). Observability/trace only: the
+   * deterministic ladder above stays authoritative for targeting output.
+   */
+  investigation?: MarketingAgentInvestigation;
+}
+
+/** Compact trace of the Phase 1 bounded loop attached to the agent result. */
+export interface MarketingAgentInvestigation {
+  runId: string;
+  status: AgentRunStatus;
+  stepsUsed: number;
+  toolCallsUsed: number;
+  toolNames: string[];
+  rejected: Array<{ ref: string; stage: string; reason: string }>;
+  uncertainties: string[];
+  llmCalls: number;
+  /**
+   * Phase 2 — memory context loaded at run start (observability counts only;
+   * memory never changes the deterministic ladder output below).
+   * absent = memory load did not complete (degraded or pre-Phase-2 run).
+   */
+  memory?: { episodes: number; longTerm: number; degraded: boolean };
 }
 
 const UPLIFT_SCOPE =
@@ -192,6 +224,43 @@ async function runUplift(ctx: ToolContext, minimumExperimentSize: number) {
   return executeTool(getUpliftSignalsToolDefinition, { limit: 25, minimumExperimentSize }, { tenant: ctx.tenant });
 }
 
+/** Rung 2 — batch per-customer response scores (non-causal). */
+async function runResponseScores(ctx: ToolContext, limit: number) {
+  return executeTool(getOfferResponseBatchScoresToolDefinition, { limit }, { tenant: ctx.tenant });
+}
+
+/**
+ * Why the CAUSAL_UPLIFT rung was skipped — shared by the lower rungs so
+ * every fallback reason names the rung above it (never a silent drop).
+ */
+function upliftFallthroughNote(
+  upliftRes: { ok: boolean; data?: { available?: boolean; gateReasons?: string[] } },
+): string {
+  if (upliftRes.ok && upliftRes.data && !upliftRes.data.available) {
+    const reasons = (upliftRes.data.gateReasons ?? []).join('; ') || 'no evaluable experiment';
+    return `Uplift gate not passed: ${reasons}`;
+  }
+  return 'Uplift service unavailable';
+}
+
+/** Why the RESPONSE_MODEL rung was skipped — named reasons, never silent. */
+function responseFallthroughNote(responseRes: {
+  ok: boolean;
+  data?: unknown;
+}): string {
+  if (!responseRes.ok) return 'offer-response tool failed';
+  const d = responseRes.data as
+    | { available?: boolean; detail?: string; gateReasons?: string[] }
+    | null
+    | undefined;
+  if (!d) return 'offer-response rung returned no data';
+  if (d.available === false) {
+    // Named gate reasons first (most actionable), generic detail as fallback.
+    return (d.gateReasons ?? []).join('; ') || d.detail || 'offer-response model unavailable';
+  }
+  return 'offer-response rung produced no scores';
+}
+
 async function runSegments(ctx: ToolContext) {
   return executeTool(getMLCustomerSegmentsToolDefinition, {}, { tenant: ctx.tenant });
 }
@@ -220,7 +289,7 @@ async function runDemandContext(ctx: ToolContext) {
   return executeTool(getDemandForecastToolDefinition, { limit: 60 }, { tenant: ctx.tenant });
 }
 
-export async function runMarketingAgent(
+export async function runMarketingAgentDeterministic(
   ctx: ToolContext,
   options: { minimumExperimentSize?: number } = {},
 ): Promise<MarketingAgentResult> {
@@ -289,19 +358,49 @@ export async function runMarketingAgent(
     }
   }
 
-  // Response model per-customer scoring is a Step-8 hook: the batch scoring
-  // endpoint (features per customer) does not exist yet, so we fall through
-  // to segments rather than fabricating per-customer probabilities here.
+  // Rung 2 — RESPONSE MODEL: batch per-customer scoring (non-causal). Only
+  // when the tenant has a trained offer-response model AND candidates with
+  // pre-treatment features; otherwise fall through with the named reasons.
+  // Probabilities come from the service — never fabricated here.
+  const responseRes = await runResponseScores(ctx, 50);
+  const responseData = responseRes.ok
+    ? (responseRes as { data?: OfferResponseBatchScoresOutput | OfferResponseBatchScoresUnavailable }).data
+    : null;
+  if (responseData?.available && responseData.scores.length > 0) {
+    return {
+      targetingSource: 'RESPONSE_MODEL',
+      targetingReason: `${upliftFallthroughNote(upliftRes)}. Trained offer-response model used: ${responseData.scores.length} of ${responseData.customersConsidered} recent customers ranked by p(redeem | offer) — non-causal.`,
+      targetingScope: RESPONSE_SCOPE,
+      targets: responseData.scores.map((s) => ({
+        refId: s.customerId,
+        refType: 'customer' as const,
+        score: s.pResponse,
+      })),
+      offerDraft: draftFromActiveOffers(activeRes.ok ? (activeRes as { data?: ActiveOffersOutput }).data : null),
+      festivalContext,
+      sportsContext,
+      sportsSignals,
+      competitionContext,
+      competitionSignals,
+      basketContext,
+      demandContext,
+      nextActions: [
+        ...sportsActions,
+        'Ranked by response likelihood — this estimates who redeems IF offered, not who buys because of the offer.',
+        'Review the top customers, then confirm the offer draft in the offers workspace before any send.',
+        'Keep assignment through the experiment tracker (treatment AND control) so an experiment can move targeting up to causal uplift.',
+      ],
+      generatedAt,
+    };
+  }
+
   const segmentsRes = await runSegments(ctx);
   if (segmentsRes.ok) {
     const segments = (segmentsRes as { data: MLSegmentsOutput | { available: false } }).data;
     if (segments.available && segments.segments.length > 0) {
       return {
         targetingSource: 'ML_SEGMENTS',
-        targetingReason:
-          upliftRes.ok && !(upliftRes as { data?: { available?: boolean; gateReasons?: string[] } }).data?.available
-            ? `Uplift gate not passed: ${((upliftRes as { data: { gateReasons?: string[] } }).data.gateReasons ?? []).join('; ') || 'no evaluable experiment'}. Falling back to stored segmentation.`
-            : 'Uplift service unavailable; using stored segmentation.',
+        targetingReason: `${upliftFallthroughNote(upliftRes)}. Offer-response rung unavailable: ${responseFallthroughNote(responseRes)}. Falling back to stored segmentation.`,
         targetingScope: SEGMENT_SCOPE,
         targets: segments.segments.map((s) => ({
           refId: s.segment,
@@ -357,3 +456,77 @@ export async function runMarketingAgent(
 
 /** Referenced for the Step-8 batch-scoring hook; keeps the import honest. */
 export type { OfferResponsePredictionOutput };
+
+/** Options for the public entry point (Phase 1 adds the bounded loop). */
+export interface MarketingAgentOptions {
+  minimumExperimentSize?: number;
+  /**
+   * Phase 1: run the bounded LLM investigation loop BEFORE the deterministic
+   * targeting ladder. The loop only gathers evidence + observability — it
+   * never changes the ladder's output, and any LLM failure degrades to the
+   * exact deterministic behavior (status recorded on `investigation`).
+   */
+  agentic?: boolean;
+  /** Test seam: inject the loop's LLM (defaults to the shared llmClient). */
+  llm?: LoopLlmFn;
+  /** Override the policy budgets (tests / tighter routes). */
+  loopBudget?: Partial<{ maxSteps: number; maxToolCalls: number; durationMs: number; maxTokens: number; maxCostUsd: number }>;
+  /** Correlation id from the HTTP request (observability). */
+  requestId?: string;
+  /**
+   * Phase 2 test seam: memory loader used at run start (defaults to the
+   * shared memoryManager — tenant-scoped, expired-excluded, never throws).
+   */
+  loadMemory?: LoopMemoryFn;
+}
+
+function toInvestigation(run: Awaited<ReturnType<typeof runBoundedAgentLoop>>): MarketingAgentInvestigation {
+  return {
+    runId: run.runId,
+    status: run.status,
+    stepsUsed: run.budget.stepsUsed,
+    toolCallsUsed: run.budget.toolCallsUsed,
+    toolNames: run.toolCalls.map((t) => t.tool),
+    rejected: run.rejections.map((r) => ({ ref: r.ref, stage: r.stage, reason: r.reason })),
+    uncertainties: run.uncertainties.map((u) => u.reason),
+    llmCalls: run.llm.calls,
+    memory: run.memory
+      ? {
+          episodes: run.memory.episodes.length,
+          longTerm: run.memory.longTerm.length,
+          degraded: run.memory.degraded ?? false,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * Public entry point — Phase 1 foundation:
+ *   optional bounded LLM investigation (policy + shared executor + budgets)
+ *   → EXISTING deterministic targeting ladder (unchanged, authoritative).
+ * Preserves the POST /recommend + POST /proposal contracts and the
+ * deterministic fallback behavior for every existing caller.
+ */
+export async function runMarketingAgent(
+  ctx: ToolContext,
+  options: MarketingAgentOptions = {},
+): Promise<MarketingAgentResult> {
+  let investigation: MarketingAgentInvestigation | undefined;
+  if (options.agentic) {
+    const run = await runBoundedAgentLoop({
+      policy: marketingAgentPolicy as AgentPolicy,
+      objective:
+        'Investigate marketing evidence for this restaurant (sales, margins, inventory, offer/campaign history, customer and ML signals) so recommendations rest on facts, not guesses.',
+      tenant: ctx.tenant,
+      budget: { ...MARKETING_AGENT_BUDGET, ...options.loopBudget },
+      requestId: options.requestId,
+      llm: options.llm,
+      loadMemory: options.loadMemory,
+    });
+    investigation = toInvestigation(run);
+  }
+  const result = await runMarketingAgentDeterministic(ctx, {
+    minimumExperimentSize: options.minimumExperimentSize,
+  });
+  return investigation ? { ...result, investigation } : result;
+}

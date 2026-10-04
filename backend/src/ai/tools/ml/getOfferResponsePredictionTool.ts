@@ -137,7 +137,7 @@ export const getOfferResponsePredictionToolDefinition: ToolDefinition<
   meta: {
     description:
       'Probability a customer responds (redeems) to an offer, given pre-treatment features — a RESPONSE model, not causal uplift. Unavailable with named reasons when the tenant has no trained model; never fabricates a probability.',
-    source: 'modules/ml-pipeline/offerResponseClient (MLmodels/Uplift /api/offer-response/*)',
+    source: 'modules/ml-pipeline/offerResponseClient (MLmodels/Offer_Response_Model, served via Uplift /api/offer-response/*)',
   },
   inputSchema: getOfferResponsePredictionInputSchema,
   execute: executeGetOfferResponsePrediction,

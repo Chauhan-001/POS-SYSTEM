@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+__pycache__/
+*.py[cod]
+# Runtime-trained per-tenant weights (deployment artifacts, not source).
+data/offer-response-weights/*.json

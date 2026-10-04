@@ -14,8 +14,9 @@
  *     "Do not send targeted campaigns without a signal").
  *   - New restaurant / no data → agent returns NONE; caller gets the agent's
  *     nextActions instead of a fabricated proposal.
- *   - ML down / uplift gate fails → agent falls to ML_SEGMENTS or NONE; the
- *     dataSufficiency label travels with the proposal as evidence.
+ *   - ML down / uplift gate fails → agent falls to RESPONSE_MODEL,
+ *     ML_SEGMENTS or NONE; the dataSufficiency label travels with the
+ *     proposal as evidence.
  *   - Audience resolves to zero phones → proposal is still created (so the
  *     owner can see the evidence), but validation will flag the audience and
  *     scheduling is impossible until it is fixed.

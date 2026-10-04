@@ -3023,6 +3023,8 @@ export interface MarketingAgentResult {
   competitionContext: string | null;
   competitionSignals: string[];
   basketContext: string | null;
+  /** Demand-forecast context line (stored product-day forecasts), or null. */
+  demandContext: string | null;
   nextActions: string[];
   generatedAt: string;
 }
@@ -3068,6 +3070,100 @@ export async function createMarketingAgentProposal(body: { minimumExperimentSize
   return postNoQueue<{ success: boolean; result: MarketingAgentResult; proposal: AgentProposalOutcome }>('/ai/marketing-agent/proposal', body);
 }
 
+// ─── Marketing intelligence pipeline (Phases 3–7, read-only) ────────────────
+// Mirrors backend ai/intelligence/marketingIntelligencePipeline.ts — only the
+// fields the owner UI renders. Everything here is DECISION EVIDENCE: no
+// chain-of-thought, no prompt internals, no model names.
+
+export interface IntelligenceRecommendation {
+  rank: number;
+  id: string;
+  type: string;
+  strategyLabel: string;
+  title: string;
+  description: string;
+  recommendedAction: string;
+  engineScore: number;
+  confidence: number;
+  priority: string;
+  economics: {
+    discountPercent: number;
+    projectedContributionMargin: number;
+    incrementalRevenue: number;
+    incrementalUnits: number;
+    breakEvenIncrementalUnits: number;
+    paybackPeriodDays: number;
+    economicallySafe: boolean;
+  };
+  risks: string[];
+  prerequisites: string[];
+  why: string[];
+  provenance: {
+    signalCodes: string[];
+    mlKinds: string[];
+    memoryRefs: string[];
+  };
+}
+
+export interface IntelligenceExplanation {
+  recommendation: string;
+  evidenceSummary: string[];
+  whyItFits: string;
+  whyAlternatives: string;
+  offerDescription: string;
+  campaignCopy: string;
+}
+
+export interface MarketingIntelligenceResult {
+  ranking: {
+    recommendations: IntelligenceRecommendation[];
+    strategies: string[];
+    considered: number;
+    diversityRelaxed: boolean;
+    notes: string[];
+    generatedAt: string;
+  };
+  investigation?: {
+    summary: {
+      signals: number;
+      usable: boolean;
+      unavailableDimensions: string[];
+      toolErrors: number;
+      freshness: { fresh: number; aging: number; stale: number; unknown: number; expired: number };
+    };
+    topSignalLines: string[];
+    unavailableDimensions: string[];
+  };
+  ml: {
+    degradationLines: string[];
+    summary: { availableKinds: string[]; hasCausalEvidence: boolean };
+  };
+  explanation: {
+    explanation: IntelligenceExplanation;
+    source: 'llm' | 'deterministic';
+    degradedReason?: string;
+  } | null;
+  memory: {
+    episodes: number;
+    longTerm: number;
+    degraded: boolean;
+    statements: Array<{ ref: string; memoryType: string; statement: string; confidence: number }>;
+  };
+  degradations: string[];
+  generatedAt: string;
+}
+
+/**
+ * POST /api/ai/marketing-agent/intelligence — run the full intelligence
+ * pipeline (business signals → existing candidate engine → ML semantics →
+ * deterministic ranking → grounded explanation). Read-only: nothing is
+ * created or sent; owner approval stays mandatory.
+ */
+export async function runMarketingIntelligence(body: { limit?: number; includeExplanation?: boolean } = {}) {
+  // BACKEND CALLED — read-only marketing intelligence pipeline
+  return postNoQueue<{ success: boolean; result: MarketingIntelligenceResult }>('/ai/marketing-agent/intelligence', body);
+}
+
 // ─── Campaign Proposal inbox (agent + owner drafts) ───────────────
 
 export interface CampaignProposal {
@@ -3086,6 +3182,13 @@ export interface CampaignProposal {
   source?: 'owner' | 'agent' | 'command';
   channels?: string[];
   createdAt?: string;
+  /** Attached offer — populated with title/deal by GET /campaigns/proposals. */
+  offerId?: string | { _id: string; title?: string; type?: string; value?: number; status?: string; endDate?: string };
+  /** Full (untruncated) evidence lines — powers the "Why this recommendation" panel. */
+  risks?: { notes?: string[] };
+  evidence?: { dataSufficiency?: string; modelVersion?: string };
+  validationResult?: { valid: boolean; errors: string[]; warnings: string[] };
+  expectedImpact?: { expectedReach?: number };
 }
 
 /** GET /api/campaigns/proposals — proposal inbox (agent + owner drafts). */
@@ -3783,6 +3886,18 @@ export async function fetchHelpAnalytics(): Promise<any> {
 // ─── Business Advisor ──────────────────────────────────────────────
 
 /**
+ * All advisor writes use postNoQueue (no offline-queue replay). Two reasons:
+ *  - /advisor/recommend PERSISTS the returned recommendations server-side
+ *    (insertMany, status 'shown'); fingerprint dedup only suppresses
+ *    converted/cooldown ones, so a queued replay would silently insert up to 5
+ *    duplicate rows the owner never saw.
+ *  - action/outcome/converted are $set status transitions — a delayed replay
+ *    (the queue retains entries for 7 days) could clobber a newer decision,
+ *    e.g. revert 'converted' back to 'accepted'.
+ * Failures must surface as null, matching the marketing-agent client fix.
+ */
+
+/**
  * POST /api/advisor/recommend — analyze the restaurant for a business goal and
  * return 3-5 ranked recommendations. Deterministic facts are computed server
  * side; the LLM (when available) only rewrites the explanation. Always returns
@@ -3793,7 +3908,7 @@ export async function advisorRecommend(body: {
   branchId?: string;
 }) {
   // BACKEND CALLED — Business Advisor analysis (deterministic + AI explanation)
-  return post<any>('/advisor/recommend', body);
+  return postNoQueue<any>('/advisor/recommend', body);
 }
 
 /** POST /api/advisor/:id/action — record accept/reject/dismiss + action taken. */
@@ -3802,18 +3917,18 @@ export async function advisorAction(id: string, body: {
   actionTaken?: string;
 }) {
   // BACKEND CALLED — persist the owner's decision for outcome tracking
-  return post<any>(`/advisor/${id}/action`, body);
+  return postNoQueue<any>(`/advisor/${id}/action`, body);
 }
 
 /** POST /api/advisor/:id/outcome — record a measurable result (feedback loop). */
 export async function advisorOutcome(id: string, outcome: string) {
   // BACKEND CALLED — store the business result for future recommendation ranking
-  return post<any>(`/advisor/${id}/outcome`, { outcome });
+  return postNoQueue<any>(`/advisor/${id}/outcome`, { outcome });
 }
 
 /** POST /api/advisor/:id/converted — mark recommendation as converted when offer is created. */
 export async function advisorMarkConverted(id: string, offerId: string, campaignId?: string) {
-  return post<any>(`/advisor/${id}/converted`, { offerId, campaignId });
+  return postNoQueue<any>(`/advisor/${id}/converted`, { offerId, campaignId });
 }
 
 /** GET /api/advisor/history — recent recommendations + status/outcome. */
@@ -3871,11 +3986,15 @@ export async function generateMarketingMessage(params: {
   return post<any>('/marketing/generate-message', params);
 }
 
-/** POST /api/marketing/test-message — send a test message. */
+/**
+ * POST /api/marketing/test-message — send a test message. postNoQueue: a
+ * queued replay would RE-SEND the message (owner-invoked side effect the
+ * owner never saw succeed), so failures surface as null instead.
+ */
 export async function sendTestMessage(params: {
   target: string; message: string; channels: string[];
 }) {
-  return post<any>('/marketing/test-message', params);
+  return postNoQueue<any>('/marketing/test-message', params);
 }
 
 // ─── WhatsApp Integration ────────────────────────────────────────
@@ -4012,14 +4131,22 @@ export async function pushUpliftExperiments() {
   return post<any>('/ml-pipeline/experiments/push', {});
 }
 
-/** POST /api/ml-pipeline/experiments/assign — record a treatment assignment. */
+/**
+ * POST /api/ml-pipeline/experiments/assign — record a treatment assignment.
+ * postNoQueue: the uplift ledger is append-style — a queued replay would
+ * double-record the assignment and corrupt experiment data.
+ */
 export async function recordOfferAssignment(customerId: string, offerId?: string) {
-  return post<any>('/ml-pipeline/experiments/assign', { customerId, offerId });
+  return postNoQueue<any>('/ml-pipeline/experiments/assign', { customerId, offerId });
 }
 
-/** POST /api/ml-pipeline/experiments/convert — record a redemption outcome. */
+/**
+ * POST /api/ml-pipeline/experiments/convert — record a redemption outcome.
+ * postNoQueue (see recordOfferAssignment): replay would double-record the
+ * conversion in the uplift experiment ledger.
+ */
 export async function recordOfferConversion(customerId: string, offerId?: string, redeemedBillId?: string) {
-  return post<any>('/ml-pipeline/experiments/convert', { customerId, offerId, redeemedBillId });
+  return postNoQueue<any>('/ml-pipeline/experiments/convert', { customerId, offerId, redeemedBillId });
 }
 
 // ── Customer segmentation (4th model) ──

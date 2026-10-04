@@ -705,7 +705,7 @@ export class WastageRecommendationProvider implements RecommendationProvider {
  * worker). This provider NEVER calls the sports provider — per-request cost
  * is zero and the calendar is the single source of truth for sports events.
  */
-class SportsCalendarRecommendationProvider implements RecommendationProvider {
+export class SportsCalendarRecommendationProvider implements RecommendationProvider {
   name = 'sports_calendar';
 
   async getSuggestions(ctx: RecommendationContext): Promise<OfferSuggestion[]> {
