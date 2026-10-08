@@ -30,6 +30,14 @@ export const getSalesTrendsInputSchema = z
 /** Mirrors RecommendationContext['sales'] — the authoritative sales shape. */
 export const getSalesTrendsOutputSchema = z.object({
   available: z.literal(true),
+  /**
+   * FIXED rolling window this tool computes over (D-16). dailyRevenue /
+   * weeklyRevenue / monthlyRevenue are rate metrics defined on a 30-day
+   * window; the requested intelligence lookback is NOT applied here because
+   * that would silently change what those authoritative numbers mean. Any
+   * lookback that needs a longer horizon must use a different signal source.
+   */
+  windowDays: z.literal(30),
   scope: z.enum(['tenant', 'branch']),
   dailyRevenue: z.number(),
   weeklyRevenue: z.number(),
@@ -95,6 +103,7 @@ export async function executeGetSalesTrends(
 
     return {
       available: true,
+      windowDays: 30,
       scope: branchId ? 'branch' : 'tenant',
       ...sales,
       generatedAt,

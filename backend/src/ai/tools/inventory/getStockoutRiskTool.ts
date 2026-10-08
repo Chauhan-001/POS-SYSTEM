@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { generateStockoutAlerts } from '../../../services/inventoryDemandForecastingService';
+import { assessStockoutRisk } from '../../../services/inventoryDemandForecastingService';
 import type { ToolContext, ToolDefinition } from '../registry/toolTypes';
 
 export const getStockoutRiskInputSchema = z
@@ -21,8 +21,11 @@ export const getStockoutRiskInputSchema = z
 export type GetStockoutRiskInput = z.infer<typeof getStockoutRiskInputSchema>;
 
 export interface StockoutRiskOutput {
+  /** True when the forecast engine had usable input and completed. An empty
+   *  `alerts` array on an available source means "checked, nothing at risk" —
+   *  NOT "unavailable". */
   available: boolean;
-  reason?: 'NO_STOCKOUT_RISK';
+  reason?: 'NO_STOCKOUT_DATA';
   alerts?: Array<{
     itemId: string;
     itemName: string;
@@ -42,13 +45,16 @@ export async function executeGetStockoutRisk(
 ): Promise<StockoutRiskOutput> {
   const generatedAt = new Date().toISOString();
   try {
-    const alerts = await generateStockoutAlerts(
+    const { assessed, alerts } = await assessStockoutRisk(
       ctx.tenant.restaurantId,
       input.branchId,
       input.horizonDays ?? 14,
     );
-    if (!alerts || alerts.length === 0) {
-      return { available: false, reason: 'NO_STOCKOUT_RISK', generatedAt };
+    // No usable input at all (no recipes / consumption history) → the source
+    // is genuinely unavailable. An assessed source with no at-risk items is
+    // available with an empty alert list.
+    if (!assessed) {
+      return { available: false, reason: 'NO_STOCKOUT_DATA', generatedAt };
     }
     return {
       available: true,
@@ -65,7 +71,7 @@ export async function executeGetStockoutRisk(
       generatedAt,
     };
   } catch {
-    return { available: false, reason: 'NO_STOCKOUT_RISK', generatedAt };
+    return { available: false, reason: 'NO_STOCKOUT_DATA', generatedAt };
   }
 }
 

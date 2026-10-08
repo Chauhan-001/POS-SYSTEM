@@ -82,7 +82,9 @@ describe('bounded agent loop', () => {
     expect(run.llm.calls).toBe(1);
 
     // Observability: one AIUsageLog row for the LLM call + one audit row for the run.
-    const usageRows = await AIUsageLog.find({ feature: 'marketing_agent', requestId: run.runId });
+    // Usage rows are attributed to the agent that actually ran (the loop is
+    // shared, so TEST_POLICY's agent name is what lands in `feature`).
+    const usageRows = await AIUsageLog.find({ feature: TEST_POLICY.agent, requestId: run.runId });
     expect(usageRows).toHaveLength(1);
     expect(usageRows[0].totalTokens).toBe(15);
     expect(usageRows[0].restaurantId?.toHexString()).toBe(R1);
@@ -135,6 +137,57 @@ describe('bounded agent loop', () => {
     expect(run.status).toBe('stopped_max_tool_calls');
     expect(run.toolCalls).toHaveLength(2);
     expect(run.rejections.some((r) => r.stage === 'budget')).toBe(true);
+  });
+
+  it('a STOP GUARD defers a premature stop once and the model decides again', async () => {
+    const llm = vi.fn()
+      .mockResolvedValueOnce({
+        value: { toolCalls: [{ name: 'testEvidenceTool' }], needMoreEvidence: false },
+        model: 'fake-model',
+        provider: 'fake',
+        latencyMs: 1,
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      })
+      .mockResolvedValueOnce({
+        value: { toolCalls: [], needMoreEvidence: false },
+        model: 'fake-model',
+        provider: 'fake',
+        latencyMs: 1,
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      });
+    let objections = 0;
+
+    const run = await runBoundedAgentLoop({
+      policy: TEST_POLICY,
+      objective: 'obj',
+      tenant: tenantR1,
+      llm: llm as unknown as LoopLlmFn,
+      stopGuard: () => {
+        objections += 1;
+        return objections === 1 ? 'the baseline was never read' : null;
+      },
+    });
+
+    expect(run.status).toBe('completed_sufficient');
+    expect(run.budget.stepsUsed).toBe(2);
+    expect(llm).toHaveBeenCalledTimes(2);
+    expect(run.uncertainties.some((u) => u.reason.includes('stop_deferred'))).toBe(true);
+  });
+
+  it('a STOP GUARD is bounded by maxSteps (never an infinite loop)', async () => {
+    const llm = llmReturning({ toolCalls: [], needMoreEvidence: false });
+    const run = await runBoundedAgentLoop({
+      policy: TEST_POLICY,
+      objective: 'obj',
+      tenant: tenantR1,
+      llm,
+      budget: { maxSteps: 1 },
+      stopGuard: () => 'always objects',
+    });
+
+    expect(run.status).toBe('stopped_max_steps');
+    expect(run.error?.code).toBe('stop_guard');
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 
   it('stops at MAX STEPS and feeds observations back into each subsequent prompt', async () => {
@@ -200,7 +253,7 @@ describe('bounded agent loop', () => {
 
     expect(run.status).toBe('failed');
     expect(run.error?.code).toBe('timeout');
-    const usageRows = await AIUsageLog.find({ feature: 'marketing_agent', requestId: run.runId, success: false });
+    const usageRows = await AIUsageLog.find({ feature: TEST_POLICY.agent, requestId: run.runId, success: false });
     expect(usageRows).toHaveLength(1);
     expect(usageRows[0].errorType).toBe('timeout');
   });
@@ -216,7 +269,11 @@ describe('bounded agent loop', () => {
 
   it('LLM NOT CONFIGURED (default client path) → llm_unavailable, zero LLM calls', async () => {
     const key = config.ai.apiKey;
+    const fallbackKeys = config.ai.fallbackApiKeys;
     config.ai.apiKey = '';
+    // The client's key pool includes the env fallbacks, so "not configured"
+    // now means an EMPTY pool — clearing only the primary is not enough.
+    config.ai.fallbackApiKeys = [];
     try {
       const run = await runBoundedAgentLoop({ policy: TEST_POLICY, objective: 'obj', tenant: tenantR1 });
       expect(run.status).toBe('llm_unavailable');
@@ -226,6 +283,7 @@ describe('bounded agent loop', () => {
       expect(rows).toHaveLength(1);
     } finally {
       config.ai.apiKey = key;
+      config.ai.fallbackApiKeys = fallbackKeys;
     }
   });
 
@@ -237,6 +295,46 @@ describe('bounded agent loop', () => {
     expect(run.error?.code).toBe('invalid_plan');
     expect(llm).toHaveBeenCalledTimes(2);
     expect(run.uncertainties.filter((u) => u.reason.startsWith('llm_invalid_plan'))).toHaveLength(2);
+  });
+
+  it('PROVIDER JSON-VALIDATION 400 → ONE bounded retry, then the plan succeeds', async () => {
+    // Reproduces the live Groq-style failure: JSON mode returns HTTP 400 when
+    // the model emits invalid JSON. That is retryable, but only once.
+    let calls = 0;
+    const llm: LoopLlmFn = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new LlmError(
+          'LLM request failed (HTTP 400) — invalid_request_error: Failed to validate JSON.',
+          'http_error',
+          400,
+        );
+      }
+      return {
+        value: { toolCalls: [{ name: 'testEvidenceTool', args: { note: 'retry' } }], needMoreEvidence: false },
+        model: 'fake-model', provider: 'fake', latencyMs: 1,
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      };
+    });
+
+    const run = await runBoundedAgentLoop({ policy: TEST_POLICY, objective: 'obj', tenant: tenantR1, llm });
+
+    expect(llm).toHaveBeenCalledTimes(2);
+    expect(executed).toHaveLength(1);
+    expect(executed[0].tenantId).toBe(R1);
+    expect(run.uncertainties.some((u) => u.reason.startsWith('llm_json_validation_retry'))).toBe(true);
+    expect(run.status).not.toBe('failed');
+  });
+
+  it('non-retryable provider errors (401) are NOT retried', async () => {
+    const llm: LoopLlmFn = vi.fn(async () => {
+      throw new LlmError('LLM request failed (HTTP 401) — invalid_api_key', 'http_error', 401);
+    });
+    const run = await runBoundedAgentLoop({ policy: TEST_POLICY, objective: 'obj', tenant: tenantR1, llm });
+
+    expect(llm).toHaveBeenCalledTimes(1);
+    expect(run.status).toBe('failed');
+    expect(run.error?.code).toBe('http_error');
   });
 
   it('an unregistered policy entry fails the run closed before any LLM call', async () => {
@@ -281,15 +379,19 @@ describe('observation compaction', () => {
 
 describe('default client wiring', () => {
   it('uses the shared llmClient when no test seam is provided (contract check, no network)', async () => {
-    // With no key the shared client reports not_configured → loop degrades to
-    // llm_unavailable WITHOUT any network I/O.
+    // With an EMPTY key pool (primary + fallbacks cleared) the shared client
+    // reports not_configured → loop degrades to llm_unavailable WITHOUT any
+    // network I/O.
     const key = config.ai.apiKey;
+    const fallbackKeys = config.ai.fallbackApiKeys;
     config.ai.apiKey = '';
+    config.ai.fallbackApiKeys = [];
     try {
       const run = await runBoundedAgentLoop({ policy: TEST_POLICY, objective: 'obj', tenant: tenantR1 });
       expect(run.status).toBe('llm_unavailable');
     } finally {
       config.ai.apiKey = key;
+      config.ai.fallbackApiKeys = fallbackKeys;
     }
     expect(typeof generateJsonWithMeta).toBe('function');
   });

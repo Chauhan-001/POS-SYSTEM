@@ -41,7 +41,7 @@ import {
   upliftEvidence,
   mlDegradationLines,
 } from './mlSemantics';
-import { rankAndDiversify, type RankingResult, type RankedRecommendation } from './recommendationRanking';
+import { rankAndDiversify, memoryTypesForType, type RankingResult, type RankedRecommendation } from './recommendationRanking';
 import {
   buildExplanationFacts,
   explainRecommendation,
@@ -54,6 +54,8 @@ import {
 } from '../../services/promotionCandidateService';
 import { loadMemoryContext } from '../memory/memoryManager';
 import type { AgentMemoryContext, MemoryEpisodeRecord, RestaurantMemoryRecord } from '../memory/memoryTypes';
+import { recordLlmUsage } from '../observability/agentUsage';
+import { auditService } from '../../modules/audit/auditService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Options / result
@@ -81,6 +83,8 @@ export interface MarketingIntelligenceOptions {
   /** Test seams. */
   loadMemory?: (tenant: AiTenantContext) => Promise<AgentMemoryContext>;
   now?: number;
+  /** Correlation id for the observability trail (from x-request-id). */
+  requestId?: string;
 }
 
 export interface MarketingIntelligenceResult {
@@ -126,26 +130,111 @@ const ML_TOOL_NAMES = {
   basket: 'getMarketBasketSignals',
 } as const;
 
-/** Compact, stable statement for a long-term memory row (owner-safe). */
+/**
+ * Owner-readable statement for a long-term memory row. Never emits raw
+ * `key=value` internals: the same string is shown to the owner AND fed to the
+ * explanation prompt, so it must read as plain English.
+ */
 export function memoryStatement(m: RestaurantMemoryRecord): string {
-  const v = m.value;
-  let detail: string;
-  if (v && typeof v === 'object') {
-    const entries = Object.entries(v as Record<string, unknown>)
-      .filter(([, val]) => val !== null && val !== undefined)
-      .slice(0, 3)
-      .map(([k, val]) => `${k}=${typeof val === 'number' ? Math.round(val * 100) / 100 : String(val).slice(0, 40)}`);
-    detail = entries.join(', ');
-  } else {
-    detail = String(v).slice(0, 120);
+  const v = (m.value && typeof m.value === 'object' ? (m.value as Record<string, unknown>) : {}) as Record<string, unknown>;
+  const num = (x: unknown): number | undefined => (typeof x === 'number' && Number.isFinite(x) ? x : undefined);
+  const ref = typeof m.entityRef === 'string' ? m.entityRef : '';
+  const subject = ref.includes(':') ? ref.split(':').slice(1).join(':') : ref;
+
+  switch (m.memoryType) {
+    case 'campaign_performance_pattern': {
+      const rate = num(v.redemptionRate);
+      const recipients = num(v.recipients);
+      const who = subject ? `On ${subject}` : 'In past campaigns';
+      const ratePart = rate !== undefined ? `, about ${Math.round(rate * 100)}% of recipients redeemed` : '';
+      const sizePart = recipients !== undefined ? ` (${recipients} recipients)` : '';
+      return `${who}${ratePart}${sizePart}.`;
+    }
+    case 'seasonality_pattern': {
+      const lift = num(v.festiveLiftPct);
+      return lift !== undefined
+        ? `Seasonal demand has lifted about ${lift}% during festive periods.`
+        : 'Seasonal demand patterns are on record for this restaurant.';
+    }
+    case 'promotion_fatigue_pattern':
+      return 'Customers have shown signs of getting less responsive to frequent promotions.';
+    case 'audience_response_pattern':
+      return `Past audience response${subject ? ` for ${subject}` : ''} is on record.`;
+    default: {
+      const label = m.memoryType.replace(/_/g, ' ');
+      return `${label}${subject ? ` (${subject})` : ''} is on record.`;
+    }
   }
-  const subject = m.entityRef ? ` for ${m.entityRef}` : '';
-  return `${m.memoryType.replace(/_/g, ' ')}${subject}: ${detail || 'no detail'}.`;
 }
 
 /** A memory episode that a recommendation was issued (Phase 8 hook point). */
 export function recommendationEpisodeEvidence(rec: RankedRecommendation): string {
   return `recommendation ${rec.id} (${rec.strategyLabel}) rank #${rec.rank}, engine score ${rec.engineScore}`;
+}
+
+/**
+ * PHASE P: the pipeline must emit the SAME observability as the agent path.
+ * Writes one AIUsageLog row for the explanation LLM call (accurate tokens when
+ * reported) plus one audit-trail row for the run — counts only, never prompts
+ * or customer data. Never throws.
+ */
+async function persistIntelligenceObservability(input: {
+  tenant: AiTenantContext;
+  requestId: string;
+  durationMs: number;
+  result: MarketingIntelligenceResult;
+}): Promise<void> {
+  const { result } = input;
+  const exp = result.explanation;
+  if (exp && (exp.source === 'llm' || exp.llmAttempted)) {
+    void recordLlmUsage({
+      restaurantId: input.tenant.restaurantId,
+      requestId: input.requestId,
+      promptVersion: 'phase7-explanation-v1',
+      promptText: JSON.stringify({
+        recommendations: result.ranking.recommendations.length,
+        top: result.ranking.recommendations[0]?.title ?? null,
+      }),
+      model: exp.model ?? 'unknown',
+      provider: exp.provider ?? 'unknown',
+      latencyMs: exp.latencyMs ?? 0,
+      inputTokens: exp.usage?.inputTokens ?? 0,
+      outputTokens: exp.usage?.outputTokens ?? 0,
+      totalTokens: exp.usage?.totalTokens ?? 0,
+      success: exp.source === 'llm',
+      errorType: exp.source === 'llm' ? null : exp.degradedReason ?? 'unknown',
+      fallbackReason: exp.source === 'llm' ? null : `deterministic explanation (${exp.degradedReason ?? 'unknown'})`,
+    });
+  }
+  try {
+    await auditService.log({
+      action: 'marketing_intelligence_run',
+      entityType: 'agent_run',
+      entityId: input.requestId,
+      entityLabel: 'marketing_intelligence_pipeline',
+      restaurantId: input.tenant.restaurantId,
+      branchId: input.tenant.branchId,
+      requestId: input.requestId,
+      correlationId: input.requestId,
+      durationMs: input.durationMs,
+      executionTimeMs: input.durationMs,
+      success: true,
+      status: result.degradations.length > 0 ? 'partial' : 'success',
+      comments: 'Phase 3-7 marketing intelligence pipeline — counts only.',
+      details: {
+        recommendations: result.ranking.recommendations.length,
+        strategies: result.ranking.strategies,
+        signals: result.investigation?.signals.length ?? 0,
+        unavailableDimensions: result.investigation?.unavailableDimensions ?? [],
+        toolErrors: result.investigation?.toolErrors?.length ?? 0,
+        mlAvailableKinds: result.ml.summary.availableKinds,
+        explanationSource: result.explanation?.source ?? 'none',
+        degradations: result.degradations,
+      },
+    } as any);
+  } catch {
+    // Observability must never break the pipeline.
+  }
 }
 
 /** Fetch ML statuses through the shared registry — failures degrade, never throw. */
@@ -220,6 +309,8 @@ export async function runMarketingIntelligence(
           branchId: options.branchId,
           budgetMs: signalBudgetMs,
           dimensions: options.dimensions,
+          // D-16: the requested window reaches the window-aware signal tools.
+          lookbackDays: options.lookbackDays,
         }).catch((err) => {
           degradations.push(`business investigation failed: ${err instanceof Error ? err.message : String(err)}`);
           return null;
@@ -292,10 +383,21 @@ export async function runMarketingIntelligence(
   for (const note of ranking.notes) degradations.push(note);
 
   // ── Stage 4: grounded explanation of the top pick ─────────────────────────
-  const topMemoryStatements = memoryHints.slice(0, 3).map((m) => m.statement);
+  // Relevance filter: only memory whose type actually maps to the TOP
+  // recommendation's strategy may be quoted as supporting it. Without this a
+  // seasonality pattern could be presented as evidence for a promotion.
+  const topRec = ranking.recommendations.find((r) => r.rank === 1);
+  const relevantTopMemory = topRec
+    ? memoryHints.filter((m) => memoryTypesForType(topRec.type).includes(m.memoryType))
+    : [];
+  const topMemoryStatements = relevantTopMemory.slice(0, 3).map((m) => m.statement);
   // Signals that exist but were not correlated with any picked recommendation
   // (disclosed to the explanation so it can say what was NOT used).
-  const usedSignalCodes = new Set(ranking.recommendations.flatMap((r) => r.provenance.signalCodes));
+  // Both product-correlated evidence AND dimension-level themes count as
+  // "used" — anything else is disclosed as NOT used (D-19).
+  const usedSignalCodes = new Set(
+    ranking.recommendations.flatMap((r) => [...r.provenance.signalCodes, ...r.provenance.signalThemes]),
+  );
   const unusedSignals = (investigation?.signals ?? [])
     .filter((s) => !usedSignalCodes.has(s.code))
     .map((s) => s.code);
@@ -304,6 +406,8 @@ export async function runMarketingIntelligence(
     currency: '₹',
     unusedSignals: [...new Set(unusedSignals)].slice(0, 6),
     mlDegradations: degradationLines,
+    // Causal language is only permitted when gated experiment evidence exists.
+    hasCausalEvidence: mlSummary.hasCausalEvidence,
   });
   // Attach validated memory statements only to the recommendations they support.
   for (const r of facts.recommendations) {
@@ -330,7 +434,7 @@ export async function runMarketingIntelligence(
     confidence: m.confidence,
   }));
 
-  return {
+  const result: MarketingIntelligenceResult = {
     ranking,
     investigation:
       investigation && options.includeSignals !== false
@@ -354,6 +458,15 @@ export async function runMarketingIntelligence(
     degradations,
     generatedAt: new Date().toISOString(),
   };
+
+  await persistIntelligenceObservability({
+    tenant: options.tenant,
+    requestId: options.requestId ?? `intel-${startedAt.toString(36)}`,
+    durationMs: Date.now() - startedAt,
+    result,
+  });
+
+  return result;
 }
 
 /** Compact prompt/UI lines for the pipeline result (no raw internals). */

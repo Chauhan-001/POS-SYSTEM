@@ -17,6 +17,14 @@ logs/
 *_token*.txt
 _sec_*.json
 
+# ─── Ad-hoc audit probe artifacts (never commit) ────────────────
+# The 2026-10 audit run accidentally committed live JWTs via these files.
+# Keep the pattern ignored so probe output can never be committed again.
+audit-*.json
+audit-*.txt
+audit-*.ts
+!/scripts/audit-*.ts
+
 # ─── Test coverage ──────────────────────────────────────────────
 coverage/
 .nyc_output/

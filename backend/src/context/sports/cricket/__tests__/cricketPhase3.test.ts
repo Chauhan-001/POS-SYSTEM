@@ -204,33 +204,73 @@ describe('shared registry + Marketing Agent', () => {
     expect(resolved.map((t) => t.name)).toContain('getSportsContext');
   });
 
-  it('agent exposes cricket as neutral context alongside festival, never as a trigger', async () => {
+  it('cricket stays neutral context for the agentic insight agent, never a trigger', async () => {
     const { deleteCache } = await import('../../../../services/cacheService');
     await deleteCache('cricket_context_cache');
     vi.stubGlobal('fetch', vi.fn(async () => apiResponse([INDIA_TODAY_DINNER])) as unknown as typeof fetch);
 
-    const result = await runMarketingAgent({ tenant: { restaurantId: R1, actorId: 'a1' } });
-    expect(result.sportsContext).toMatch(/^Cricket context: /);
-    expect(result.sportsContext).toMatch(/India vs Australia/);
-    expect(result.sportsSignals).toContain('INDIA_MATCH');
-    expect(result.sportsSignals).toContain('MATCH_DURING_DINNER');
-    // High-relevance match yields the neutral advisory nextAction — wording
-    // must never instruct automatic campaign creation.
-    const advisory = result.nextActions.find((a) => /cricket match/i.test(a));
-    expect(advisory).toBeDefined();
-    expect(advisory).toMatch(/never triggers a campaign by itself/i);
+    const result = await runMarketingAgent(
+      { tenant: { restaurantId: R1, actorId: 'a1' } },
+      {
+        llm: async () => ({
+          value: { toolCalls: [{ name: 'getSportsContext', args: {} }], needMoreEvidence: false },
+          model: 'fake-model',
+          provider: 'fake',
+          latencyMs: 1,
+          usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+        }),
+        synthesisLlm: async () => ({
+          value: {
+            title: 'Cricket context reviewed',
+            summary: 'Cricket evidence was one of the sources reviewed for this restaurant.',
+            priority: 'low',
+            evidenceRefs: ['getSportsContext'],
+            confidence: 0.4,
+          },
+          model: 'fake',
+          provider: 'fake',
+          latencyMs: 1,
+          usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+        }),
+      },
+    );
+    expect(result.investigation.toolNames).toContain('getSportsContext');
+    // An insight is advisory: it must never instruct an automatic send/launch.
+    expect(JSON.stringify(result.insights[0])).not.toMatch(/send|launch campaign|create campaign/i);
   });
 
-  it('agent handles unavailable cricket provider without breaking the honesty ladder', async () => {
+  it('agent handles an unavailable cricket provider without breaking the insight contract', async () => {
     config.cricket.enabled = false;
     try {
       const { deleteCache } = await import('../../../../services/cacheService');
       await deleteCache('cricket_context_cache');
-      const result = await runMarketingAgent({ tenant: { restaurantId: R1, actorId: 'a1' } });
-      expect(result.sportsContext).toBeNull();
-      expect(result.sportsSignals).toEqual([]);
-      // Ladder unaffected: no ML signal for a fresh tenant → NONE
-      expect(result.targetingSource).toBe('NONE');
+      const result = await runMarketingAgent(
+        { tenant: { restaurantId: R1, actorId: 'a1' } },
+        {
+          llm: async () => ({
+            value: { toolCalls: [{ name: 'getSportsContext', args: {} }], needMoreEvidence: false },
+            model: 'fake-model',
+            provider: 'fake',
+            latencyMs: 1,
+            usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+          }),
+          synthesisLlm: async () => ({
+            value: {
+              title: 'No cricket signal',
+              summary: 'No relevant cricket evidence was available for this restaurant.',
+              priority: 'normal',
+              evidenceRefs: ['getSportsContext'],
+              confidence: 0.3,
+            },
+            model: 'fake',
+            provider: 'fake',
+            latencyMs: 1,
+            usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+          }),
+        },
+      );
+      expect(result.mode).toBe('agentic_insight');
+      expect(result.insights).toHaveLength(1);
     } finally {
       config.cricket.enabled = true;
     }

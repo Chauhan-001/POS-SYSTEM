@@ -522,7 +522,9 @@ export default function RecipeEditor({
           wastagePercent: 0,
           optional: false,
           ...withPricing(m),
-          custom: false,
+          // Unmatched AI ingredients are NEW items: mark them custom so the
+          // save flow creates them in inventory with 0 stock (resolveCustomItems).
+          custom: m.isNew === true,
         });
       }
       if (newRows.length === 0) {

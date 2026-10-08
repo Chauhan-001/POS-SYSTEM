@@ -18,8 +18,8 @@
  *   - POST /marketing/test-message sends a message ⇒ a replay re-sends it.
  *   - POST /ml-pipeline/experiments/assign|convert record experiment ledger
  *     rows ⇒ a replay double-records them.
- *   - POST /ai/marketing-agent/proposal creates a CampaignProposal ⇒ the
- *     original fix this guard covers.
+ *   - POST /ai/marketing-agent/proposal creates a CampaignProposal from the
+ *     selected ranked recommendation ⇒ the original fix this guard covers.
  *
  * These all go through postNoQueue: offline or network failure ⇒ null, never
  * queued. This test pins that behaviour so a future refactor cannot silently
@@ -36,8 +36,8 @@ import {
   sendTestMessage,
   recordOfferAssignment,
   recordOfferConversion,
-  createMarketingAgentProposal,
-  runMarketingAgent,
+  createProposalFromRecommendation,
+  runMarketingInsights,
   runInventoryAgentRecommendation,
   submitCampaignProposal,
   approveCampaignProposal,
@@ -57,8 +57,8 @@ const AI_CALLS: Array<[string, () => Promise<unknown>]> = [
   ['sendTestMessage', () => sendTestMessage({ target: '+910000000000', message: 'hi', channels: ['whatsapp'] })],
   ['recordOfferAssignment', () => recordOfferAssignment('cust_1', 'offer_1')],
   ['recordOfferConversion', () => recordOfferConversion('cust_1', 'offer_1', 'bill_1')],
-  ['runMarketingAgent', () => runMarketingAgent({})],
-  ['createMarketingAgentProposal', () => createMarketingAgentProposal({})],
+  ['runMarketingInsights', () => runMarketingInsights({})],
+  ['createProposalFromRecommendation', () => createProposalFromRecommendation({ id: 'rec_1', type: 'CREATE_PROMOTION', title: 'Test' })],
   ['runInventoryAgentRecommendation', () => runInventoryAgentRecommendation()],
   ['submitCampaignProposal', () => submitCampaignProposal('prop_1')],
   ['approveCampaignProposal', () => approveCampaignProposal('prop_1')],

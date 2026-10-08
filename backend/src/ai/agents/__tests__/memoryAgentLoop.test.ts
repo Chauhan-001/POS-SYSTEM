@@ -13,8 +13,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
+import { ai } from '../../index';
 import { runBoundedAgentLoop, type LoopLlmFn, type LoopMemoryFn } from '../loop/agentLoop';
-import { runMarketingAgent, runMarketingAgentDeterministic } from '../marketingAgent';
+import { runMarketingAgent } from '../marketingAgent';
 import { memoryManager } from '../../memory/memoryManager';
 import { MEMORY_PRIORITY_STATEMENT, type AgentMemoryContext } from '../../memory/memoryTypes';
 import { toolRegistry } from '../../tools/registry/toolRegistry';
@@ -31,6 +32,7 @@ const TEST_POLICY = { agent: 'test_agent', allowedTools: [] } as const;
 beforeAll(async () => {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri());
+  ai.bootstrap(); // the agent resolves its tools from the ONE shared registry
   if (!toolRegistry.has('memoryTestTool')) {
     toolRegistry.register({
       name: 'memoryTestTool',
@@ -193,8 +195,23 @@ describe('memory loading at run start', () => {
   });
 });
 
-describe('runMarketingAgent integration (Phase 1 contract intact)', () => {
-  it('agentic run reports memory counts on investigation; ladder output unchanged', async () => {
+const goodSynthesis = async () => ({
+  value: {
+    title: 'Memory-backed insight',
+    summary: 'Prior activity was reviewed alongside current evidence.',
+    priority: 'low',
+    recommendation: 'Keep monitoring.',
+    evidenceRefs: ['getActiveOffers'],
+    confidence: 0.5,
+  },
+  model: 'fake-synth',
+  provider: 'fake',
+  latencyMs: 1,
+  usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+});
+
+describe('runMarketingAgent integration (memory → agentic insight)', () => {
+  it('run reports memory counts on investigation and still produces an insight', async () => {
     await memoryManager.recordEpisode(tenantR1, {
       episodeType: 'campaign_launched',
       objective: 'prior push',
@@ -209,38 +226,47 @@ describe('runMarketingAgent integration (Phase 1 contract intact)', () => {
       evidence: [{ kind: 'metric', ref: 'metric:x', value: 15 }],
     });
 
-    const deterministic = await runMarketingAgentDeterministic({ tenant: tenantR1 });
-    const agentic = await runMarketingAgent({ tenant: tenantR1 }, { agentic: true, llm: llmReturning({ needMoreEvidence: false }) });
-
-    expect(agentic.investigation?.memory).toEqual({ episodes: 1, longTerm: 1, degraded: false });
-    // Deterministic ladder output is byte-for-byte identical.
-    expect(agentic.targetingSource).toBe(deterministic.targetingSource);
-    expect(agentic.targetingReason).toBe(deterministic.targetingReason);
-    expect(agentic.targets).toEqual(deterministic.targets);
-    expect(agentic.nextActions).toEqual(deterministic.nextActions);
-    expect(agentic.offerDraft).toEqual(deterministic.offerDraft);
-  });
-
-  it('memory load failure still yields investigation.memory (degraded flag) with intact contract', async () => {
     const result = await runMarketingAgent(
       { tenant: tenantR1 },
       {
-        agentic: true,
-        llm: llmReturning({ needMoreEvidence: false }),
+        llm: llmReturning({ toolCalls: [{ name: 'getActiveOffers', args: {} }], needMoreEvidence: false }),
+        synthesisLlm: goodSynthesis,
+      },
+    );
+
+    expect(result.investigation.memory).toEqual({ episodes: 1, longTerm: 1, degraded: false });
+    expect(result.mode).toBe('agentic_insight');
+    expect(result.insights[0].toolsUsed).toEqual(['getActiveOffers']);
+    expect(result.insights[0].degraded).toBe(false);
+  });
+
+  it('memory load failure is reported as degraded without breaking the insight path', async () => {
+    const result = await runMarketingAgent(
+      { tenant: tenantR1 },
+      {
+        llm: llmReturning({ toolCalls: [{ name: 'getActiveOffers', args: {} }], needMoreEvidence: false }),
+        synthesisLlm: goodSynthesis,
         loadMemory: async () => {
           throw new Error('loader down');
         },
       },
     );
-    expect(result.investigation?.memory).toEqual({ episodes: 0, longTerm: 0, degraded: true });
-    expect(result.targetingSource).toBeDefined();
-    expect(Array.isArray(result.nextActions)).toBe(true);
+    expect(result.investigation.memory).toEqual({ episodes: 0, longTerm: 0, degraded: true });
+    expect(result.mode).toBe('agentic_insight');
+    expect(result.insights).toHaveLength(1);
   });
 
-  it('default (non-agentic) run stays fully deterministic — no investigation, contract intact', async () => {
-    const result = await runMarketingAgent({ tenant: tenantR1 });
-    expect(result.investigation).toBeUndefined();
-    expect(result.targetingSource).toBe('NONE');
+  it('a run always returns the insight contract (there is no deterministic default any more)', async () => {
+    const result = await runMarketingAgent(
+      { tenant: tenantR1 },
+      {
+        llm: llmReturning({ toolCalls: [{ name: 'getActiveOffers', args: {} }], needMoreEvidence: false }),
+        synthesisLlm: goodSynthesis,
+      },
+    );
+    expect(result.mode).toBe('agentic_insight');
+    expect(result.investigation.runId).toBeTruthy();
     expect(result.generatedAt).toBeTruthy();
+    expect(result.insights[0]).toHaveProperty('type', 'agentic_insight');
   });
 });

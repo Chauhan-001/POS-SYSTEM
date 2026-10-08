@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { FileText, X } from 'lucide-react';
+import { useState } from 'react';
+import { FileText, Sparkles, X } from 'lucide-react';
 import type { Product, SystemSettings } from '../../types';
+import DailySummaryIntelligence from './DailySummaryIntelligence';
 // PHASE 3: the AI Closing Assistant component was removed with the AI layer.
-// The Z-report remains fully deterministic.
+// The Z-report remains fully deterministic. The Daily Summary button below is
+// a SEPARATE, additive surface: it opens the AI intelligence modal and changes
+// nothing in this deterministic report.
 
 interface ZReportData {
   totalSales: number;
@@ -33,6 +37,8 @@ export default function ZReportModal({ isOpen, zReportData, settings, moduleSett
   // Assistant, which was removed with the AI layer. The Z-report itself is
   // fully deterministic and unaffected.
   void products;
+  // Separate modal state: the deterministic report never depends on the AI run.
+  const [showDailySummary, setShowDailySummary] = useState(false);
 
   if (!isOpen) return null;
 
@@ -69,9 +75,30 @@ export default function ZReportModal({ isOpen, zReportData, settings, moduleSett
             </div>
           )}
 
-          {/* AI Closing Assistant — removed (Phase 3, AI-only) */}
+          {/* AI Closing Assistant — removed (Phase 3, AI-only).
+              The Daily Summary below is the separate, server-grounded
+              intelligence path (POST /ai/z-report/generate). */}
+          <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-purple-200 bg-purple-50/60 px-3.5 py-3">
+            <div>
+              <p className="text-[11px] font-black text-purple-700 uppercase tracking-widest flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" /> Daily Summary
+              </p>
+              <p className="text-[11px] text-gray-600 mt-0.5">
+                What happened today, what mattered, what needs attention and what to focus on next.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowDailySummary(true)}
+              className="shrink-0 flex items-center gap-1.5 border border-purple-300 bg-white text-purple-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-purple-100 transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Generate Daily Summary
+            </button>
+          </div>
         </div>
       </div>
+
+      <DailySummaryIntelligence isOpen={showDailySummary} onClose={() => setShowDailySummary(false)} />
     </div>
   );
 }

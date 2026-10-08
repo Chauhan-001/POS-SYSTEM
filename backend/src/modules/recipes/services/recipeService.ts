@@ -57,6 +57,11 @@ export interface RecipeInput {
   servingSize?: number;
   preparationNotes?: string;
   components: RecipeComponentInput[];
+  /**
+   * Ingredients the caller could not match to inventory. On create each is
+   * added to inventory with 0 stock and appended as a recipe component.
+   */
+  newIngredients?: { name: string; unit?: string; quantity?: number }[];
 }
 
 const MAX_DEPTH = 10;
@@ -98,8 +103,14 @@ export class RecipeService {
   // ─── Create ─────────────────────────────────────────────────────
   async create(restaurantId: string, data: RecipeInput, ctx: { operator?: string; branchId?: string } = {}) {
     const product = await this.assertProduct(restaurantId, data.productId);
-    await this.validateGraph(restaurantId, data.components || []);
-    const components = await this.normalizeComponents(restaurantId, data.components || []);
+    // Brand-new ingredients become real inventory items (stock 0) BEFORE the
+    // graph is validated, so their components reference a live item.
+    const inputComponents: RecipeComponentInput[] = [
+      ...(data.components || []),
+      ...(await this.createNewIngredients(restaurantId, data.newIngredients)),
+    ];
+    await this.validateGraph(restaurantId, inputComponents);
+    const components = await this.normalizeComponents(restaurantId, inputComponents);
 
     // ── Variant-only model ───────────────────────────────────────
     // Every recipe belongs to exactly ONE variant. There is no base recipe and
@@ -151,6 +162,63 @@ export class RecipeService {
       name, status: draft.status, version: 1, recipeMode,
     });
     return this.getById(restaurantId, recipe._id.toString());
+  }
+
+  /**
+   * Create (or reuse) inventory items for ingredients that have no catalog
+   * entry yet and return components referencing them. New items are created
+   * with 0 stock on purpose — naming an ingredient in a recipe does not
+   * receive stock. Idempotent: an existing item with the same name in this
+   * restaurant is reused instead of duplicated.
+   */
+  private async createNewIngredients(
+    restaurantId: string,
+    list: RecipeInput['newIngredients']
+  ): Promise<RecipeComponentInput[]> {
+    if (!Array.isArray(list) || list.length === 0) return [];
+    const out: RecipeComponentInput[] = [];
+    const seen = new Set<string>();
+    for (const entry of list.slice(0, 100)) {
+      const name = String(entry?.name || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const unit = normalizeUnit(entry?.unit) || 'pcs';
+      const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      let item = await Product.findOne({
+        restaurantId,
+        type: 'inventory',
+        isDeleted: { $ne: true },
+        name: new RegExp(`^${safe}$`, 'i'),
+      }).exec();
+      if (!item) {
+        item = await Product.create({
+          name: name.slice(0, 200),
+          code: `R${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+          category: 'Recipe Added',
+          type: 'inventory',
+          availability: false,
+          price: 0,
+          currentStock: 0,
+          unit,
+          minStock: 0,
+          maxStock: 0,
+          reorderLevel: 0,
+          restaurantId,
+        });
+      }
+      out.push({
+        inventoryItemId: String(item._id),
+        itemName: name.slice(0, 200),
+        unit,
+        quantity: Math.max(0, Number(entry?.quantity) || 0),
+        componentType: 'ingredient',
+        wastagePercent: 0,
+        optional: false,
+      });
+    }
+    return out;
   }
 
   // ─── Update ─────────────────────────────────────────────────────

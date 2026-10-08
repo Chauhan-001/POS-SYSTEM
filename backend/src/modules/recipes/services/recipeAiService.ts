@@ -54,8 +54,22 @@ export interface MatchedComponent {
   unitMismatch?: boolean;
   /** No cost recorded on the inventory item (never purchased). */
   missingCost?: boolean;
+  /**
+   * No inventory item exists for this ingredient. It is a NEW item: when the
+   * recipe is saved it is created in inventory with 0 stock (never during
+   * draft creation — quickCreate saves nothing).
+   */
+  isNew?: boolean;
   /** Why MEDIUM/LOW (shown to the user). */
   reason?: string;
+}
+
+/** A brand-new inventory item proposed by the matcher (created on save). */
+export interface NewIngredient {
+  name: string;
+  /** Normalized unit ('g' | 'kg' | 'ml' | 'L' | 'pcs') the item is tracked in. */
+  unit: string;
+  quantity: number;
 }
 
 export interface QuickCreateDraft {
@@ -70,6 +84,11 @@ export interface QuickCreateDraft {
   matched: MatchedComponent[];
   /** Items with no confident inventory match (LOW) — require manual selection. */
   needsAttention: MatchedComponent[];
+  /**
+   * Ingredients with no inventory match at all. Saving the recipe creates
+   * each as an inventory item with 0 stock and includes it as a component.
+   */
+  newIngredients: NewIngredient[];
   /** Human-readable warning list for the review screen. */
   warnings: string[];
   aiUnavailable: boolean;
@@ -92,60 +111,125 @@ function devanagariToDigits(s: string): string {
   return s.replace(/[०१२३४५६७८९]/g, (ch) => map[ch] || ch);
 }
 
+/** Unit words recognised directly after a quantity ("200 grams", "2 kg"). */
+const UNIT_WORDS = new Set([
+  'mg', 'milligram', 'milligrams',
+  'g', 'gm', 'gms', 'gram', 'grams', 'kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms',
+  'ml', 'milliliter', 'milliliters', 'millilitre', 'millilitres',
+  'l', 'ltr', 'litre', 'litres', 'liter', 'liters',
+  'pcs', 'pc', 'piece', 'pieces', 'nos', 'no', 'unit', 'units',
+  'plate', 'plates', 'serving', 'servings',
+  'tbsp', 'tsp', 'cup', 'cups', 'pack', 'packs', 'packet', 'packets',
+  'bottle', 'bottles', 'bunch', 'bunches', 'box', 'boxes', 'can', 'cans',
+  'dozen', 'slice', 'slices', 'leaf', 'leaves', 'clove', 'cloves',
+  'pinch', 'pinches', 'handful', 'handfuls', 'sprig', 'sprigs', 'stick', 'sticks', 'sheet', 'sheets',
+]);
+
+/** Filler grammar stripped from a spoken ingredient name. */
+const FILLER_RX = /\b(?:of|ka|ki|ke|ko|mein|me|se|add|daal|daalo|dal|dalo|karo|please|the|a|an|take|took|put|mix|use|using|with|then|into|to|taste)\b/g;
+
+interface QtyEvent { value: number; unit: string; start: number; end: number; }
+
+/**
+ * Every quantity in one connector-free chunk: "200", "200g", "2 kg", "do".
+ * `end` is the offset just past the consumed quantity (and its unit word), so
+ * the caller can slice the surrounding text into per-ingredient names.
+ */
+function quantityEvents(segment: string): QtyEvent[] {
+  const events: QtyEvent[] = [];
+
+  // Numeric quantities with an optional immediately-following unit word.
+  const numRx = /(\d+(?:\.\d+)?)(\s*)([a-zA-Z]+)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = numRx.exec(segment)) !== null) {
+    const word = (m[3] || '').toLowerCase();
+    const wordStart = m.index + m[1].length + m[2].length;
+    const hasUnit = !!word && UNIT_WORDS.has(word);
+    events.push({
+      value: Number(m[1]),
+      unit: hasUnit ? word : '',
+      start: m.index,
+      end: hasUnit ? wordStart + m[3].length : m.index + m[1].length,
+    });
+  }
+
+  // Hinglish/Devanagari number words ("do kilo atta").
+  const wordRx = /\S+/g;
+  let w: RegExpExecArray | null;
+  while ((w = wordRx.exec(segment)) !== null) {
+    const token = w[0].toLowerCase().replace(/[^a-z\u0900-\u097F]/g, '');
+    if (token === '' || NUMBER_WORDS[token] === undefined) continue;
+    const wordEnd = w.index + w[0].length;
+    const next = segment.slice(wordEnd).match(/^\s*([a-zA-Z\u0900-\u097F]+)/);
+    const nextWord = next ? next[1].toLowerCase() : '';
+    const hasUnit = nextWord !== '' && UNIT_WORDS.has(nextWord);
+    events.push({
+      value: NUMBER_WORDS[token],
+      unit: hasUnit ? nextWord : '',
+      start: w.index,
+      end: hasUnit ? wordEnd + (next as RegExpMatchArray)[0].length : wordEnd,
+    });
+  }
+
+  events.sort((a, b) => a.start - b.start);
+  return events;
+}
+
+function cleanIngredientName(raw: string): string {
+  return raw.replace(FILLER_RX, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** A real ingredient name needs ≥2 chars and at least one letter (Latin/Devanagari). */
+function isRealIngredientName(name: string): boolean {
+  return name.length >= 2 && /[a-zA-Z\u0900-\u097F]/.test(name);
+}
+
 /**
  * Parse free-text ingredients into structured rows. Deterministic, offline.
- * Handles: "200g paneer, 150g tomato", "2 kg atta aur 1 litre tel",
- * "500 ml doodh", "1 pcs paneer", "paneer 200g" — plus Devanagari numerals
- * and Hinglish number words. Rows without any quantity default to 1 pcs.
+ *
+ * A chunk is first split on connectors (",", "and", "aur", "और", "+"); each
+ * chunk is then scanned for EVERY quantity — not just the first — so a whole
+ * sentence spoken in one go ("take 200 grams of paneer add 150 grams of
+ * tomato") yields a separate row per ingredient. Handles quantities before
+ * ("200g paneer") or after ("paneer 200g") the name, Devanagari numerals and
+ * Hinglish number words. Rows without any quantity default to 1 pcs.
  */
 function extractIngredients(text: string): AiParsedIngredient[] {
   const cleaned = devanagariToDigits(String(text || ''));
-  const parts = cleaned.split(/\s*(?:,|\band\b|\baur\b|\bऔर\b|\+)\s*/).filter((p) => p.trim());
+  const parts = cleaned.split(/\s*(?:,|\band\b|\baur\b|\bऔर\b|\+)\s*/).map((p) => p.trim()).filter(Boolean);
   const out: AiParsedIngredient[] = [];
 
   for (const part of parts) {
-    const lower = part.toLowerCase().trim();
-    if (!lower) continue;
+    const events = quantityEvents(part);
 
-    // Quantity: leading/trailing number (digits or Hinglish number word).
-    const digitMatch = lower.match(/(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?/);
-    let quantity = 0;
-    let unit = '';
-    let namePart = lower;
-
-    if (digitMatch && digitMatch.index !== undefined && digitMatch.index < Math.max(2, lower.length - 30)) {
-      quantity = Number(digitMatch[1]);
-      unit = digitMatch[2] || '';
-      // Name = the text with the "<qty><unit>" chunk removed.
-      namePart = (lower.slice(0, digitMatch.index) + ' ' + lower.slice(digitMatch.index + digitMatch[0].length)).replace(/\s+/g, ' ').trim();
-    } else {
-      // Hinglish number word as quantity ("do kilo atta").
-      const words = lower.split(/\s+/);
-      for (let i = 0; i < words.length; i++) {
-        if (NUMBER_WORDS[words[i]] !== undefined) {
-          quantity = NUMBER_WORDS[words[i]];
-          unit = words[i + 1] || '';
-          words.splice(i, 2);
-          namePart = words.join(' ').trim();
-          break;
-        }
+    if (events.length === 0) {
+      // No quantity anywhere → a single row with the default 1 pcs.
+      const name = cleanIngredientName(part);
+      if (isRealIngredientName(name)) {
+        out.push({ ingredientText: name.slice(0, 120), quantity: 1, unit: 'pcs' });
       }
+      continue;
     }
 
-    // Strip filler grammar from the name.
-    const ingredientText = namePart
-      .replace(/\b(?:of|ka|ki|ke|add|daal|daalo|karo|please|the|a|an)\b/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    // A real ingredient name contains at least one letter (Latin or
-    // Devanagari) — garbage tokens like "???" are skipped.
-    if (!ingredientText || ingredientText.length < 2 || !/[a-zA-Z\u0900-\u097F]/.test(ingredientText)) continue;
-
-    out.push({
-      ingredientText: ingredientText.slice(0, 120),
-      quantity: quantity > 0 ? Math.min(quantity, 1_000_000) : 1,
-      unit: (unit || 'pcs').slice(0, 20),
-    });
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      const nextStart = i + 1 < events.length ? events[i + 1].start : part.length;
+      // Preferred: the name FOLLOWS its quantity ("200g paneer").
+      let raw = part.slice(ev.end, nextStart);
+      if (!raw.trim()) {
+        // Quantity FOLLOWS the name ("paneer 200g") — take the text since the
+        // previous quantity so the same name is never assigned twice.
+        const prevEnd = i > 0 ? events[i - 1].end : 0;
+        raw = part.slice(prevEnd, ev.start);
+      }
+      const name = cleanIngredientName(raw);
+      if (!isRealIngredientName(name)) continue;
+      out.push({
+        ingredientText: name.slice(0, 120),
+        quantity: ev.value > 0 ? Math.min(ev.value, 1_000_000) : 1,
+        unit: (ev.unit || 'pcs').slice(0, 20),
+      });
+    }
   }
 
   return out.slice(0, 60);
@@ -214,6 +298,7 @@ export class RecipeAiService {
         resolution,
         matched: [],
         needsAttention: [],
+        newIngredients: [],
         warnings: ['No ingredients detected — add them in the format "200g paneer, 150g tomato".'],
         aiUnavailable: true,
       };
@@ -271,14 +356,17 @@ export class RecipeAiService {
       const unitMismatch = !!(best && spokenUnit && itemUnit && familyOf(spokenUnit) && familyOf(itemUnit) && familyOf(spokenUnit) !== familyOf(itemUnit));
 
       if (!best) {
+        // No inventory item at all → a NEW ingredient. It stays reviewable and
+        // is only written to inventory (stock 0) when the recipe is saved.
         needsAttention.push({
           ingredientText: ing.ingredientText,
           quantity: ing.quantity,
           unit: ing.unit,
           confidence: 'LOW',
-          reason: 'No matching inventory item found — pick one manually.',
+          isNew: true,
+          reason: 'New item — it will be added to inventory with 0 stock when you save.',
         });
-        warnings.push(`"${ing.ingredientText}" has no inventory match — select an item manually.`);
+        warnings.push(`"${ing.ingredientText}" is new — it will be added to inventory with 0 stock when you save.`);
         continue;
       }
 
@@ -321,6 +409,15 @@ export class RecipeAiService {
       }
     }
 
+    // New items the save flow should create in inventory (stock 0).
+    const newIngredients: NewIngredient[] = needsAttention
+      .filter((c) => c.isNew)
+      .map((c) => ({
+        name: c.ingredientText,
+        unit: normalizeUnit(c.unit) || 'pcs',
+        quantity: c.quantity,
+      }));
+
     return {
       productId: String(product._id),
       productName: product.name,
@@ -329,6 +426,7 @@ export class RecipeAiService {
       resolution,
       matched,
       needsAttention,
+      newIngredients,
       warnings,
       aiUnavailable: false,
     };

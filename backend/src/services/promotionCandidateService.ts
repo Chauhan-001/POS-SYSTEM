@@ -59,6 +59,13 @@ export interface FinancialModel {
   paybackPeriodDays: number;
   minMarginConstraint: number;
   maxDiscountConstraint: number;
+  /**
+   * TRUE when no authoritative price/cost data existed to compute economics.
+   * Such candidates may be surfaced as opportunities, but their numeric fields
+   * are placeholders and MUST NOT be presented as a validated economy
+   * (no "₹0" figures, no fake break-even, no safety claim).
+   */
+  economicsUnavailable?: boolean;
 }
 
 export interface CannibalizationEstimate {
@@ -110,6 +117,17 @@ export interface PromotionCandidateOptions {
   constraints?: Partial<BusinessConstraints>;
   minScore?: number; // Default 40
   minConfidence?: number; // Default 0.4
+  /**
+   * DIRECTION NARROWING (Marketing Agent §11). Restricts generation to a
+   * subset of promotion types. Sources whose builder can only produce a
+   * disallowed type are not detected at all, so the restriction genuinely
+   * constrains the engine instead of filtering its output afterwards. Omit for
+   * the unrestricted engine (all existing callers are unchanged).
+   *
+   * An EMPTY array means "no type is allowed" and yields no candidates — it
+   * never silently falls back to the unrestricted set.
+   */
+  types?: PromotionType[];
 }
 
 const DEFAULT_MIN_SCORE = 40;
@@ -699,6 +717,20 @@ function buildCandidateFromMarginSignal(
 }
 
 /**
+ * Stable, readable key for a demand anomaly. A REVENUE_DROP anomaly has no
+ * single entity, and an anomaly without an id previously produced the literal
+ * id `promo_demand_undefined` (unstable and unsearchable for owners).
+ */
+function demandAnomalyKey(anomaly: DemandAnomaly): string {
+  const raw = [anomaly.entityType, anomaly.entityId, anomaly.type].filter(Boolean).join('_');
+  const slug = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return slug || 'unknown';
+}
+
+/**
  * Build candidate from demand anomaly
  */
 function buildCandidateFromDemandAnomaly(
@@ -707,7 +739,7 @@ function buildCandidateFromDemandAnomaly(
 ): PromotionCandidate | null {
   if (anomaly.type === 'TIME_SLOT_UNDERPERFORMING' || anomaly.type === 'REVENUE_DROP') {
     return {
-      id: `promo_demand_${anomaly.entityId}`,
+      id: `promo_demand_${demandAnomalyKey(anomaly)}`,
       type: 'CREATE_PROMOTION',
       priority: anomaly.severity === 'high' ? 'high' : 'medium',
       score: anomaly.severity === 'high' ? 70 : 55,
@@ -721,11 +753,16 @@ function buildCandidateFromDemandAnomaly(
         segmentIds: [],
       },
       evidence: anomaly.evidence,
+      // No product-level price/cost exists for a demand anomaly, so NO
+      // authoritative economy can be computed. The numeric fields are
+      // placeholders and are explicitly flagged unavailable rather than
+      // presented as a real 20% discount with a 0% margin (which previously
+      // reached owners as "no extra sales needed to cover the discount").
       financialModel: {
         currentPrice: 0,
         proposedPrice: 0,
         recipeCost: 0,
-        discountPercent: 20,
+        discountPercent: 0,
         discountAmount: 0,
         currentContribution: 0,
         projectedContribution: 0,
@@ -737,6 +774,7 @@ function buildCandidateFromDemandAnomaly(
         paybackPeriodDays: 0,
         minMarginConstraint: constraints.minMarginPercent,
         maxDiscountConstraint: constraints.maxDiscountPercent,
+        economicsUnavailable: true,
       },
       cannibalization: { estimatedCannibalizationRate: 0.3, incrementalVsCannibalized: 1.2, confidence: 0.5, evidence: [] },
       risks: ['Time-slot promotion may shift demand rather than create new demand'],
@@ -767,7 +805,13 @@ export async function generatePromotionCandidates(opts: PromotionCandidateOption
 
   const mergedConstraints: BusinessConstraints = { ...DEFAULT_CONSTRAINTS, ...constraints };
 
-  // Gather all signals in parallel
+  // ── Direction narrowing: which sources can the caller's types come from? ──
+  const allowedTypes: Set<PromotionType> | null = opts.types ? new Set(opts.types) : null;
+  // The exact set of types each builder source can emit (see the builders below).
+  const want = (producible: PromotionType[]): boolean =>
+    allowedTypes === null || producible.some((t) => allowedTypes.has(t));
+
+  // Gather all signals in parallel (sources the caller did not direct are skipped)
   const [
     comboOpps,
     addOnOpps,
@@ -777,13 +821,27 @@ export async function generatePromotionCandidates(opts: PromotionCandidateOption
     marginSignals,
     demandAnomalies,
   ] = await Promise.all([
-    detectComboOpportunities({ restaurantId, branchId, lookbackDays }),
-    detectAddOnOpportunities({ restaurantId, branchId, lookbackDays }),
-    detectInventoryOpportunities({ restaurantId, branchId, lookbackDays }),
-    detectCustomerOpportunities({ restaurantId, branchId, lookbackDays }),
-    analyzeMenuEngineering({ restaurantId, branchId, lookbackDays }),
-    detectMarginSignals({ restaurantId, branchId, lookbackDays }),
-    detectAllDemandAnomalies({ restaurantId, branchId, lookbackDays }),
+    want(['CREATE_COMBO'])
+      ? detectComboOpportunities({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
+    want(['CREATE_ADDON'])
+      ? detectAddOnOpportunities({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
+    want(['REDUCE_WASTAGE', 'CREATE_PROMOTION'])
+      ? detectInventoryOpportunities({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
+    want(['RUN_REACTIVATION', 'CREATE_PROMOTION'])
+      ? detectCustomerOpportunities({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
+    want(['PROMOTE_SLOW_ITEM', 'REVIEW_PRICE', 'PROTECT_HIGH_DEMAND_STOCK'])
+      ? analyzeMenuEngineering({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
+    want(['REVIEW_RECIPE_COST'])
+      ? detectMarginSignals({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
+    want(['CREATE_PROMOTION'])
+      ? detectAllDemandAnomalies({ restaurantId, branchId, lookbackDays })
+      : Promise.resolve([]),
   ]);
 
   const candidates: PromotionCandidate[] = [];
@@ -824,13 +882,40 @@ export async function generatePromotionCandidates(opts: PromotionCandidateOption
     if (candidate) candidates.push(candidate);
   }
 
-  // Filter by minimum thresholds
-  const filtered = candidates.filter(c => c.score >= minScore && c.confidence >= minConfidence);
+  // D-17: hard-enforce restrictedCategories / excludedProductIds BEFORE any
+  // threshold, ranking, explanation or proposal can see the candidate. This is
+  // enforced in the deterministic engine — never left to the LLM.
+  const allowed = candidates.filter((c) => !violatesRestrictions(c, mergedConstraints));
+
+  // Filter by minimum thresholds — and, when the caller narrowed the types,
+  // keep only the types it asked for (defence in depth against a builder that
+  // ever emits something outside its declared producible set).
+  const filtered = allowed.filter(
+    (c) =>
+      c.score >= minScore &&
+      c.confidence >= minConfidence &&
+      (allowedTypes === null || allowedTypes.has(c.type)),
+  );
 
   // Sort by score
   filtered.sort((a, b) => b.score - a.score);
 
   return filtered;
+}
+
+/**
+ * True when a candidate targets a restricted category or an excluded product.
+ * Matching is id-based against the candidate's own deterministic target (the
+ * ids the engine assigned), so a forbidden product/category can never reach
+ * ranking, explanation or a proposal.
+ */
+export function violatesRestrictions(c: PromotionCandidate, constraints: BusinessConstraints): boolean {
+  if (constraints.restrictedCategories.length === 0 && constraints.excludedProductIds.length === 0) return false;
+  const restrictedCats = new Set(constraints.restrictedCategories.map(String));
+  const excludedProds = new Set(constraints.excludedProductIds.map(String));
+  if (c.target.categoryIds.some((id) => restrictedCats.has(String(id)))) return true;
+  if (c.target.productIds.some((id) => excludedProds.has(String(id)))) return true;
+  return false;
 }
 
 /**

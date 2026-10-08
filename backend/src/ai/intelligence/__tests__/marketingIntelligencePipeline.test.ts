@@ -288,8 +288,11 @@ describe('3. memory statement rendering', () => {
       branchId: null,
       priority: 'long_term_memory',
     } as never);
-    expect(s).toContain('campaign performance pattern');
-    expect(s).toContain('channel:sms');
-    expect(s).toContain('redemptionRate=0.16');
+    // Owner-readable prose: no raw `key=value` internals reach the owner.
+    expect(s).toContain('sms');
+    expect(s).toContain('16%');
+    expect(s).toContain('500 recipients');
+    expect(s).not.toContain('=');
+    expect(s).not.toContain('redemptionRate');
   });
 });

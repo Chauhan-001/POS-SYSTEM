@@ -11,7 +11,7 @@ import { usePurchases } from '../usePurchases';
 import { usePageRefresh } from '../usePageRefresh';
 
 import { fetchInventoryWaste } from '../../../api/client';
-import InventoryAgentPanel from '../components/InventoryAgentPanel';
+import InventoryAiInsights from '../components/InventoryAiInsights';
 // PHASE 3: the AI card backend (AICard + aiData live fetches) and the Weather
 // Widget were removed with the AI layer. All three intelligence cards run on
 // the deterministic core engine (src/core/inventoryIntelligence.ts).
@@ -431,8 +431,8 @@ export default function Dashboard({ onNavigate, moduleSettings }: { onNavigate: 
         </motion.div>
       </div>
 
-      {/* ── 4b. INVENTORY AGENT — deterministic AI action plan ── */}
-      <InventoryAgentPanel />
+      {/* ── 4a. AI INVENTORY INSIGHTS — agentic advisory section (read-only) ── */}
+      <InventoryAiInsights onNavigate={onNavigate} />
 
       {/* ── 5. INSIGHTS — what to buy now + what will run out ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

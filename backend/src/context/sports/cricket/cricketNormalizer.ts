@@ -35,6 +35,55 @@ export function isIndiaMatch(name: string, teams: string[] | undefined): boolean
   return /\bindia\b/.test(haystack);
 }
 
+/**
+ * India's NON-senior sides plus the domestic composite. A fixture touching any
+ * of these is Indian cricket, but it is not Team India — see `isTeamIndiaMatch`.
+ *
+ * Live evidence (2026-10-07, /v1/matches rows 143–233): every "India" row the
+ * provider lists near "now" was `India Women`, `India U19`, `India A` or
+ * `Jammu and Kashmir vs Rest of India` (Irani Cup) — all matched by plain
+ * `\bindia\b`. Left unfiltered they enter the admin calendar labelled as high
+ * relevance India matches and generate "India Match Special" offers for sides
+ * Team India is not playing.
+ */
+const NON_SENIOR_INDIA_PATTERNS: readonly RegExp[] = [
+  /\bwomen\b/i,
+  /\bu\s?-?19\b/i,
+  /\bunder\s?-?19\b/i,
+  /\bindia\s+[ab]\b/i,
+  /\brest of india\b/i,
+];
+
+/** Series-name only: "Australia A tour of India" is an A-side tour, whatever
+ *  its matches are called. */
+const NON_SENIOR_SERIES_PATTERNS: readonly RegExp[] = [
+  ...NON_SENIOR_INDIA_PATTERNS,
+  /\b[a-b]\s+(tour|women|trophy|series)\b/i,
+];
+
+function matchesNone(patterns: readonly RegExp[], haystack: string): boolean {
+  return !patterns.some((re) => re.test(haystack));
+}
+
+/**
+ * Is this the SENIOR India men's team? Deterministic, name/teams only.
+ * True for "India vs West Indies, 2nd T20I, West Indies tour of India, 2026";
+ * false for India A / India Women / India U19 / Rest of India fixtures.
+ */
+export function isTeamIndiaMatch(name: string, teams: string[] | undefined): boolean {
+  const haystack = [name, ...(teams ?? [])].join(' ');
+  if (!/\bindia\b/i.test(haystack)) return false;
+  return matchesNone(NON_SENIOR_INDIA_PATTERNS, haystack);
+}
+
+/** Is this series the SENIOR India men's team's? Used to choose which series
+ *  to enumerate; each match inside is still re-checked individually. */
+export function isTeamIndiaSeries(name: string | undefined): boolean {
+  const n = (name ?? '').trim();
+  if (!n || !/\bindia\b/i.test(n)) return false;
+  return matchesNone(NON_SENIOR_SERIES_PATTERNS, n);
+}
+
 /** Final/semi-final detection from the match name — best effort, deterministic. */
 function isKnockoutFinal(name: string): boolean {
   return /\b(final|semi[- ]?final|qualifier 2)\b/i.test(name);
@@ -81,6 +130,7 @@ export function normalizeMatch(raw: CricApiMatchRaw, fetchedAt: string): Cricket
     dateTimeGMT,
     teams: Array.isArray(raw.teams) ? raw.teams.filter((t) => typeof t === 'string') : undefined,
     isIndiaMatch: isIndiaMatch(name, Array.isArray(raw.teams) ? raw.teams : undefined),
+    isTeamIndiaMatch: isTeamIndiaMatch(name, Array.isArray(raw.teams) ? raw.teams : undefined),
     tournament,
     source: 'cricapi',
     fetchedAt,

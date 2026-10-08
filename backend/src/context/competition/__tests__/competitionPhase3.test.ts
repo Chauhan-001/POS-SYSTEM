@@ -21,7 +21,6 @@ import { getNearbyCompetition } from '../competitionService';
 import { deleteCompetitionCache } from '../competitionCache';
 import { getLatestCompetitionSnapshot, persistCompetitionSignals } from '../competitionSignalStore';
 import { executeGetNearbyCompetition } from '../../../ai/tools/context/getNearbyCompetitionTool';
-import { runMarketingAgent } from '../../../ai/agents/marketingAgent';
 import { ai } from '../../../ai';
 
 let mongod: MongoMemoryServer;
@@ -276,17 +275,19 @@ describe('tool + agent stale disclosure', () => {
     expect(out.signals!.every((s) => s.freshness && typeof s.freshness.ageSeconds === 'number')).toBe(true);
   });
 
-  it('agent discloses stale provider data in the competition context line', async () => {
-    // Force a stale state, then run the agent.
+  it('never reports stale provider data as fresh (the removed agent context line is gone)', async () => {
+    // Force a stale state: provider down, only the persisted snapshot remains.
     await deleteCompetitionCache(R1);
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch);
-    const agent = await runMarketingAgent({ tenant: { restaurantId: R1, actorId: 'a1' } });
-    expect(agent.competitionContext).toMatch(/provider data stale/);
-    // Fresh path does not carry the stale marker.
+    const stale = await executeGetNearbyCompetition({}, { tenant: { restaurantId: R1 } });
+    // Nothing may be presented as fresh when the provider is unreachable.
+    expect((stale.signals ?? []).every((s) => s.freshness?.status !== 'fresh')).toBe(true);
+
+    // Fresh path carries no stale marker.
     vi.stubGlobal('fetch', vi.fn(async () => apiResponse(DENSE_PLACES)) as unknown as typeof fetch);
     await deleteCompetitionCache(R1);
-    const agentFresh = await runMarketingAgent({ tenant: { restaurantId: R1, actorId: 'a1' } });
-    expect(agentFresh.competitionContext).not.toMatch(/provider data stale/);
-    expect(agentFresh.competitionContext).toMatch(/^Competition context: 14 nearby restaurants/);
+    const fresh = await executeGetNearbyCompetition({}, { tenant: { restaurantId: R1 } });
+    expect(fresh.signals!.length).toBeGreaterThan(0);
+    expect(fresh.signals!.every((s) => s.freshness?.status !== 'stale')).toBe(true);
   });
 });

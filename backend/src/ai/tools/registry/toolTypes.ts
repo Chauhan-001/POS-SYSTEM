@@ -51,7 +51,14 @@ export interface ToolDefinition<TInput, TOutput> {
     | 'marketing'
     | 'ml'
     | 'restaurant'
-    | 'context';
+    | 'context'
+    /**
+     * Domain-level capabilities (Marketing Agent §4). Unlike the groups above,
+     * a 'domain' tool answers a BUSINESS QUESTION and internally decides which
+     * low-level read-only tools to call. It is registered/validated/executed
+     * through this same registry and executor — no second tool system.
+     */
+    | 'domain';
   access: ToolAccess;
   meta: {
     description: string;

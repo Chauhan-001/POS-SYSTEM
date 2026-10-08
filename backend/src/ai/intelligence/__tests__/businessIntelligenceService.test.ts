@@ -99,7 +99,15 @@ function registerStub(name: string) {
     category: 'sales',
     access: 'read',
     meta: { description: `stub ${name}`, source: 'test' },
-    inputSchema: z.object({ branchId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional() }).strict(),
+    // Mirrors the real tools: window-aware tools accept lookbackDays/days
+    // (D-16), so the plan may legitimately pass them through.
+    inputSchema: z
+      .object({
+        branchId: z.string().regex(/^[a-fA-F0-9]{24}$/).optional(),
+        lookbackDays: z.number().int().min(7).max(365).optional(),
+        days: z.number().int().min(7).max(180).optional(),
+      })
+      .strict(),
     outputSchema: z.any(),
     execute: async (_input, ctx: ToolContext) => {
       // Record which tenant asked — used to prove scoping.

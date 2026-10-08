@@ -72,11 +72,18 @@ export interface InventoryAgentResult {
   generatedAt: string;
 }
 
+/**
+ * The deterministic analyzer consumes ONLY `available` plus the row arrays.
+ * The reason is deliberately widened to `string` so a caller that legitimately
+ * did not investigate a source (e.g. the agentic path only called two tools)
+ * can say `NOT_INVESTIGATED` honestly instead of borrowing a tool's reason
+ * code for "no data".
+ */
 export interface InventoryAgentEvidence {
-  inventory: InventoryStatusOutput;
-  stockout: StockoutRiskOutput;
-  expiry: ExpiryRiskOutput;
-  wastage: WastageOutput;
+  inventory: { available: boolean; reason?: string; items?: InventoryStatusOutput['items']; generatedAt: string };
+  stockout: { available: boolean; reason?: string; alerts?: StockoutRiskOutput['alerts']; generatedAt: string };
+  expiry: { available: boolean; reason?: string; alerts?: ExpiryRiskOutput['alerts']; generatedAt: string };
+  wastage: { available: boolean; reason?: string; topItems?: WastageOutput['topItems']; generatedAt: string };
   generatedAt: string;
 }
 
@@ -211,8 +218,13 @@ export function buildInventoryAgentResult(evidence: InventoryAgentEvidence): Inv
         : 'Review the reorder list and confirm quantities in Purchasing.',
     );
   }
-  if (nextActions.length === 0 && Object.values(evidenceSources(evidence)).some(Boolean)) {
-    nextActions.push('No immediate inventory actions are indicated — stock levels, expiry and wastage look healthy.');
+  if (nextActions.length === 0 && hasEvidenceSources(evidence)) {
+    // D1: only sources that actually returned data may be called healthy — an
+    // unavailable source is reported as unavailable, never as "no risk".
+    const healthy = availableSourceLabels(evidence);
+    nextActions.push(
+      `No immediate inventory actions are indicated — ${healthy.join(' and ')} look healthy.`,
+    );
   }
 
   const sources = evidenceSources(evidence);
@@ -222,7 +234,7 @@ export function buildInventoryAgentResult(evidence: InventoryAgentEvidence): Inv
     ? 'Inventory data is unavailable, so no recommendations were generated.'
     : actionCount === 0
       ? 'No immediate inventory actions are indicated by the available data.'
-      : `${purchaseRecommendations.length} reorder action${purchaseRecommendations.length === 1 ? '' : 's'}, ${expiryRisks.length} expiry risk${expiryRisks.length === 1 ? '' : 's'}, and ${wastageSignals.length} wastage signal${wastageSignals.length === 1 ? '' : 's'} identified from live inventory data.`;
+      : summaryWithUnavailableSources(purchaseRecommendations.length, expiryRisks.length, wastageSignals.length, sources);
 
   return {
     mode: 'deterministic',
@@ -247,6 +259,51 @@ function evidenceSources(evidence: InventoryAgentEvidence) {
   };
 }
 
+function hasEvidenceSources(evidence: InventoryAgentEvidence): boolean {
+  return Object.values(evidenceSources(evidence)).some(Boolean);
+}
+
+/** Source labels for the capabilities that actually returned usable data (D1). */
+function availableSourceLabels(evidence: InventoryAgentEvidence): string[] {
+  const labels: string[] = [];
+  if (evidence.inventory.available) labels.push('stock levels');
+  if (evidence.stockout.available) labels.push('stockout forecast');
+  if (evidence.expiry.available) labels.push('expiry');
+  if (evidence.wastage.available) labels.push('wastage');
+  return labels.length > 0 ? labels : ['the investigated sources'];
+}
+
+/**
+ * D1: report counts ONLY for sources that returned data. A source that was
+ * unavailable is named as unavailable — it is never rendered as a zero risk.
+ */
+function summaryWithUnavailableSources(
+  reorders: number,
+  expiryRisks: number,
+  wastageSignals: number,
+  sources: ReturnType<typeof evidenceSources>,
+): string {
+  const parts: string[] = [];
+  if (sources.inventory || sources.demandForecast) {
+    parts.push(`${reorders} reorder action${reorders === 1 ? '' : 's'}`);
+  }
+  if (sources.expiry) parts.push(`${expiryRisks} expiry risk${expiryRisks === 1 ? '' : 's'}`);
+  if (sources.wastage) parts.push(`${wastageSignals} wastage signal${wastageSignals === 1 ? '' : 's'}`);
+
+  const unavailable: string[] = [];
+  if (!sources.inventory && !sources.demandForecast) unavailable.push('stock levels');
+  if (!sources.expiry) unavailable.push('expiry');
+  if (!sources.wastage) unavailable.push('wastage');
+  const joined = unavailable.join(' and ');
+  const tail = unavailable.length > 0
+    ? ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)} could not be determined from the available data.`
+    : '';
+  if (parts.length === 0) {
+    return `No counts are available for the investigated sources.${tail}`;
+  }
+  return `${parts.join(', ')} identified from live inventory data.${tail}`;
+}
+
 export async function runInventoryAgent(ctx: ToolContext): Promise<InventoryAgentResult> {
   const generatedAt = new Date().toISOString();
   const [inventoryResult, stockoutResult, expiryResult, wastageResult] = await Promise.all([
@@ -261,10 +318,10 @@ export async function runInventoryAgent(ctx: ToolContext): Promise<InventoryAgen
     : { available: false, reason: 'NO_INVENTORY_DATA', generatedAt };
   const stockout: StockoutRiskOutput = stockoutResult.ok
     ? (stockoutResult as { data: StockoutRiskOutput }).data
-    : { available: false, reason: 'NO_STOCKOUT_RISK', generatedAt };
+    : { available: false, reason: 'NO_STOCKOUT_DATA', generatedAt };
   const expiry: ExpiryRiskOutput = expiryResult.ok
     ? (expiryResult as { data: ExpiryRiskOutput }).data
-    : { available: false, reason: 'NO_EXPIRY_RISK', generatedAt };
+    : { available: false, reason: 'NO_EXPIRY_DATA', generatedAt };
   const wastage: WastageOutput = wastageResult.ok
     ? (wastageResult as { data: WastageOutput }).data
     : { available: false, reason: 'NO_WASTAGE_DATA', generatedAt };

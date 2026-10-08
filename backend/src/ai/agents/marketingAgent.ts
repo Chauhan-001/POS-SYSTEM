@@ -2,494 +2,533 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * marketingAgent.ts — The first ChitKuber agent: a DETERMINISTIC policy
- * orchestrator over the shared tool registry (spec Step 7→8). No LLM is
- * involved in targeting decisions; an LLM can later layer copy generation
- * on top of this agent's structured output, but never its targeting math.
+ * marketingAgent.ts — System #2: the AGENTIC MARKETING INSIGHT agent.
  *
- * Targeting-source honesty ladder (spec §19/§22 — never fabricate precision):
- *   1. CAUSAL    — getUpliftSignals, ONLY when the experiment gate passes.
- *                  Scope label: causal uplift (percentage points).
- *   2. RESPONSE  — getOfferResponsePrediction per customer feature snapshot,
- *                  ONLY when the tenant's response model is trained.
- *                  Scope label: response likelihood (non-causal).
- *   3. SEGMENTS  — getMLCustomerSegments (stored segmentation), with the
- *                  trained/untrained split kept visible.
- *   4. NONE      — honest "insufficient ML signal" with the named reasons
- *                  and next actions. Never a fabricated ranking.
+ * Architecture (deliberate change): the old DETERMINISTIC targeting ladder
+ * (uplift → response model → segments → NONE) has been REMOVED. There are now
+ * exactly two marketing intelligence brains:
  *
- * The agent NEVER calls write tools: offers are proposed as drafts, not
- * created. Segments referenced by a draft must come from the tools above —
- * membership is resolved at send time by campaignService, not snapshotted
- * here (audit finding #4 kept out of the agent path).
+ *   1. THIS agent — dynamic investigation + reasoning + INSIGHT
+ *        LLM → tool → result → LLM → tool → result → LLM → STOP
+ *        It explains what deserves attention and why, using only real tool
+ *        evidence. It never computes prices, discounts, margins, contribution
+ *        or expected revenue — that stays in the deterministic Intelligence
+ *        Pipeline (System #3) and the existing services.
+ *
+ *   2. The Intelligence Pipeline (`ai/intelligence/marketingIntelligencePipeline.ts`)
+ *        canonical signals → candidate engine → economics → ML → ranking →
+ *        grounded explanation → ranked, ACTIONABLE recommendations.
+ *
+ * This module owns #1 only. It reuses the ONE shared bounded loop, the ONE
+ * shared tool registry/executor and the marketing agent policy — no second
+ * loop, no second registry, no fixed tool ladder, no duplicate economics.
+ *
+ * Honesty rules enforced here (not just prompted):
+ *   - every returned insight carries the exact tool names that ran;
+ *   - narrative numbers that do not exist in captured tool evidence are
+ *     stripped server-side (a claim the evidence cannot support is removed);
+ *   - an LLM failure produces an explicitly DEGRADED insight (or a safe
+ *     evidence-labelled fallback). It NEVER revives the removed deterministic
+ *     ladder.
  */
 
-import { executeTool } from '../tools/registry/toolExecutor';
+import { z } from 'zod';
+import {
+  isRetryableJsonFailure,
+  isUsableToolData,
+  runBoundedAgentLoop,
+  summarizeToolOutput,
+  type LoopLlmFn,
+  type LoopMemoryFn,
+} from './loop/agentLoop';
+import {
+  marketingAgentPolicy,
+  resolveMarketingAgentTools,
+  MARKETING_AGENT_ALLOWED_TOOLS,
+  MARKETING_AGENT_BUDGET,
+  MARKETING_AGENT_OBSERVATION_CHARS,
+  MARKETING_AGENT_PROMPT_VERSION,
+  MARKETING_AGENT_ROLE_PROMPT,
+} from './policies/marketingAgentPolicy';
+import { generateJsonWithMeta, LlmError, type LlmJsonRequest, type LlmJsonResult } from '../shared/llmClient';
+import { malformedReason, stripUngroundedNumbers } from '../intelligence/recommendationExplanation';
+import { recordLlmUsage } from '../observability/agentUsage';
+import type { AgentBudgetLimits, AgentRunMemory } from '../shared/agentRunContext';
 import type { ToolContext } from '../tools/registry/toolTypes';
-import { runBoundedAgentLoop, type LoopLlmFn, type LoopMemoryFn } from './loop/agentLoop';
-import { marketingAgentPolicy, MARKETING_AGENT_BUDGET, type AgentPolicy } from './policies/marketingAgentPolicy';
-import type { AgentRunStatus } from '../shared/agentRunContext';
-import { getUpliftSignalsToolDefinition, type UpliftSignalsOutput } from '../tools/ml/getUpliftSignalsTool';
-import { getMLCustomerSegmentsToolDefinition, type MLSegmentsOutput } from '../tools/ml/getMLCustomerSegmentsTool';
-import {
-  getMarketBasketSignalsToolDefinition,
-  type MarketBasketSignalsOutput,
-  type MarketBasketSignalsUnavailable,
-} from '../tools/ml/getMarketBasketSignalsTool';
-import { getActiveOffersToolDefinition, type ActiveOffersOutput } from '../tools/marketing/marketingTools';
-import {
-  getDemandForecastToolDefinition,
-  type DemandForecastOutput,
-  type DemandForecastUnavailable,
-} from '../tools/ml/getDemandForecastTool';
-import { getFestivalContextToolDefinition } from '../tools/context/contextTools';
-import { getSportsContextToolDefinition, type SportsContextToolOutput } from '../tools/context/getSportsContextTool';
-import { getNearbyCompetitionToolDefinition, type NearbyCompetitionToolOutput } from '../tools/context/getNearbyCompetitionTool';
-import type { OfferResponsePredictionOutput } from '../tools/ml/getOfferResponsePredictionTool';
-import {
-  getOfferResponseBatchScoresToolDefinition,
-  type OfferResponseBatchScoresOutput,
-  type OfferResponseBatchScoresUnavailable,
-} from '../tools/ml/getOfferResponseBatchScoresTool';
 
-export type TargetingSource = 'CAUSAL_UPLIFT' | 'RESPONSE_MODEL' | 'ML_SEGMENTS' | 'NONE';
+export type MarketingInsightPriority = 'high' | 'medium' | 'low' | 'normal';
 
-export interface AgentTarget {
-  /** Customer or segment reference, depending on the source. */
-  refId: string;
-  refType: 'customer' | 'segment';
-  /** Source-specific score, honestly labelled by targetingScope. */
-  score: number | null;
-  /** Segment name when refType === 'segment'. */
-  label?: string;
-  trainedCount?: number;
-  untrainedCount?: number;
+/** Concise investigation metadata — never hidden reasoning. */
+export interface MarketingInsightStep {
+  step: number;
+  tool: string;
+  /** What this source is for (from the shared tool catalog), not the model's thoughts. */
+  purpose: string;
+  ok: boolean;
 }
 
-export interface AgentOfferDraft {
-  offerId: string | null;
+/** One evidence source behind the insight. `ref` is an exact tool name. */
+export interface MarketingInsightEvidenceSource {
+  ref: string;
+  label: string;
+}
+
+/**
+ * The agentic insight card. Deliberately NOT the removed deterministic
+ * targeting result: no targets, no offer draft, no economics.
+ */
+export interface MarketingInsight {
+  id: string;
+  type: 'agentic_insight';
   title: string;
-  /** Draft only — the agent never creates the offer itself. */
-  status: 'draft';
-  rationale: string;
-}
-
-export interface MarketingAgentResult {
-  targetingSource: TargetingSource;
-  /** Why this source (and not a higher one) was used. */
-  targetingReason: string;
-  targetingScope: string;
-  targets: AgentTarget[];
-  offerDraft: AgentOfferDraft | null;
-  festivalContext: string | null;
+  summary: string;
+  priority: MarketingInsightPriority;
+  /** Advisory next step for the owner only — never executed by this agent. */
+  recommendation: string | null;
+  evidence: MarketingInsightEvidenceSource[];
+  confidence: number;
+  /** Exact tool names that actually executed (server-side truth). */
+  toolsUsed: string[];
+  steps: MarketingInsightStep[];
+  degraded: boolean;
+  degradedReason?: string;
   /**
-   * Phase 3 (Cricket): one neutral evidence line for the top relevant match,
-   * or null. CONTEXT ONLY — never a recommendation to create an offer; the
-   * Offer Engine + owner approval remain authoritative for any action.
+   * Whether the owner-facing WRITTEN summary could be produced. Independent of
+   * the investigation itself: `unavailable` means the evidence was gathered
+   * and is still reported, but no AI explanation was generated.
    */
-  sportsContext: string | null;
-  /** Canonical signal types of the top relevant match (INDIA_MATCH, …). */
-  sportsSignals: string[];
+  summaryStatus: MarketingSummaryStatus;
   /**
-   * Phase 2 (Competition): one neutral evidence line for the nearby
-   * competitive landscape, or null. PROXIMITY CONTEXT ONLY — never a claim
-   * about competitor performance and never an offer trigger.
+   * Machine-readable failure code (diagnostic ONLY — never rendered to the
+   * owner, never phrased as prose). The owner sees `summary`/`title`.
    */
-  competitionContext: string | null;
-  /** Canonical competition signal types (COMPETITION_DENSITY_HIGH, …). */
-  competitionSignals: string[];
-  /**
-   * Market-basket context: one neutral evidence line about available combo
-   * signals, or null. CONTEXT ONLY — never an offer trigger; rule-fallback
-   * rows are disclosed, never presented as model predictions (spec §19).
-   */
-  basketContext: string | null;
-  /**
-   * Demand-forecast context: one neutral evidence line about stored product
-   * demand predictions, or null. CONTEXT ONLY — never an offer trigger.
-   */
-  demandContext: string | null;
-  nextActions: string[];
+  reasonCode?: MarketingReasonCode;
   generatedAt: string;
-  /**
-   * Phase 1 — bounded LLM investigation metadata (present only when the run
-   * executed with `agentic: true`). Observability/trace only: the
-   * deterministic ladder above stays authoritative for targeting output.
-   */
-  investigation?: MarketingAgentInvestigation;
 }
 
-/** Compact trace of the Phase 1 bounded loop attached to the agent result. */
-export interface MarketingAgentInvestigation {
+/** Can the written summary be trusted/shown, or is only the evidence available? */
+export type MarketingSummaryStatus = 'ok' | 'partial' | 'unavailable';
+
+/**
+ * Stable machine codes for a degraded insight. Internal diagnostics: they are
+ * recorded for observability and returned for support tooling, but they are
+ * NEVER interpolated into owner-facing prose (which is the only thing the
+ * Marketing page renders).
+ */
+export type MarketingReasonCode =
+  | 'LLM_RATE_LIMITED'
+  | 'LLM_TIMEOUT'
+  | 'LLM_UNAVAILABLE'
+  | 'LLM_INVALID_RESPONSE'
+  | 'LLM_HTTP_ERROR'
+  | 'LLM_DISABLED'
+  | 'INVESTIGATION_FAILED'
+  | 'NO_TOOL_EVIDENCE'
+  | 'SUMMARY_UNGROUNDED'
+  | 'SUMMARY_PARTIALLY_REJECTED';
+
+/** Map a provider failure to a stable, non-technical machine code. */
+export function reasonCodeForLlmError(err: unknown): MarketingReasonCode {
+  if (!(err instanceof LlmError)) return 'INVESTIGATION_FAILED';
+  switch (err.kind) {
+    case 'rate_limited':
+      return 'LLM_RATE_LIMITED';
+    case 'timeout':
+      return 'LLM_TIMEOUT';
+    case 'not_configured':
+    case 'unsupported_provider':
+      return 'LLM_UNAVAILABLE';
+    case 'invalid_json':
+      return 'LLM_INVALID_RESPONSE';
+    default:
+      return err.httpStatus === 429 ? 'LLM_RATE_LIMITED' : 'LLM_HTTP_ERROR';
+  }
+}
+
+/** Map an already-recorded terminal loop error code to the same code space. */
+export function reasonCodeForLoopError(code: string | undefined): MarketingReasonCode {
+  switch (code) {
+    case 'rate_limited':
+      return 'LLM_RATE_LIMITED';
+    case 'timeout':
+      return 'LLM_TIMEOUT';
+    case 'not_configured':
+    case 'unsupported_provider':
+      return 'LLM_UNAVAILABLE';
+    case 'invalid_json':
+    case 'invalid_plan':
+      return 'LLM_INVALID_RESPONSE';
+    case 'http_error':
+      return 'LLM_HTTP_ERROR';
+    default:
+      return 'INVESTIGATION_FAILED';
+  }
+}
+
+export interface MarketingInsightInvestigation {
   runId: string;
-  status: AgentRunStatus;
+  requestId: string;
+  status: string;
   stepsUsed: number;
   toolCallsUsed: number;
-  toolNames: string[];
-  rejected: Array<{ ref: string; stage: string; reason: string }>;
-  uncertainties: string[];
   llmCalls: number;
+  toolNames: string[];
   /**
-   * Phase 2 — memory context loaded at run start (observability counts only;
-   * memory never changes the deterministic ladder output below).
-   * absent = memory load did not complete (degraded or pre-Phase-2 run).
+   * Repeated identical reads that were served from the already-captured
+   * observation instead of re-executing (they still consumed tool budget).
+   * Observability only — the model is told nothing about this.
    */
+  dedupedCalls: number;
+  rejections: Array<{ ref: string; stage: string }>;
+  /** Terminal error code when the run failed (never the raw message). */
+  errorCode?: string;
   memory?: { episodes: number; longTerm: number; degraded: boolean };
+  degraded: boolean;
+  /** Synthesis outcome of this run (evidence is reported regardless). */
+  summaryStatus: MarketingSummaryStatus;
+  /** Diagnostic machine code for a degraded summary/run — never owner prose. */
+  reasonCode?: MarketingReasonCode;
+}  /** The /recommend payload: one insight per investigation run. */
+export interface MarketingInsightRun {
+  mode: 'agentic_insight';
+  insights: MarketingInsight[];
+  investigation: MarketingInsightInvestigation;
+  degraded: boolean;
+  degradedReason?: string;
+  /** Machine code for a degraded run — diagnostic only, never owner prose. */
+  reasonCode?: MarketingReasonCode;
+  generatedAt: string;
 }
 
-const UPLIFT_SCOPE =
-  'causal uplift — estimated additional response in percentage points from a statistically evaluable experiment';
-const RESPONSE_SCOPE =
-  'response likelihood (non-causal) — p(redeem | offer, pre-treatment features); not proof of incremental effect';
-const SEGMENT_SCOPE = 'segment membership — descriptive grouping; no per-customer model score';
-const NONE_SCOPE = 'no ML signal available';
-
-/**
- * Build the human-readable festival evidence line from the festival tool's
- * output ({ available, nearest, upcoming }). Exported for the contract test —
- * it previously read a non-existent `festivals` field and NEVER produced a
- * line, silently hiding working festival evidence from the owner.
- */
-export function festivalLine(festival: unknown): string | null {
-  // Festival tool output shape: { available, nearest: { name, daysAway }, upcoming: [...] }.
-  const f = festival as
-    | {
-        available?: boolean;
-        nearest?: { name?: string; daysAway?: number } | null;
-        upcoming?: Array<{ name?: string; daysAway?: number }>;
-      }
-    | null;
-  if (!f?.available) return null;
-  const first = f.nearest ?? f.upcoming?.[0];
-  if (!first?.name) return null;
-  const when = typeof first.daysAway === 'number' ? ` in ${first.daysAway} day(s)` : '';
-  return `Upcoming festival context: ${first.name}${when}.`;
-}
-
-function sportsLine(sports: SportsContextToolOutput | null | undefined): string | null {
-  const first = sports?.relevantMatches?.[0];
-  if (!sports?.available || !first) return null;
-  const when = first.localDateTime ? first.localDateTime.replace('T', ' ') : first.date;
-  const live = first.timeWindow === 'currently_live' ? ', live now' : '';
-  return `Cricket context: ${first.name} — ${first.competition}, starts ${when}${first.timezone ? ` (${first.timezone})` : ''}, ${first.relevance} relevance${live}.`;
-}
-
-function basketLine(
-  basket: MarketBasketSignalsOutput | MarketBasketSignalsUnavailable | null | undefined,
-): string | null {
-  if (!basket?.available || basket.signals.length === 0) return null;
-  const n = basket.signals.length;
-  const version = basket.modelVersion ? ` (model version ${basket.modelVersion})` : '';
-  const heuristicNote =
-    basket.predictionSource === 'manager_table' && basket.recommendationMode !== 'model'
-      ? ' — rule-based fallback rows, not model predictions'
-      : '';
-  return `Market-basket context: ${n} product-pair combo signal${n === 1 ? '' : 's'} available${version}${heuristicNote}.`;
-}
-
-function demandLine(
-  demand: DemandForecastOutput | DemandForecastUnavailable | null | undefined,
-): string | null {
-  if (!demand?.available || !demand.predictions || demand.predictions.length === 0) return null;
-  // Top expected-demand day across the stored rows (honest aggregate of what
-  // was pulled — never extrapolated beyond the stored horizon).
-  const top = demand.predictions.reduce((a, b) => (b.expected > a.expected ? b : a));
-  const version = demand.modelVersion ? ` (model ${demand.modelVersion})` : '';
-  return `Demand-forecast context: ${demand.predictions.length} stored product-day forecast${demand.predictions.length === 1 ? '' : 's'} available${version}; peak expected demand ${top.expected} unit(s) on ${top.predictionFor}.`;
-}
-
-function competitionLine(comp: NearbyCompetitionToolOutput | null | undefined): string | null {
-  if (!comp?.available || !comp.summary || comp.summary.totalCompetitors === 0) return null;
-  const s = comp.summary;
-  const density = s.density !== 'unknown' ? `, ${s.density} density` : '';
-  // Phase 3 §4: stale provider data is disclosed in the evidence line —
-  // the agent never presents stale competition data as current.
-  const age = comp.signals?.[0]?.freshness;
-  const staleNote = age?.status === 'stale' ? ' (provider data stale)' : '';
-  return `Competition context: ${s.totalCompetitors} nearby restaurants within ${Math.round((comp.searchRadiusMeters / 1000) * 10) / 10} km, nearest ~${s.nearestDistanceMeters ?? 'unknown'}m${density}${staleNote}.`;
-}
-
-function draftFromActiveOffers(active: ActiveOffersOutput | null | undefined): AgentOfferDraft | null {
-  const first = active?.offers?.[0];
-  if (!first) return null;
-  return {
-    offerId: first.id ?? null,
-    title: first.title,
-    status: 'draft',
-    rationale: 'Reuse of an already-active offer — cheapest first action before creating anything new.',
-  };
-}
-
-async function runUplift(ctx: ToolContext, minimumExperimentSize: number) {
-  return executeTool(getUpliftSignalsToolDefinition, { limit: 25, minimumExperimentSize }, { tenant: ctx.tenant });
-}
-
-/** Rung 2 — batch per-customer response scores (non-causal). */
-async function runResponseScores(ctx: ToolContext, limit: number) {
-  return executeTool(getOfferResponseBatchScoresToolDefinition, { limit }, { tenant: ctx.tenant });
-}
-
-/**
- * Why the CAUSAL_UPLIFT rung was skipped — shared by the lower rungs so
- * every fallback reason names the rung above it (never a silent drop).
- */
-function upliftFallthroughNote(
-  upliftRes: { ok: boolean; data?: { available?: boolean; gateReasons?: string[] } },
-): string {
-  if (upliftRes.ok && upliftRes.data && !upliftRes.data.available) {
-    const reasons = (upliftRes.data.gateReasons ?? []).join('; ') || 'no evaluable experiment';
-    return `Uplift gate not passed: ${reasons}`;
-  }
-  return 'Uplift service unavailable';
-}
-
-/** Why the RESPONSE_MODEL rung was skipped — named reasons, never silent. */
-function responseFallthroughNote(responseRes: {
-  ok: boolean;
-  data?: unknown;
-}): string {
-  if (!responseRes.ok) return 'offer-response tool failed';
-  const d = responseRes.data as
-    | { available?: boolean; detail?: string; gateReasons?: string[] }
-    | null
-    | undefined;
-  if (!d) return 'offer-response rung returned no data';
-  if (d.available === false) {
-    // Named gate reasons first (most actionable), generic detail as fallback.
-    return (d.gateReasons ?? []).join('; ') || d.detail || 'offer-response model unavailable';
-  }
-  return 'offer-response rung produced no scores';
-}
-
-async function runSegments(ctx: ToolContext) {
-  return executeTool(getMLCustomerSegmentsToolDefinition, {}, { tenant: ctx.tenant });
-}
-
-async function runActiveOffers(ctx: ToolContext) {
-  return executeTool(getActiveOffersToolDefinition, {}, { tenant: ctx.tenant });
-}
-
-async function runFestival(ctx: ToolContext) {
-  return executeTool(getFestivalContextToolDefinition, {}, { tenant: ctx.tenant });
-}
-
-async function runSportsContext(ctx: ToolContext) {
-  return executeTool(getSportsContextToolDefinition, {}, { tenant: ctx.tenant });
-}
-
-async function runCompetitionContext(ctx: ToolContext) {
-  return executeTool(getNearbyCompetitionToolDefinition, {}, { tenant: ctx.tenant });
-}
-
-async function runBasketContext(ctx: ToolContext) {
-  return executeTool(getMarketBasketSignalsToolDefinition, { limit: 10 }, { tenant: ctx.tenant });
-}
-
-async function runDemandContext(ctx: ToolContext) {
-  return executeTool(getDemandForecastToolDefinition, { limit: 60 }, { tenant: ctx.tenant });
-}
-
-export async function runMarketingAgentDeterministic(
-  ctx: ToolContext,
-  options: { minimumExperimentSize?: number } = {},
-): Promise<MarketingAgentResult> {
-  const generatedAt = new Date().toISOString();
-  const minExp = options.minimumExperimentSize ?? 100;
-
-  // Context is fetched once and never gates targeting by itself. Cricket is
-  // cheap here (cache-first service — no provider call unless the cache is
-  // expired) and runs alongside festival context; neither affects targeting.
-  const [festivalRes, activeRes, sportsRes, competitionRes, basketRes, demandRes] = await Promise.all([
-    runFestival(ctx),
-    runActiveOffers(ctx),
-    runSportsContext(ctx),
-    runCompetitionContext(ctx),
-    runBasketContext(ctx),
-    runDemandContext(ctx),
-  ]);
-  const festivalContext = festivalRes.ok ? festivalLine((festivalRes as { data?: unknown }).data) : null;
-  const sportsOut = sportsRes.ok ? (sportsRes as { data: SportsContextToolOutput }).data : null;
-  const sportsContext = sportsLine(sportsOut);
-  const topMatch = sportsOut?.relevantMatches?.[0] ?? null;
-  const sportsSignals = topMatch?.signals ?? [];
-  const compOut = competitionRes.ok ? (competitionRes as { data: NearbyCompetitionToolOutput }).data : null;
-  const competitionContext = competitionLine(compOut);
-  const competitionSignals = (compOut?.signals ?? []).map((s) => s.signalType);
-  const basketContext = basketLine(
-    basketRes.ok ? (basketRes as { data?: MarketBasketSignalsOutput | MarketBasketSignalsUnavailable }).data : null,
-  );
-  const demandContext = demandLine(
-    demandRes.ok ? (demandRes as { data?: DemandForecastOutput | DemandForecastUnavailable }).data : null,
-  );
-  // Neutral advisory only — the module never concludes an offer SHOULD exist.
-  const sportsActions =
-    topMatch && topMatch.relevance === 'high'
-      ? ['A high-relevance cricket match is in the window — you may weigh it alongside sales/inventory evidence; it never triggers a campaign by itself.']
-      : [];
-
-  const upliftRes = await runUplift(ctx, minExp);
-  if (upliftRes.ok) {
-    const uplift = (upliftRes as { data: UpliftSignalsOutput | { available: false; gateReasons?: string[] } }).data;
-    if (uplift.available && uplift.customers.length > 0) {
-      return {
-        targetingSource: 'CAUSAL_UPLIFT',
-        targetingReason: `Experiment passed the evaluability gate (${uplift.totalEligible} eligible customers).`,
-        targetingScope: UPLIFT_SCOPE,
-        targets: uplift.customers.map((c) => ({
-          refId: c.customerId,
-          refType: 'customer' as const,
-          score: c.upliftPercentagePoints,
-        })),
-        offerDraft: draftFromActiveOffers(activeRes.ok ? (activeRes as { data?: ActiveOffersOutput }).data : null),
-        festivalContext,
-        sportsContext,
-        sportsSignals,
-        competitionContext,
-        competitionSignals,
-        basketContext,
-        demandContext,
-        nextActions: [
-          ...sportsActions,
-          'Review the ranked customers, then create/confirm an offer in the offers workspace.',
-          'Keep assignment through the experiment tracker so future uplift stays measurable.',
-        ],
-        generatedAt,
-      };
-    }
-  }
-
-  // Rung 2 — RESPONSE MODEL: batch per-customer scoring (non-causal). Only
-  // when the tenant has a trained offer-response model AND candidates with
-  // pre-treatment features; otherwise fall through with the named reasons.
-  // Probabilities come from the service — never fabricated here.
-  const responseRes = await runResponseScores(ctx, 50);
-  const responseData = responseRes.ok
-    ? (responseRes as { data?: OfferResponseBatchScoresOutput | OfferResponseBatchScoresUnavailable }).data
-    : null;
-  if (responseData?.available && responseData.scores.length > 0) {
-    return {
-      targetingSource: 'RESPONSE_MODEL',
-      targetingReason: `${upliftFallthroughNote(upliftRes)}. Trained offer-response model used: ${responseData.scores.length} of ${responseData.customersConsidered} recent customers ranked by p(redeem | offer) — non-causal.`,
-      targetingScope: RESPONSE_SCOPE,
-      targets: responseData.scores.map((s) => ({
-        refId: s.customerId,
-        refType: 'customer' as const,
-        score: s.pResponse,
-      })),
-      offerDraft: draftFromActiveOffers(activeRes.ok ? (activeRes as { data?: ActiveOffersOutput }).data : null),
-      festivalContext,
-      sportsContext,
-      sportsSignals,
-      competitionContext,
-      competitionSignals,
-      basketContext,
-      demandContext,
-      nextActions: [
-        ...sportsActions,
-        'Ranked by response likelihood — this estimates who redeems IF offered, not who buys because of the offer.',
-        'Review the top customers, then confirm the offer draft in the offers workspace before any send.',
-        'Keep assignment through the experiment tracker (treatment AND control) so an experiment can move targeting up to causal uplift.',
-      ],
-      generatedAt,
-    };
-  }
-
-  const segmentsRes = await runSegments(ctx);
-  if (segmentsRes.ok) {
-    const segments = (segmentsRes as { data: MLSegmentsOutput | { available: false } }).data;
-    if (segments.available && segments.segments.length > 0) {
-      return {
-        targetingSource: 'ML_SEGMENTS',
-        targetingReason: `${upliftFallthroughNote(upliftRes)}. Offer-response rung unavailable: ${responseFallthroughNote(responseRes)}. Falling back to stored segmentation.`,
-        targetingScope: SEGMENT_SCOPE,
-        targets: segments.segments.map((s) => ({
-          refId: s.segment,
-          refType: 'segment' as const,
-          score: null,
-          label: s.segment,
-          trainedCount: s.trainedCount,
-          untrainedCount: s.untrainedCount,
-        })),
-        offerDraft: draftFromActiveOffers(activeRes.ok ? (activeRes as { data?: ActiveOffersOutput }).data : null),
-        festivalContext,
-        sportsContext,
-        sportsSignals,
-        competitionContext,
-        competitionSignals,
-        basketContext,
-        demandContext,
-        nextActions: [
-          ...sportsActions,
-          'Segments are descriptive — verify the top segment manually before a send.',
-          'Grow the experiment ledger (assign a control group) to unlock causal targeting.',
-          segments.untrainedCustomers > 0
-            ? `${segments.untrainedCustomers} customers are rule-tiered only; more data will move them to trained segments.`
-            : 'All customers have trained segment assignments.',
-        ],
-        generatedAt,
-      };
-    }
-  }
-
-  return {
-    targetingSource: 'NONE',
-    targetingReason: 'No evaluable uplift experiment, no response-model batch scoring, and no stored segments.',
-    targetingScope: NONE_SCOPE,
-    targets: [],
-    offerDraft: null,
-    festivalContext,
-    sportsContext,
-    sportsSignals,
-    competitionContext,
-    competitionSignals,
-    basketContext,
-    demandContext,
-    nextActions: [
-      ...sportsActions,
-      'Accumulate experiment assignments through the offer experiment tracker (treatment AND control).',
-      'Run segmentation sync so customers get stored segment predictions.',
-      'Do not send targeted campaigns without a signal — use general broadcasts only.',
-    ],
-    generatedAt,
-  };
-}
-
-/** Referenced for the Step-8 batch-scoring hook; keeps the import honest. */
-export type { OfferResponsePredictionOutput };
-
-/** Options for the public entry point (Phase 1 adds the bounded loop). */
 export interface MarketingAgentOptions {
-  minimumExperimentSize?: number;
-  /**
-   * Phase 1: run the bounded LLM investigation loop BEFORE the deterministic
-   * targeting ladder. The loop only gathers evidence + observability — it
-   * never changes the ladder's output, and any LLM failure degrades to the
-   * exact deterministic behavior (status recorded on `investigation`).
-   */
-  agentic?: boolean;
-  /** Test seam: inject the loop's LLM (defaults to the shared llmClient). */
-  llm?: LoopLlmFn;
-  /** Override the policy budgets (tests / tighter routes). */
-  loopBudget?: Partial<{ maxSteps: number; maxToolCalls: number; durationMs: number; maxTokens: number; maxCostUsd: number }>;
+  /** Owner question the agent investigates. */
+  task?: string;
   /** Correlation id from the HTTP request (observability). */
   requestId?: string;
-  /**
-   * Phase 2 test seam: memory loader used at run start (defaults to the
-   * shared memoryManager — tenant-scoped, expired-excluded, never throws).
-   */
+  /** Test seam: inject the loop's LLM (defaults to the shared llmClient). */
+  llm?: LoopLlmFn;
+  /** Test seam for the insight synthesis call. */
+  synthesisLlm?: (req: LlmJsonRequest) => Promise<LlmJsonResult<unknown>>;
+  /** Skip every LLM call (always a degraded insight). */
+  disableLlm?: boolean;
+  /** Override the policy budgets (tests / tighter routes). */
+  loopBudget?: Partial<AgentBudgetLimits>;
+  /** Test seam: memory loader (defaults to the shared memoryManager). */
   loadMemory?: LoopMemoryFn;
 }
 
-function toInvestigation(run: Awaited<ReturnType<typeof runBoundedAgentLoop>>): MarketingAgentInvestigation {
+const DEFAULT_TASK = 'What marketing issue should I pay attention to this week?';
+const MAX_TASK_CHARS = 300;
+
+const PRIORITIES: MarketingInsightPriority[] = ['high', 'medium', 'low', 'normal'];
+
+function normalizePriority(value: string | undefined): MarketingInsightPriority {
+  const s = (value ?? '').trim().toLowerCase();
+  return (PRIORITIES as string[]).includes(s) ? (s as MarketingInsightPriority) : 'normal';
+}
+
+/**
+ * Insight synthesis contract — narrative + priority + evidence refs only.
+ * Deliberately has NO price/discount/margin/revenue fields, so the model
+ * structurally cannot present its own economics as authoritative.
+ */
+const insightSynthesisSchema = z.object({
+  title: z.string().min(3).max(120),
+  summary: z.string().min(3).max(600),
+  priority: z.string().max(20).optional(),
+  recommendation: z.string().min(3).max(300).optional(),
+  evidenceRefs: z.array(z.string().max(80)).max(8).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+});
+
+const SYNTHESIS_SCHEMA_HINT = `{
+  "title": string (short owner-facing headline),
+  "summary": string (what the evidence shows and why it matters),
+  "priority": "high" | "medium" | "low" | "normal",
+  "recommendation": string (ONE advisory next step for the owner — never an executed action),
+  "evidenceRefs": string[] (exact tool names that produced the evidence),
+  "confidence": number (0..1)
+}`;
+
+/** Owner-facing label for a source, derived from the shared tool catalog. */
+let PURPOSE_BY_TOOL: Record<string, string> | null = null;
+
+function toolPurpose(tool: string): string {
+  if (!PURPOSE_BY_TOOL) {
+    const map: Record<string, string> = {};
+    try {
+      for (const def of resolveMarketingAgentTools()) map[def.name] = def.meta.description;
+    } catch {
+      // Fail closed: an unresolved catalog must not break the run.
+    }
+    PURPOSE_BY_TOOL = map;
+  }
+  const raw = PURPOSE_BY_TOOL[tool];
+  if (!raw) return 'Read-only marketing evidence source';
+  const firstSentence = raw.split('. ')[0] ?? raw;
+  return firstSentence.length > 96 ? `${firstSentence.slice(0, 93)}…` : firstSentence;
+}
+
+/**
+ * Which AREA of the business a tool reads (registry category). Used only to
+ * judge whether a broad conclusion rests on more than one independent area —
+ * never to pick or order tools.
+ */
+let AREA_BY_TOOL: Record<string, string> | null = null;
+
+function toolArea(tool: string): string {
+  if (!AREA_BY_TOOL) {
+    const map: Record<string, string> = {};
+    try {
+      for (const def of resolveMarketingAgentTools()) map[def.name] = def.category;
+    } catch {
+      // Fail closed: an unresolved catalog must not break the run.
+    }
+    AREA_BY_TOOL = map;
+  }
+  // An unknown tool is treated as its own area (conservative: never merges two
+  // genuinely different sources into one).
+  return AREA_BY_TOOL[tool] ?? tool;
+}
+
+/**
+ * Stop guard for the shared loop. It never picks a tool: it only objects when
+ * the model asks to stop with ZERO usable tool evidence, so an insight can
+ * never be concluded without a real source. Bounded by the loop's maxSteps.
+ */
+export function marketingEvidenceStopGuard(
+  memory: Pick<AgentRunMemory, 'toolCalls' | 'toolData'>,
+): string | null {
+  if (memory.toolData.some((t) => t.ok)) return null;
+  if (memory.toolCalls.length === 0) {
+    return 'no read-only tool has been called yet — gather at least one piece of real evidence before concluding.';
+  }
+  return 'no read-only source has returned usable data yet — try another evidence source before concluding.';
+}
+
+/**
+ * Question scope. Used ONLY to decide whether an early stop is acceptable — it
+ * never selects a tool, never orders tools and never adds a tool the model did
+ * not ask for. The model remains the only decision maker.
+ */
+export type MarketingTaskScope = 'broad' | 'narrow';
+
+/** Words that name ONE area of the business. */
+const SINGLE_AREA_TOPIC =
+  /\b(offers?|campaigns?|promotions?|menus?|products?|dishes?|combos?|customers?|segments?|inventory|stock|weather|festivals?|competition|branches?)\b/gi;
+
+/** Words that ask about the whole restaurant rather than a single area. */
+const WHOLE_RESTAURANT_SCOPE =
+  /\b(restaurant|business|overall|everything|most important|biggest|top priority|opportunit(?:y|ies)|general|what should i|pay attention|focus)\b/i;
+
+/**
+ * Classify a marketing question as broad (whole restaurant) or narrow (one
+ * area). Deliberately conservative: anything that is not clearly a single-area
+ * question is treated as broad, because the cost of one extra evidence source
+ * is far lower than concluding a whole-restaurant question from one number.
+ */
+export function classifyMarketingTask(task: unknown): MarketingTaskScope {
+  const text = typeof task === 'string' ? task.trim() : '';
+  if (!text) return 'broad'; // the default owner question is a general review
+  const topics = new Set((text.toLowerCase().match(SINGLE_AREA_TOPIC) ?? []).map((t) => t.replace(/s$/, '')));
+  if (topics.size >= 2) return 'broad';
+  if (topics.size === 1 && !WHOLE_RESTAURANT_SCOPE.test(text)) return 'narrow';
+  return 'broad';
+}
+
+/**
+ * How many times a broad-question stop may be deferred before it is accepted.
+ *
+ * The guard must push back more than once — a single empty source is the exact
+ * failure this rule exists to remove — but it must also be BOUNDED, so a model
+ * that simply refuses to investigate cannot burn the whole step budget. Every
+ * deferral is also bounded by the loop's maxSteps / wall-clock budget.
+ */
+export const MAX_BROAD_STOP_DEFERRALS = 3;
+
+/**
+ * The sources a run has ACTUALLY obtained usable data from.
+ *
+ * `toolData` (captured outputs) is authoritative when present; `observations`
+ * carry the same judgement as a fallback for callers that did not capture
+ * full outputs. A source that executed fine but returned `available:false` /
+ * `NO_*DATA` is NOT counted: that is the whole point of this rule.
+ */
+function usableSources(
+  memory: Pick<AgentRunMemory, 'toolData' | 'observations'>,
+): Array<{ tool: string }> {
+  if (memory.toolData && memory.toolData.length > 0) {
+    return memory.toolData.filter((t) => t.ok && isUsableToolData(t.data));
+  }
+  return (memory.observations ?? []).filter((o) => o.ok && o.usable !== false);
+}
+
+/**
+ * Names the AREAS (never the tools) that still hold a source this run has not
+ * read. Prompt-only guidance: the guard never picks the tool itself.
+ */
+function unreadAreasText(memory: Pick<AgentRunMemory, 'toolCalls'>): string {
+  const read = new Set(memory.toolCalls.map((t) => t.tool));
+  const areas = new Set<string>();
+  for (const name of MARKETING_AGENT_ALLOWED_TOOLS) {
+    if (!read.has(name)) areas.add(toolArea(name));
+  }
+  const list = [...areas].filter(Boolean).sort();
+  return list.length > 0 ? ` (areas you have NOT read yet: ${list.join(', ')})` : '';
+}
+
+/**
+ * Scope-aware stop guard used by the marketing insight run.
+ *
+ * It composes the existing zero-evidence guard with the rule that actually
+ * matters for a whole-restaurant question: an EMPTY SOURCE IS NOT EVIDENCE.
+ *
+ * Two distinct failures are rejected for a broad question:
+ *   1. every source read so far returned no usable data. One empty source says
+ *      nothing about the others, so "not enough data" is not a conclusion — it
+ *      is a reason to read a different area;
+ *   2. usable data exists, but all of it reads the SAME area of the business.
+ *      Two product-level sources are one area of evidence, not two independent
+ *      confirmations, and the role prompt's own rule is that a broad finding
+ *      must be cross-checked across areas.
+ *
+ * Both are deferred up to MAX_BROAD_STOP_DEFERRALS times, and the objection
+ * names the areas that are still unread so the next step is a real choice.
+ * The guard never chooses or orders a tool and never executes one: the model
+ * decides what (if anything) to call next. Narrow questions are untouched — a
+ * focused question may legitimately be answered from one specialized source.
+ */
+export function marketingEvidenceSufficiencyGuard(
+  task: unknown,
+): (
+  memory: Pick<AgentRunMemory, 'toolCalls' | 'toolData' | 'observations' | 'uncertainties'>,
+) => string | null {
+  const scope = classifyMarketingTask(task);
+  return (memory) => {
+    const base = marketingEvidenceStopGuard(memory);
+    if (base) return base;
+    if (scope !== 'broad') return null;
+    const deferrals = (memory.uncertainties ?? []).filter((u) => u.reason.startsWith('stop_deferred:')).length;
+    if (deferrals >= MAX_BROAD_STOP_DEFERRALS) return null;
+    const usable = usableSources(memory);
+    const unread = unreadAreasText(memory);
+    if (usable.length === 0) {
+      return `this is a broad question about the whole restaurant, but EVERY source checked so far returned no usable data. One empty source does NOT mean the others are empty — it only removes that one source. Do not answer "not enough data": read a source from an area you have not checked yet${unread} before deciding again.`;
+    }
+    const areas = new Set(usable.map((u) => toolArea(u.tool)));
+    if (areas.size < 2) {
+      return `this is a broad question about the whole restaurant, and every usable source so far reads the SAME area of the business. One area alone is normally not enough to conclude a whole-restaurant question: choose one more complementary source from a DIFFERENT area${unread} so the reading can be confirmed, weakened or redirected, then decide again. If an area turns out to have no data, that is still not the others.`;
+    }
+    return null;
+  };
+}
+
+/** Numbers the model may state: everything that appears in captured tool data. */
+function collectNumbers(value: unknown, into: Set<string>, depth = 0): void {
+  if (depth > 8 || value === null || value === undefined) return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return;
+    into.add(String(value));
+    into.add(String(Math.round(value)));
+    into.add(String(Math.round(value * 100) / 100));
+    return;
+  }
+  if (typeof value === 'string') {
+    if (value.length > 400) return;
+    for (const token of value.match(/\d+(?:[.,]\d+)?/g) ?? []) {
+      into.add(token);
+      into.add(token.replace(/,/g, ''));
+      const n = Number(token.replace(/,/g, ''));
+      if (Number.isFinite(n)) {
+        into.add(String(n));
+        into.add(String(Math.round(n)));
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectNumbers(item, into, depth + 1);
+    return;
+  }
+  if (typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) collectNumbers(item, into, depth + 1);
+  }
+}
+
+interface CapturedEvidence {
+  sources: MarketingInsightEvidenceSource[];
+  toolsUsed: string[];
+  allowedNumbers: Set<string>;
+  /** Compact per-source rendering passed to the synthesis call. */
+  facts: Array<{ ref: string; label: string; data: string }>;
+}
+
+/** Build evidence from the EXACT outputs the loop already executed (no re-run). */
+export function evidenceFromToolData(
+  toolData: Array<{ step: number; tool: string; ok: boolean; data: unknown }>,
+): CapturedEvidence {
+  const sources: MarketingInsightEvidenceSource[] = [];
+  const seen = new Set<string>();
+  const allowedNumbers = new Set<string>();
+  const facts: Array<{ ref: string; label: string; data: string }> = [];
+  for (const entry of toolData) {
+    collectNumbers(entry.data, allowedNumbers);
+    if (seen.has(entry.tool)) continue;
+    seen.add(entry.tool);
+    const label = toolPurpose(entry.tool);
+    sources.push({ ref: entry.tool, label });
+    facts.push({ ref: entry.tool, label, data: summarizeToolOutput(entry.data) });
+  }
+  return { sources, toolsUsed: [...seen], allowedNumbers, facts };
+}
+
+/** Ground a narrative line against real evidence numbers. */
+function groundText(text: string, allowed: Set<string>, fallback: string | null): string | null {
+  const { text: stripped } = stripUngroundedNumbers(text, allowed);
+  const candidate = stripped.trim();
+  if (candidate.length < 3 || malformedReason(candidate)) return fallback;
+  return candidate;
+}
+
+function toUnitConfidence(n: unknown, fallback: number): number {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+function normalizeTask(task: unknown): string {
+  if (typeof task !== 'string') return DEFAULT_TASK;
+  const trimmed = task.trim();
+  if (!trimmed) return DEFAULT_TASK;
+  return trimmed.slice(0, MAX_TASK_CHARS);
+}
+
+function insightSteps(run: AgentRunMemory): MarketingInsightStep[] {
+  return run.toolCalls.map((call) => ({
+    step: call.step,
+    tool: call.tool,
+    purpose: toolPurpose(call.tool),
+    ok: call.ok,
+  }));
+}
+
+function toInvestigation(
+  run: AgentRunMemory,
+  degraded = false,
+  summary: { summaryStatus: MarketingSummaryStatus; reasonCode?: MarketingReasonCode } = { summaryStatus: 'ok' },
+): MarketingInsightInvestigation {
   return {
+    summaryStatus: summary.summaryStatus,
+    reasonCode: summary.reasonCode,
     runId: run.runId,
+    requestId: run.requestId,
     status: run.status,
     stepsUsed: run.budget.stepsUsed,
     toolCallsUsed: run.budget.toolCallsUsed,
-    toolNames: run.toolCalls.map((t) => t.tool),
-    rejected: run.rejections.map((r) => ({ ref: r.ref, stage: r.stage, reason: r.reason })),
-    uncertainties: run.uncertainties.map((u) => u.reason),
     llmCalls: run.llm.calls,
+    toolNames: run.toolCalls.map((t) => t.tool),
+    dedupedCalls: run.toolCalls.filter((t) => t.deduped).length,
+    rejections: run.rejections.map((r) => ({ ref: r.ref, stage: r.stage })),
+    errorCode: run.error?.code,
     memory: run.memory
       ? {
           episodes: run.memory.episodes.length,
@@ -497,36 +536,355 @@ function toInvestigation(run: Awaited<ReturnType<typeof runBoundedAgentLoop>>): 
           degraded: run.memory.degraded ?? false,
         }
       : undefined,
+    degraded,
   };
 }
 
 /**
- * Public entry point — Phase 1 foundation:
- *   optional bounded LLM investigation (policy + shared executor + budgets)
- *   → EXISTING deterministic targeting ladder (unchanged, authoritative).
- * Preserves the POST /recommend + POST /proposal contracts and the
- * deterministic fallback behavior for every existing caller.
+ * Honest reason text for a degraded insight (never a fabricated result, and
+ * never a provider error string: the owner does not know what "429" is).
+ */
+function degradedSummary(reason: string, run: AgentRunMemory): string {
+  switch (reason) {
+    case 'llm_disabled':
+      return 'The AI investigation is switched off for this request, so no insight was generated. The recommended actions below come from the deterministic intelligence pipeline.';
+    case 'llm_unavailable':
+      return 'The AI investigation could not run because the language model is not configured on this deployment. The recommended actions below still work.';
+    case 'llm_failed':
+      if (reasonCodeForLoopError(run.error?.code) === 'LLM_RATE_LIMITED') {
+        return 'AI summary is temporarily unavailable. The AI investigation could not finish right now, and no numbers were guessed.';
+      }
+      return 'The AI investigation could not complete right now. No insight was generated, and no numbers were guessed.';
+    default:
+      return 'The AI investigation finished without any usable source data for this restaurant, so no insight could be grounded in evidence.';
+  }
+}
+
+/** Initials of the summary/r-code pair for a run that produced NO insight. */
+function unavailableReasonCode(reason: string, run: AgentRunMemory): MarketingReasonCode {
+  switch (reason) {
+    case 'llm_disabled':
+      return 'LLM_DISABLED';
+    case 'llm_unavailable':
+      return 'LLM_UNAVAILABLE';
+    case 'llm_failed':
+      return reasonCodeForLoopError(run.error?.code);
+    default:
+      return 'NO_TOOL_EVIDENCE';
+  }
+}
+
+/** Insight used when the run captured no usable tool evidence at all. */
+function unavailableInsight(reason: string, run: AgentRunMemory): MarketingInsight {
+  return {
+    id: `insight_${run.runId}`,
+    type: 'agentic_insight',
+    title: 'AI insight unavailable',
+    summary: degradedSummary(reason, run),
+    priority: 'normal',
+    recommendation: null,
+    evidence: [],
+    confidence: 0,
+    toolsUsed: [],
+    steps: insightSteps(run),
+    degraded: true,
+    degradedReason: reason,
+    summaryStatus: 'unavailable',
+    reasonCode: unavailableReasonCode(reason, run),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Safe fallback when synthesis failed but real evidence WAS collected.
+ *
+ * The investigation is NOT thrown away: the exact sources that ran stay on the
+ * insight (the UI renders them as "What the AI checked"). The reason is a
+ * machine code on `reasonCode` only — the owner-facing text says the summary is
+ * temporarily unavailable and that nothing was invented. No generic AI summary
+ * is fabricated here (there is no second summary engine in this codebase).
+ */
+function evidenceFallbackInsight(
+  reasonCode: MarketingReasonCode,
+  evidence: CapturedEvidence,
+  run: AgentRunMemory,
+): MarketingInsight {
+  return {
+    id: `insight_${run.runId}`,
+    type: 'agentic_insight',
+    title: 'AI summary is temporarily unavailable',
+    summary: [
+      'We collected evidence from your restaurant data, but the AI explanation could not be generated right now.',
+      'No information was invented.',
+      `Evidence was reviewed from ${evidence.toolsUsed.length} read-only source${evidence.toolsUsed.length === 1 ? '' : 's'} — see "What the AI checked" below.`,
+      'The recommended actions further down come from the deterministic intelligence pipeline and still work.',
+    ].join(' '),
+    priority: 'normal',
+    recommendation: null,
+    evidence: evidence.sources,
+    confidence: 0.3,
+    toolsUsed: evidence.toolsUsed,
+    steps: insightSteps(run),
+    degraded: true,
+    degradedReason: reasonCode,
+    summaryStatus: 'unavailable',
+    reasonCode,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Run one agentic marketing investigation and return its grounded insight.
+ * NEVER throws: it always returns an insight, explicitly marked degraded when
+ * the LLM could not produce one — it never falls back to the removed
+ * deterministic targeting ladder.
  */
 export async function runMarketingAgent(
   ctx: ToolContext,
   options: MarketingAgentOptions = {},
-): Promise<MarketingAgentResult> {
-  let investigation: MarketingAgentInvestigation | undefined;
-  if (options.agentic) {
-    const run = await runBoundedAgentLoop({
-      policy: marketingAgentPolicy as AgentPolicy,
-      objective:
-        'Investigate marketing evidence for this restaurant (sales, margins, inventory, offer/campaign history, customer and ML signals) so recommendations rest on facts, not guesses.',
-      tenant: ctx.tenant,
-      budget: { ...MARKETING_AGENT_BUDGET, ...options.loopBudget },
-      requestId: options.requestId,
-      llm: options.llm,
-      loadMemory: options.loadMemory,
-    });
-    investigation = toInvestigation(run);
+): Promise<MarketingInsightRun> {
+  const task = normalizeTask(options.task);
+
+  if (options.disableLlm) {
+    // No loop at all: nothing was investigated, and we say exactly that.
+    const run = {
+      runId: 'llm_disabled',
+      requestId: options.requestId ?? 'llm_disabled',
+      status: 'llm_unavailable',
+      budget: { stepsUsed: 0, toolCallsUsed: 0 },
+      llm: { calls: 0 },
+      toolCalls: [],
+      rejections: [],
+    } as unknown as AgentRunMemory;
+    const insight = unavailableInsight('llm_disabled', run);
+    return {
+      mode: 'agentic_insight',
+      insights: [insight],
+      investigation: toInvestigation(run, true, { summaryStatus: insight.summaryStatus, reasonCode: insight.reasonCode }),
+      degraded: true,
+      degradedReason: 'llm_disabled',
+      reasonCode: insight.reasonCode,
+      generatedAt: insight.generatedAt,
+    };
   }
-  const result = await runMarketingAgentDeterministic(ctx, {
-    minimumExperimentSize: options.minimumExperimentSize,
+
+  const run = await runBoundedAgentLoop({
+    policy: marketingAgentPolicy,
+    rolePrompt: MARKETING_AGENT_ROLE_PROMPT,
+    promptVersion: MARKETING_AGENT_PROMPT_VERSION,
+    objective: task,
+    tenant: ctx.tenant,
+    budget: { ...MARKETING_AGENT_BUDGET, ...options.loopBudget },
+    requestId: options.requestId,
+    llm: options.llm,
+    loadMemory: options.loadMemory,
+    captureToolData: true,
+    // Deeper chains need the DETAIL of earlier results in the next prompt, not
+    // just their headline: opt into a larger (still bounded) observation clip.
+    observationChars: MARKETING_AGENT_OBSERVATION_CHARS,
+    // A long investigation must not waste its tool-call budget re-reading the
+    // identical (tool, args) pair: the loop serves the already-captured
+    // observation instead. It still consumes budget, so repetition can never
+    // loop, and only SUCCESSFUL outputs are replayed. Opt-in: other agents are
+    // unchanged.
+    dedupeIdenticalTools: true,
+    // Record a replayable decision chain (per step: evidence seen → decision
+    // made → calls executed) so a past AI Insights investigation can be
+    // inspected and compared. Observability-only; no behaviour change.
+    replayEpisode: true,
+    // Show the model its own source coverage every step: an empty source is
+    // not evidence, and a whole-restaurant question must not be concluded from
+    // the first area that happens to answer. Prompt-only — the model still
+    // chooses every tool.
+    coverageGuidance: true,
+    // Scope-aware: a broad question cannot be concluded from empty sources or
+    // from a single area of the business, a narrow one can. The guard never
+    // chooses a tool.
+    stopGuard: marketingEvidenceSufficiencyGuard(task),
   });
-  return investigation ? { ...result, investigation } : result;
+
+  const evidence = evidenceFromToolData(run.toolData);
+
+  // No usable evidence → explicit degraded insight, never a fabricated one.
+  if (evidence.toolsUsed.length === 0) {
+    const reason =
+      run.status === 'llm_unavailable' ? 'llm_unavailable' : run.status === 'failed' ? 'llm_failed' : 'no_tool_evidence';
+    const insight = unavailableInsight(reason, run);
+    const investigation = toInvestigation(run, true, { summaryStatus: insight.summaryStatus, reasonCode: insight.reasonCode });
+    return {
+      mode: 'agentic_insight',
+      insights: [insight],
+      investigation,
+      degraded: true,
+      degradedReason: reason,
+      reasonCode: insight.reasonCode,
+      generatedAt: insight.generatedAt,
+    };
+  }
+
+  // ── One synthesis call turns the captured evidence into the insight card ──
+  const generatedAt = new Date().toISOString();
+  let insight: MarketingInsight | null = null;
+  let degradedReason: string | undefined;
+  /** Whether the written summary exists (evidence is reported either way). */
+  let summaryStatus: MarketingSummaryStatus = 'unavailable';
+  let summaryReasonCode: MarketingReasonCode | undefined;
+  const synthesis = options.synthesisLlm ?? ((req: LlmJsonRequest) => generateJsonWithMeta(req));
+  const synthesisRequest: LlmJsonRequest = {
+    system: [
+      'You explain a marketing situation to a restaurant owner who does not know AI or technical terms.',
+      'Hard rules:',
+      '1. Use ONLY the facts in the input JSON. Never invent or estimate sales, revenue, percentages, margins, prices, discounts, costs or trends.',
+      '2. You are advisory only: recommend what the owner should review or consider. Never claim an action was performed, and never propose a specific discount or price.',
+      '3. "evidenceRefs" MUST list only the exact tool names present in the input — a source name that is not in the input cannot be cited.',
+      '4. An unavailable source (available=false) means that source had no data — it is NOT evidence that the business is healthy, and it is NOT the answer while other sources report data.',
+      '5. When the evidence supports it, make "recommendation" name the offer the restaurant should run next (what kind of offer, what it applies to, which customer group) and why now — referencing the calendar, competition or current sales the evidence actually contains. If no offer is supported, say what still needs to be checked.',
+      '6. Be concise: one headline, two to four sentences, one next step.',
+      '7. Answer ONLY with the JSON object matching the schema.',
+    ].join('\n'),
+    prompt: `Owner question: ${task}\n\nEVIDENCE (the only allowed source of facts and numbers):\n${JSON.stringify(
+      {
+        sources: evidence.facts,
+        note: 'available=false means that ONE source returned no data — it is never evidence that the business is healthy or that the other sources are empty.',
+      },
+    )}`,
+    schemaHint: SYNTHESIS_SCHEMA_HINT,
+    timeoutMs: 12_000,
+    // A transient provider 429 must not discard a completed investigation: the
+    // shared client retries ONCE after a short backoff (never an unbounded
+    // loop). If it is still limited, the evidence-only degraded insight below
+    // is returned.
+    retryOnRateLimit: true,
+  };
+  const synthesisStartedAt = Date.now();
+
+  try {
+    let result: LlmJsonResult<unknown>;
+    try {
+      result = await synthesis(synthesisRequest);
+    } catch (firstErr) {
+      // Same bounded contract as the loop: one retry for a transient
+      // provider JSON-validation failure, never an unbounded retry.
+      if (!isRetryableJsonFailure(firstErr)) throw firstErr;
+      result = await synthesis(synthesisRequest);
+    }
+    await recordLlmUsage({
+      restaurantId: ctx.tenant.restaurantId,
+      requestId: run.runId,
+      promptVersion: `${MARKETING_AGENT_PROMPT_VERSION}-synthesis`,
+      feature: marketingAgentPolicy.agent,
+      promptText: `${synthesisRequest.system}\n${synthesisRequest.prompt}`,
+      model: result.model ?? '',
+      provider: result.provider ?? '',
+      latencyMs: result.latencyMs ?? 0,
+      inputTokens: result.usage?.inputTokens ?? 0,
+      outputTokens: result.usage?.outputTokens ?? 0,
+      totalTokens: result.usage?.totalTokens ?? 0,
+      success: true,
+    });
+
+    const parsed = insightSynthesisSchema.safeParse(result.value);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      const where = first?.path.join('.') || 'root';
+      degradedReason = `synthesis_invalid_schema:${where}:${first?.code ?? 'invalid'}`;
+      summaryReasonCode = 'LLM_INVALID_RESPONSE';
+    } else {
+      const notes: string[] = [];
+      const toolSet = new Set(evidence.toolsUsed);
+      const rawRefs = parsed.data.evidenceRefs ?? [];
+      const validRefs = rawRefs.filter((r) => toolSet.has(r));
+      if (rawRefs.length === 0) {
+        notes.push('evidenceRefs:missing');
+      } else if (validRefs.length !== rawRefs.length) {
+        notes.push(`evidenceRefs:repaired:${rawRefs.filter((r) => !toolSet.has(r)).join('|')}`);
+      }
+      const refs = validRefs.length > 0 ? validRefs : evidence.toolsUsed;
+      const evidenceSources = refs
+        .map((ref) => evidence.sources.find((s) => s.ref === ref))
+        .filter((s): s is MarketingInsightEvidenceSource => Boolean(s));
+
+      const title = groundText(parsed.data.title, evidence.allowedNumbers, 'Marketing insight');
+      const summary = groundText(parsed.data.summary, evidence.allowedNumbers, null);
+      const recommendation = parsed.data.recommendation
+        ? groundText(parsed.data.recommendation, evidence.allowedNumbers, null)
+        : null;
+      if (!summary) notes.push('summary:ungrounded');
+
+      insight = {
+        id: `insight_${run.runId}`,
+        type: 'agentic_insight',
+        title: title ?? 'Marketing insight',
+        summary:
+          summary ??
+          `Evidence was collected from ${evidenceSources.map((s) => s.label).join('; ')}; the written summary could not be grounded against it and was removed.`,
+        priority: normalizePriority(parsed.data.priority),
+        recommendation,
+        evidence: evidenceSources.length > 0 ? evidenceSources : evidence.sources,
+        confidence: toUnitConfidence(parsed.data.confidence, 0.5),
+        toolsUsed: evidence.toolsUsed,
+        steps: insightSteps(run),
+        degraded: false,
+        summaryStatus: notes.length > 0 ? 'partial' : 'ok',
+        generatedAt,
+      };
+      summaryStatus = insight.summaryStatus;
+      if (notes.length > 0) {
+        degradedReason = `synthesis_partially_rejected:${notes.join(',')}`;
+        summaryReasonCode = notes.some((n) => n.startsWith('summary:')) ? 'SUMMARY_UNGROUNDED' : 'SUMMARY_PARTIALLY_REJECTED';
+        insight.degradedReason = degradedReason;
+        insight.reasonCode = summaryReasonCode;
+      }
+    }
+  } catch (err) {
+    // The provider failure is mapped to a stable machine code for diagnostics;
+    // the owner-facing text is the evidence-fallback copy (no provider detail).
+    summaryReasonCode = reasonCodeForLlmError(err);
+    degradedReason = summaryReasonCode;
+    summaryStatus = 'unavailable';
+    await recordLlmUsage({
+      restaurantId: ctx.tenant.restaurantId,
+      requestId: run.runId,
+      promptVersion: `${MARKETING_AGENT_PROMPT_VERSION}-synthesis`,
+      feature: marketingAgentPolicy.agent,
+      promptText: `${synthesisRequest.system}\n${synthesisRequest.prompt}`,
+      model: '',
+      provider: '',
+      latencyMs: Date.now() - synthesisStartedAt,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      success: false,
+      errorType: err instanceof LlmError ? err.kind : 'synthesis_failed',
+      fallbackReason: `evidence-only insight (no AI summary, ${summaryReasonCode ?? 'LLM_FAILED'})`,
+    });
+  }
+
+  const investigation = toInvestigation(run, insight === null, {
+    summaryStatus,
+    reasonCode: summaryReasonCode,
+  });
+
+  if (!insight) {
+    const fallback = evidenceFallbackInsight(summaryReasonCode ?? 'INVESTIGATION_FAILED', evidence, run);
+    return {
+      mode: 'agentic_insight',
+      insights: [fallback],
+      investigation,
+      degraded: true,
+      degradedReason: fallback.degradedReason,
+      reasonCode: fallback.reasonCode,
+      generatedAt: fallback.generatedAt,
+    };
+  }
+
+  return {
+    mode: 'agentic_insight',
+    insights: [insight],
+    investigation,
+    degraded: false,
+    degradedReason,
+    reasonCode: summaryReasonCode,
+    generatedAt,
+  };
 }

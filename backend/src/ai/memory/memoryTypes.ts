@@ -85,6 +85,12 @@ export const LONG_TERM_MEMORY_TYPES = [
   'channel_preference_pattern',
   'branch_performance_pattern',
   'audience_response_pattern',
+  /**
+   * Phase 15: per-item demand/margin pattern ("product X: high demand, weak
+   * margin"). Computed arithmetically from menu engineering — never from an
+   * LLM — and keyed by `product:<id>` so it upserts rather than accumulating.
+   */
+  'product_performance_pattern',
 ] as const;
 export type LongTermMemoryType = (typeof LONG_TERM_MEMORY_TYPES)[number];
 

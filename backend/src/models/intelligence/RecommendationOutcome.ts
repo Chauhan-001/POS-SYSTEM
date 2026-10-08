@@ -84,9 +84,17 @@ export interface OutcomeRecommendation {
   variance: OutcomeVariance;
   attributionMethod: AttributionMethod;
   promotionType: PromotionType;
-  constraintsViolated?: string[];
-  learningSignals: LearningSignal[];
+  constraintsViolated?: string[];  learningSignals: LearningSignal[];
+
   ownerFeedback?: OwnerFeedback;
+  /**
+   * When this measured outcome was folded into agent memory (Phase 15).
+   * Set ATOMICALLY by the outcome→memory linker, which claims each row with
+   * `findOneAndUpdate({ memoryLinkedAt: null }, { $set: { memoryLinkedAt } })`
+   * so a concurrent run can never write the same learning event twice.
+   * `null`/absent = not yet learned from.
+   */
+  memoryLinkedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -167,6 +175,9 @@ const recommendationOutcomeSchema = new Schema({
 
   learningSignals: { type: [String], default: [] },
 
+  // Phase 15 — idempotency marker for the outcome → memory linkage.
+  memoryLinkedAt: { type: Date, default: null },
+
   ownerFeedback: {
     rating: { type: String, enum: ['positive', 'neutral', 'negative'], default: 'neutral' },
     comment: { type: String },
@@ -178,6 +189,7 @@ const recommendationOutcomeSchema = new Schema({
 
 // Index for tenant isolation and fast lookups by recommendation ID
 recommendationOutcomeSchema.index({ restaurantId: 1, status: 1 });
+recommendationOutcomeSchema.index({ restaurantId: 1, status: 1, memoryLinkedAt: 1 });
 recommendationOutcomeSchema.index({ recommendationId: 1 });
 recommendationOutcomeSchema.index({ promotedAt: -1 });
 
@@ -192,9 +204,17 @@ export interface IRecommendationOutcome extends Document {
   actual: OutcomeActual;
   variance: OutcomeVariance;
   attributionMethod: AttributionMethod;
-  promotionType: PromotionType;
-  learningSignals: LearningSignal[];
+  promotionType: PromotionType;  learningSignals: LearningSignal[];
+
   ownerFeedback?: OwnerFeedback;
+  /**
+   * When this measured outcome was folded into agent memory (Phase 15).
+   * Set ATOMICALLY by the outcome→memory linker, which claims each row with
+   * `findOneAndUpdate({ memoryLinkedAt: null }, { $set: { memoryLinkedAt } })`
+   * so a concurrent run can never write the same learning event twice.
+   * `null`/absent = not yet learned from.
+   */
+  memoryLinkedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

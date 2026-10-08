@@ -75,13 +75,18 @@ function num(v: unknown): number | undefined {
 }
 
 /**
- * Normalize a source timestamp to a valid ISO string. A malformed/missing
- * timestamp falls back to `now` (never an Invalid Date — that would throw
- * while building the period window).
+ * Normalize a SOURCE timestamp to a valid ISO string, or '' when the source
+ * did not provide one (D-22).
+ *
+ * A missing/malformed source timestamp MUST stay unknown: substituting `now`
+ * would fabricate freshness (an old snapshot would look current) and corrupt
+ * the evidence semantics downstream. Empty string keeps the zod contract
+ * (`generatedAt: z.string()`) while `classifyFreshness('')` correctly yields
+ * `'unknown'`.
  */
-function isoOr(raw: unknown, now: number): string {
+function isoOr(raw: unknown, _now: number): string {
   if (typeof raw === 'string' && !Number.isNaN(Date.parse(raw))) return raw;
-  return new Date(now).toISOString();
+  return '';
 }
 
 function ev(
@@ -130,8 +135,11 @@ export function normalizeSalesTrends(
   const gen = isoOr(raw.generatedAt, now);
   const freshness: SignalFreshness = classifyFreshness(raw.generatedAt ? gen : undefined, SALES_WINDOW_DAYS, now);
   const signals: BusinessSignal[] = [];
-  const periodEnd = gen;
-  const periodStart = new Date(Date.parse(gen) - (input.lookbackDays ?? 30) * 86400000).toISOString();
+  // Unknown source timestamp → no fabricated period window. (D-22)
+  const periodEnd = gen || undefined;
+  const periodStart = gen
+    ? new Date(Date.parse(gen) - (input.lookbackDays ?? 30) * 86400000).toISOString()
+    : undefined;
 
   const push = (
     s: Omit<BusinessSignal, 'signalId' | 'scope' | 'freshness' | 'generatedAt' | 'periodStart' | 'periodEnd'> & {
@@ -1465,6 +1473,292 @@ export function normalizeWeatherContext(
     ],
     { now },
   );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 18. Kitchen wastage  (tool: getWastage → WastageOutput)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Field names mirror `ai/tools/inventory/getWastageTool.ts → WastageOutput`
+ * (backed by the authoritative costIntelligenceCore.metrics wastage block).
+ * `items[]` may carry prevQty/prevCost for the previous period; when a same-
+ * item previous figure exists, a >40% quantity increase is emitted as the
+ * derived `inventory_wastage_spike` code; otherwise each observed item is an
+ * `inventory_wastage` level. This window is a rolling operational window
+ * (default 60d), NOT the closing business day — the Z-report pipeline states
+ * that in its own evidence.
+ */
+export interface WastageLike {
+  available: boolean;
+  reason?: string;
+  topItems?: Array<{ name: string; qty: number; unit?: string; cost: number }>;
+  items?: Array<{
+    name: string;
+    unit?: string;
+    qty: number;
+    cost: number;
+    prevQty?: number;
+    prevCost?: number;
+  }>;
+  generatedAt?: string;
+}
+
+/** Quantity increase (vs the same item's previous figure) treated as a spike. */
+export const WASTAGE_SPIKE_INCREASE = 0.4;
+
+/** Freshness window for a rolling wastage analysis (getWastage defaults to 60d). */
+const WASTAGE_WINDOW_DAYS = 60;
+
+/** Empty result guard: leads with code so `.some()` reads right-to-left. */
+const hasWastageRow = (s: BusinessSignal) => s.code === 'inventory_wastage' || s.code === 'inventory_wastage_spike';
+
+export function normalizeWastage(
+  raw: WastageLike | null | undefined,
+  input: NormalizerInput,
+): SignalNormalizationResult {
+  const N: BusinessSignalSource = 'inventory_context';
+  const now = input.now ?? Date.now();
+  if (!raw) return unavailable(N, 'NO_TOOL_OUTPUT', now);
+  if (!raw.available) {
+    const signals: BusinessSignal[] = [];
+    const top = (raw.topItems ?? []).filter((w) => String(w?.name ?? '').length > 0 && num(w.qty) !== undefined);
+    const items = (raw.items ?? []).filter((w) => String(w?.name ?? '').length > 0 && num(w.qty) !== undefined);
+    for (const w of [...top, ...items]) {
+      signals.push({
+        signalId: makeSignalId('inventory_wastage', input.restaurantId, w.name),
+        code: 'inventory_wastage',
+        category: 'inventory',
+        source: N,
+        statement: `"${w.name}" was wasted (${num(w.qty)}${w.unit ? ` ${w.unit}` : ''}, cost ${num(w.cost)}).`,
+        value: num(w.qty),
+        unit: w.unit ?? 'units',
+        direction: 'up',
+        confidence: 0.7,
+        scope: scopeOf(input),
+        freshness: 'unknown',
+        generatedAt: '',
+        evidence: [ev('metric', `metric:wastage:${w.name}:qty`, num(w.qty), { label: w.unit }), ev('metric', `metric:wastage:${w.name}:cost`, num(w.cost))],
+        caveats: [`Source reported itself unavailable (${raw.reason ?? 'NO_WASTAGE_DATA'}); wastage rows are disclosed with unknown freshness, never presented as current.`],
+      });
+    }
+    return result(N, 'unavailable', signals, { reason: raw.reason || 'NO_WASTAGE_DATA', now });
+  }
+
+  const scope = scopeOf(input);
+  const gen = isoOr(raw.generatedAt, now);
+  const freshness = classifyFreshness(raw.generatedAt ? gen : undefined, WASTAGE_WINDOW_DAYS, now);
+  const signals: BusinessSignal[] = [];
+
+  for (const w of raw.items ?? []) {
+    if (typeof w?.name !== 'string' || w.name.length === 0) continue;
+    const qty = num(w.qty);
+    if (qty === undefined || qty <= 0) continue;
+    const prevQty = num(w.prevQty);
+    const cost = num(w.cost);
+    const prevCost = num(w.prevCost);
+    // Spike only over the same item's own previous figure (like-for-like).
+    if (prevQty !== undefined && prevQty > 0) {
+      const spike = (qty - prevQty) / prevQty;
+      if (spike > WASTAGE_SPIKE_INCREASE) {
+        signals.push({
+          signalId: makeSignalId('inventory_wastage_spike', input.restaurantId, w.name),
+          code: 'inventory_wastage_spike',
+          category: 'inventory',
+          source: N,
+          statement: `"${w.name}" wastage rose to ${qty}${w.unit ? ` ${w.unit}` : ''} from ${prevQty}${w.unit ? ` ${w.unit}` : ''} (+${Math.round(spike * 100)}%) vs the previous period.`,
+          value: qty,
+          unit: w.unit ?? 'units',
+          baseline: prevQty,
+          changePct: spike,
+          direction: 'up',
+          confidence: 0.85,
+          scope,
+          freshness,
+          generatedAt: gen,
+          subject: { type: 'ingredient', id: w.name, label: w.name },
+          evidence: [
+            ev('metric', `metric:wastage:${w.name}:qty`, qty, { label: w.unit, observedAt: gen }),
+            ev('metric', `metric:wastage:${w.name}:prevQty`, prevQty, { label: w.unit, observedAt: gen }),
+            ...(cost !== undefined ? [ev('metric', `metric:wastage:${w.name}:cost`, cost, { observedAt: gen })] : []),
+            ...(prevCost !== undefined ? [ev('metric', `metric:wastage:${w.name}:prevCost`, prevCost, { observedAt: gen })] : []),
+          ],
+        });
+        continue;
+      }
+    }
+    signals.push({
+      signalId: makeSignalId('inventory_wastage', input.restaurantId, w.name),
+      code: 'inventory_wastage',
+      category: 'inventory',
+      source: N,
+      statement: `"${w.name}" wastage: ${qty}${w.unit ? ` ${w.unit}` : ''}${cost !== undefined ? `, cost ${cost}` : ''}.`,
+      value: qty,
+      unit: w.unit ?? 'units',
+      baseline: prevQty,
+      changePct: prevQty !== undefined && prevQty > 0 && prevQty !== qty ? (qty - prevQty) / prevQty : undefined,
+      direction: prevQty !== undefined && prevQty > 0 ? directionFromChange(prevQty !== qty ? (qty - prevQty) / prevQty : 0) : 'up',
+      confidence: 0.7,
+      scope,
+      freshness,
+      generatedAt: gen,
+      subject: { type: 'ingredient', id: w.name, label: w.name },
+      evidence: [
+        ev('metric', `metric:wastage:${w.name}:qty`, qty, { label: w.unit, observedAt: gen }),
+        ...(cost !== undefined ? [ev('metric', `metric:wastage:${w.name}:cost`, cost, { observedAt: gen })] : []),
+        ...(prevQty !== undefined ? [ev('metric', `metric:wastage:${w.name}:prevQty`, prevQty, { observedAt: gen })] : []),
+      ],
+    });
+  }
+
+  const seen = new Set(signals.map((s) => s.signalId));
+  // Same ingredient already reported from `items[]` → do not double-report it
+  // from the `topItems[]` view of the same data.
+  const itemNames = new Set(signals.map((s) => s.subject?.id ?? ''));
+  for (const w of raw.topItems ?? []) {
+    if (typeof w?.name !== 'string' || w.name.length === 0) continue;
+    if (itemNames.has(w.name)) continue;
+    const qty = num(w.qty);
+    if (qty === undefined || qty <= 0) continue;
+    const sid = makeSignalId('inventory_wastage', input.restaurantId, w.name);
+    if (seen.has(sid)) continue;
+    const cost = num(w.cost);
+    signals.push({
+      signalId: sid,
+      code: 'inventory_wastage',
+      category: 'inventory',
+      source: N,
+      statement: `"${w.name}" is a top wasted item (${qty}${w.unit ? ` ${w.unit}` : ''}${cost !== undefined ? `, cost ${cost}` : ''}).`,
+      value: qty,
+      unit: w.unit ?? 'units',
+      baseline: undefined,
+      changePct: undefined,
+      direction: 'up',
+      confidence: 0.7,
+      scope,
+      freshness,
+      generatedAt: gen,
+      subject: { type: 'ingredient', id: w.name, label: w.name },
+      evidence: [
+        ev('metric', `metric:wastage:${w.name}:qty`, qty, { label: w.unit, observedAt: gen }),
+        ...(cost !== undefined ? [ev('metric', `metric:wastage:${w.name}:cost`, cost, { observedAt: gen })] : []),
+      ],
+    });
+  }
+
+  if (!signals.some(hasWastageRow)) return unavailable(N, 'NO_WASTAGE_DATA', now);
+  signals.sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  return result(N, 'ok', signals, { now, caveats: ['Wastage window is a rolling operational window, not necessarily the closing business day.'] });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 19. Cash / closing ledger  (closingReportService.zReport sales+cash subset)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Represents the exact zReport `sales`+`cash` fields (modules/reports/services/
+ * closingReportService.ts zReport()); `payments[]` mirrors ReportScope row
+ * shape. All values are ROUNDED deterministic figures — never recomputed here.
+ */
+export interface CashClosingLike {
+  sales: {
+    date: string;
+    grossRevenue: number;
+    netRevenue: number;
+    orders: number;
+    averageOrderValue: number;
+    discounts: number;
+    taxes: number;
+    payments?: Array<{ method: string; amount: number; count: number }>;
+  };
+  cash: {
+    openingCash: number;
+    cashSales: number;
+    cashIn: number;
+    cashOut: number;
+    expenses: number;
+    adjustments: number;
+    expectedCash: number;
+    actualCash: number;
+    overShort: number;
+  };
+  generatedAt?: string;
+}
+
+export interface CashClosingMeta {
+  /** Mirrors zReport.requiresManagerApproval — deterministic, reused verbatim. */
+  requiresManagerApproval?: boolean;
+}
+
+export function normalizeCashClosing(
+  raw: (CashClosingLike & CashClosingMeta) | null | undefined,
+  input: NormalizerInput,
+): SignalNormalizationResult {
+  const N: BusinessSignalSource = 'cash_ledger';
+  const now = input.now ?? Date.now();
+  if (!raw || !raw.sales || !raw.cash) return unavailable(N, 'NO_TOOL_OUTPUT', now);
+  if (!String(raw.sales.date || '').trim()) return unavailable(N, 'NO_CLOSING_DATE', now);
+  const scope = scopeOf(input);
+  const gen = isoOr(raw.generatedAt, now);
+  const date = String(raw.sales.date);
+  const signals: BusinessSignal[] = [];
+  const overShort = num(raw.cash.overShort);
+  if (overShort !== undefined) {
+    // Confidence is grounded in the deterministic report's own approval flag
+    // (|variance| > ₹0.50 ⇒ requiresManagerApproval) — never an invented
+    // numeric threshold inside the normalizer.
+    const needsApproval = raw.requiresManagerApproval === true;
+    const severity = needsApproval ? 0.9 : 0.75;
+    signals.push({
+      signalId: makeSignalId('cash_over_short', input.restaurantId, date),
+      code: 'cash_over_short',
+      category: 'sales',
+      source: N,
+      statement: `Closing drawer variance on ${date}: ${overShort > 0 ? 'over' : 'short'} by ${Math.abs(overShort)}.`,
+      value: overShort,
+      unit: 'currency',
+      direction: overShort > 0 ? 'up' : overShort < 0 ? 'down' : 'flat',
+      confidence: severity,
+      scope,
+      freshness: 'fresh',
+      generatedAt: gen,
+      evidence: [
+        ev('metric', 'metric:cash:expected', num(raw.cash.expectedCash), { label: String(date) }),
+        ev('metric', 'metric:cash:actual', num(raw.cash.actualCash), { label: String(date) }),
+        ...([num(raw.cash.cashSales), num(raw.cash.cashIn), num(raw.cash.cashOut), num(raw.cash.expenses), num(raw.cash.adjustments), num(raw.cash.openingCash)] as const).every((v) => v === undefined)
+          ? []
+          : [ev('ratio', 'ratio:cash:reconciliation', overShort, { label: String(date), observedAt: gen })],
+      ],
+      caveats: needsApproval
+        ? ['Variance computed by the deterministic closing report; requires manager approval per that report; never a person-blame signal.']
+        : ['Variance computed by the deterministic closing report; never a person-blame signal.'],
+    });
+  }
+  const net = num(raw.sales.netRevenue);
+  if (net !== undefined) {
+    signals.push({
+      signalId: makeSignalId('sales_day_close', input.restaurantId, date),
+      code: 'sales_day_close',
+      category: 'sales',
+      source: N,
+      statement: `Net revenue for ${date} was ${net} across ${num(raw.sales.orders) ?? 'an unknown number of'} orders (avg ${num(raw.sales.averageOrderValue) ?? 'n/a'}/order).`,
+      value: net,
+      unit: 'currency',
+      direction: net > 0 ? 'up' : 'down',
+      confidence: num(raw.sales.orders) ? 0.95 : 0.7,
+      sampleSize: num(raw.sales.orders),
+      scope,
+      freshness: 'fresh',
+      generatedAt: gen,
+      evidence: [
+        ev('metric', 'metric:cashDay:netRevenue', net, { label: String(date) }),
+        ...(num(raw.sales.grossRevenue) !== undefined ? [ev('metric', 'metric:cashDay:grossRevenue', num(raw.sales.grossRevenue), { label: String(date) })] : []),
+        ...((raw.sales.payments ?? []).length > 0 ? [ev('tool_output', 'closingReportService.zReport.payments', undefined, { sampleSize: (raw.sales.payments ?? []).length })] : []),
+      ],
+      caveats: ['Represents the deterministic Z-report sales figures for the closing day.'],
+    });
+  }
+  return result(N, 'ok', signals, { now, caveats: ['Cash reconciliation uses the closing ledger; openingCash comes from CashLedger history.'] });
 }
 
 // Re-export the direction helper so integration code/tests import from one place.

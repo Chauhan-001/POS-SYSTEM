@@ -29,8 +29,7 @@ export type WorkspaceName =
   | 'More'
   | 'MenuAvailability'
   | 'QrStudio'
-  | 'Feedback'
-  | 'MLInsights';
+  | 'Feedback';
 
 /** Default workspace when no route matches */
 export const DEFAULT_WORKSPACE: WorkspaceName = 'Dashboard';
@@ -59,7 +58,6 @@ export const WORKSPACE_PATHS: Record<WorkspaceName, string> = {
   MenuAvailability: '/menu-availability',
   QrStudio: '/qr-studio',
   Feedback: '/feedback',
-  MLInsights: '/ml-insights',
 };
 
 /** Reverse map: URL path → WorkspaceName */

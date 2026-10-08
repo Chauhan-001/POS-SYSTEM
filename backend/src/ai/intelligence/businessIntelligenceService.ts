@@ -97,6 +97,11 @@ interface DimensionStep {
 export function defaultDimensionPlan(input: NormalizerInput, budgetMs = 8_000): DimensionStep[] {
   const branch = input.branchId ?? undefined;
   const toolInput = (extra: Record<string, unknown> = {}) => (branch ? { branchId: branch, ...extra } : { ...extra });
+  // D-16: the requested analysis window is propagated to every tool that
+  // accepts one, so one tool never silently uses 90 days while another uses 30.
+  const lookbackDays = Math.max(7, Math.min(input.lookbackDays ?? 90, 365));
+  const toolWindow = { lookbackDays } as const;
+  const toolWindowDays = { days: Math.max(7, Math.min(lookbackDays, 180)) } as const;
   // Dimensions run in PARALLEL (independent read-only calls), so each tool may
   // use a healthy slice of the budget instead of a tiny serial share.
   const perTool = Math.max(2_000, Math.min(8_000, Math.floor(budgetMs / 2)));
@@ -106,6 +111,12 @@ export function defaultDimensionPlan(input: NormalizerInput, budgetMs = 8_000): 
       dimension: 'sales',
       toolName: 'getSalesTrends',
       normalizer: 'sales_context',
+      // INTENTIONALLY fixed 30-day window: getSalesTrends computes the
+      // authoritative daily/weekly/monthly revenue rates over a rolling 30
+      // days and reports `windowDays: 30`. The requested lookbackDays is NOT
+      // passed here on purpose (it would silently redefine those metrics); a
+      // longer horizon must come from a window-aware source. Documented rather
+      // than silently inconsistent (D-16).
       input: toolInput(),
       timeoutMs: perTool,
       normalize: (raw, i) => normalizeSalesTrends(raw as never, i),
@@ -114,7 +125,7 @@ export function defaultDimensionPlan(input: NormalizerInput, budgetMs = 8_000): 
       dimension: 'menu',
       toolName: 'getMenuPerformance',
       normalizer: 'menu_engineering',
-      input: toolInput(),
+      input: toolInput(toolWindow),
       timeoutMs: perTool,
       normalize: (raw, i) => normalizeMenuPerformance(raw as never, i),
     },
@@ -122,7 +133,7 @@ export function defaultDimensionPlan(input: NormalizerInput, budgetMs = 8_000): 
       dimension: 'margin',
       toolName: 'getProductMargins',
       normalizer: 'cost_intelligence',
-      input: toolInput(),
+      input: toolInput(toolWindowDays),
       timeoutMs: perTool,
       normalize: (raw, i) => normalizeProductMargins(raw as never, i),
     },
@@ -277,6 +288,8 @@ export interface BusinessInvestigationOptions {
   dimensions?: BusinessDimension[];
   /** Wall-clock budget for the whole fan-out. */
   budgetMs?: number;
+  /** Analysis window (days) propagated to every window-aware tool. */
+  lookbackDays?: number;
   /** Override the plan (tests / targeted investigation). */
   plan?: DimensionStep[];
   /** Optional correlation id (forwarded to ToolContext). */
@@ -317,7 +330,8 @@ export async function investigateBusiness(
   const input: NormalizerInput = {
     restaurantId,
     branchId: options.branchId ?? options.tenant.branchId ?? null,
-    lookbackDays: 90,
+    // D-16: honour the caller's window (bounded) instead of always 90.
+    lookbackDays: Math.max(7, Math.min(options.lookbackDays ?? 90, 365)),
   };
 
   const fullPlan = options.plan ?? defaultDimensionPlan(input, budgetMs);

@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { generateExpiryAlerts } from '../../../services/inventoryDemandForecastingService';
+import { assessExpiryRisk } from '../../../services/inventoryDemandForecastingService';
 import type { ToolContext, ToolDefinition } from '../registry/toolTypes';
 
 export const getExpiryRiskInputSchema = z
@@ -22,8 +22,12 @@ export const getExpiryRiskInputSchema = z
 export type GetExpiryRiskInput = z.infer<typeof getExpiryRiskInputSchema>;
 
 export interface ExpiryRiskOutput {
+  /** True when expiry IS tracked here (at least one item carries an expiry
+   *  date) and the check completed. An empty `alerts` array on an available
+   *  source means "checked, nothing expiring in the horizon" — NOT
+   *  "unavailable". */
   available: boolean;
-  reason?: 'NO_EXPIRY_RISK';
+  reason?: 'NO_EXPIRY_DATA';
   alerts?: Array<{
     itemId: string;
     itemName: string;
@@ -45,13 +49,15 @@ export async function executeGetExpiryRisk(
   try {
     // Service is restaurant-scoped internally; branchId is only ever used as a
     // filter the service applies against this tenant's own inventory.
-    const alerts = await generateExpiryAlerts(
+    const { assessed, alerts } = await assessExpiryRisk(
       ctx.tenant.restaurantId,
       input.branchId,
       input.horizonDays ?? 30,
     );
-    if (!alerts || alerts.length === 0) {
-      return { available: false, reason: 'NO_EXPIRY_RISK', generatedAt };
+    // Expiry is not tracked at all here → genuinely unavailable. When it IS
+    // tracked, an empty alert list is a clean result, not a failure.
+    if (!assessed) {
+      return { available: false, reason: 'NO_EXPIRY_DATA', generatedAt };
     }
     return {
       available: true,
@@ -68,7 +74,7 @@ export async function executeGetExpiryRisk(
       generatedAt,
     };
   } catch {
-    return { available: false, reason: 'NO_EXPIRY_RISK', generatedAt };
+    return { available: false, reason: 'NO_EXPIRY_DATA', generatedAt };
   }
 }
 

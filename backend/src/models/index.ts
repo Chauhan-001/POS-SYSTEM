@@ -30,6 +30,8 @@ export { default as MenuAvailability } from './catalog/MenuAvailability';
 export { default as OrderAdjustment } from './orders/OrderAdjustment';
 export { default as RefundRecord } from './orders/RefundRecord';
 export { default as DailySummary } from './finance/DailySummary';
+export { default as DailySummaryEvidence } from './finance/DailySummaryEvidence';
+export type { IDailySummaryEvidence } from './finance/DailySummaryEvidence';
 export { default as MonthlySummary } from './finance/MonthlySummary';
 export { default as YearlySummary } from './finance/YearlySummary';
 export { default as AuditLog } from './admin/AuditLog';

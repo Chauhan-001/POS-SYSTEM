@@ -138,6 +138,17 @@ export const config = {
     provider: (process.env.AI_PROVIDER || 'openai') as 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom',
     /** API key for the LLM provider */
     apiKey: process.env.AI_API_KEY || '',
+    /**
+     * Fallback keys (BACKEND ONLY, comma-separated; AI_API_KEY_FALLBACK is
+     * accepted as a single first fallback). When the primary key is
+     * rate-limited (HTTP 429), times out, or the provider returns a 5xx, the
+     * shared LLM client rotates to the next key in the pool. Keys that hit a
+     * rate limit are cooled down briefly so the pool skips them. Values are
+     * never logged or surfaced in errors.
+     */
+    fallbackApiKeys: [process.env.AI_API_KEY_FALLBACK || '', ...(process.env.AI_API_KEY_FALLBACKS || '').split(',')]
+      .map((k) => k.trim())
+      .filter(Boolean),
     /** Model identifier (provider-specific default) */
     model: process.env.AI_MODEL || 'openai/gpt-oss-20b',
     /** Custom base URL (for Ollama or proxy) */
@@ -148,6 +159,17 @@ export const config = {
     maxTokens: parseInt(process.env.AI_MAX_TOKENS || '1024', 10),
     /** LLM temperature */
     temperature: parseFloat(process.env.AI_TEMPERATURE || '0.3'),
+    /**
+     * Startup key-pool health check (AI_KEY_HEALTHCHECK, default ON).
+     *
+     * A pool can quietly rot: keys get rotated/revoked and every request then
+     * wastes its failover attempts on dead credentials. At startup the shared
+     * LLM client probes each pooled key once (token-free), logs how many
+     * actually authenticate, and quarantines the rejected ones for this
+     * process so an agent run never aborts because of a stale key. Set to
+     * 'false' to skip the probe (for example in CI or with a metered endpoint).
+     */
+    keyHealthCheckEnabled: (process.env.AI_KEY_HEALTHCHECK || 'true').trim().toLowerCase() !== 'false',
     /** Weather API key (optional, demo mode if not set) */
     weatherApiKey: process.env.WEATHER_API_KEY || '',
   },
@@ -221,6 +243,13 @@ export const config = {
     refreshHours: parseInt(process.env.CRICKET_REFRESH_HOURS || '12', 10),
     /** Hard cap on matches fetched per refresh (pagination guard). */
     maxMatches: parseInt(process.env.CRICKET_MAX_MATCHES || '50', 10),
+    /**
+     * Hard cap on provider PAGES fetched per refresh. CricAPI slices by row
+     * offset, so reaching fixtures near "now" needs several pages; this keeps
+     * a refresh inside the free-tier daily hit budget (12 pages x 4 refreshes
+     * = 48 hits/day against a 100/day limit).
+     */
+    maxPages: parseInt(process.env.CRICKET_MAX_PAGES || '12', 10),
     /** Per-request timeout (ms). */
     timeoutMs: parseInt(process.env.CRICKET_TIMEOUT_MS || '10000', 10),
     /** Relevance look-ahead window (days) — Phase 2 configurable. */
@@ -394,6 +423,21 @@ export const config = {
       windowMs: parseInt(process.env.RL_VOICE_WINDOW_MS || (60 * 1000).toString(), 10),
       /** Max requests per restaurant per window (default: 90) — voice parse/transcribe/confirm */
       maxRequests: parseInt(process.env.RL_VOICE_MAX || '90', 10),
+    },
+    intelligence: {
+      /** Window in milliseconds (default: 1 minute) */
+      windowMs: parseInt(process.env.RL_INTELLIGENCE_WINDOW_MS || (60 * 1000).toString(), 10),
+      /** Max intelligence runs per restaurant per window (default: 20) — each run
+       * fans out to many tools + an optional LLM call, so this is deliberately
+       * tighter than apiLimiter. Sized against real page usage: one Marketing
+       * page load spends 2 (`/recommend` + `/intelligence`) and the owner's
+       * "Run deep analysis" click spends 1 more, so the previous 6/min was
+       * exhausted by three navigations in a minute — every further AI call then
+       * 429'd for the rest of the window, and the Retry buttons burned the same
+       * budget. 20 allows normal navigation and a retry without a dead minute. */
+      maxRequests: parseInt(process.env.RL_INTELLIGENCE_MAX || '20', 10),
+      /** Max CONCURRENT intelligence runs per restaurant (default: 1) */
+      maxConcurrent: parseInt(process.env.RL_INTELLIGENCE_MAX_CONCURRENT || '1', 10),
     },
   },
 };

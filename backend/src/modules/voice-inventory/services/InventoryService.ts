@@ -184,7 +184,7 @@ export async function updateInventory(
               type: 'inventory',
               availability: false,
               price: 0,
-              currentStock: Math.max(0, item.quantity || 0),
+              currentStock: Math.round(Math.max(0, item.quantity || 0) * 10000) / 10000,
               unit: item.unit || 'pcs',
               minStock: 0,
               maxStock: Math.max(item.quantity * 2 || 2, 2),
@@ -234,16 +234,18 @@ export async function updateInventory(
         continue;
       }
 
-      const previousStock = (product as any).currentStock || 0;
+      // Stock is kept to 4 decimal places — a raw float subtraction
+      // (63.2 − 12) would otherwise persist 51.199999999999996.
+      const previousStock = Math.round(((product as any).currentStock || 0) * 10000) / 10000;
       let newStock = previousStock;
 
       switch (request.operation) {
         case 'inventory_add':
-          newStock = previousStock + item.quantity;
+          newStock = Math.round((previousStock + item.quantity) * 10000) / 10000;
           break;
         case 'inventory_remove':
         case 'inventory_waste':
-          newStock = Math.max(0, previousStock - item.quantity);
+          newStock = Math.round(Math.max(0, previousStock - item.quantity) * 10000) / 10000;
           if (newStock === 0 && previousStock > 0) {
             console.warn(
               `[InventoryService] Stock depleted for "${item.itemName}"`
@@ -251,7 +253,7 @@ export async function updateInventory(
           }
           break;
         case 'inventory_adjust':
-          newStock = Math.max(0, item.quantity); // Set to exact quantity
+          newStock = Math.round(Math.max(0, item.quantity) * 10000) / 10000; // Set to exact quantity
           break;
       }
 

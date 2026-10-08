@@ -2,179 +2,21 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * agentCopy.ts — plain-language rendering of the marketing agent's
- * deterministic outputs.
+ * agentCopy.ts — plain-language rendering of the Intelligence Pipeline
+ * (System #3) outputs: canonical signal codes, ML evidence kinds and the
+ * engine's own economics.
  *
- * The technical strings stay stored on every proposal as audit evidence
- * (risks.notes / description); this module only EXPLAINS them for the owner.
- * Rules:
- *   - never hide information: an unrecognized string passes through as-is;
- *   - never invent: the friendly line rephrases what the evidence said, it
- *     does not add claims (confidence caveats are kept, not dropped);
+ * The technical strings stay stored on every proposal as audit evidence; this
+ * module only EXPLAINS them for the owner. Rules:
+ *   - never hide information: an unrecognized string passes through readably;
+ *   - never invent: a friendly line rephrases what the engine said, it does
+ *     not add claims (confidence caveats are kept, not dropped);
  *   - deterministic — covered by __tests__/agentCopy.test.ts.
+ *
+ * NOTE: the targeting-ladder vocabulary (rungs, targeting reasons/scopes,
+ * per-customer score hints) was removed together with the deterministic
+ * marketing agent. Agentic insights render their own plain-language copy.
  */
-
-export const OBJECTIVE_LABELS: Record<string, string> = {
-  REACTIVATE_CUSTOMERS: 'Bring customers back',
-  WINBACK: 'Win back lost customers',
-  RETENTION: 'Keep regulars coming',
-  ACQUISITION: 'Attract new customers',
-  REWARD_LOYALTY: 'Reward loyal customers',
-  BOOST_SALES: 'Boost sales',
-  CLEAR_INVENTORY: 'Clear stock',
-  INCREASE_ORDERS: 'Boost sales',
-  PROMOTE_NEW_ITEM: 'Promote a new item',
-};
-
-const AGENT_SOURCES = new Set(['CAUSAL_UPLIFT', 'RESPONSE_MODEL', 'ML_SEGMENTS', 'NONE']);
-
-/** Friendly rung names — "how the audience was picked". */
-export const RUNG_LABELS: Record<string, string> = {
-  CAUSAL_UPLIFT: 'a proven experiment',
-  RESPONSE_MODEL: 'the customer response model',
-  ML_SEGMENTS: 'your saved customer groups',
-  NONE: 'no signal yet',
-};
-
-/** What a customer-level target list means, per rung (segment-style phrasing). */
-export function customerGroupPhrase(targetingSource?: string): string {
-  switch (targetingSource) {
-    case 'CAUSAL_UPLIFT':
-      return 'most likely to bring extra sales';
-    case 'RESPONSE_MODEL':
-      return 'most likely to use an offer';
-    default:
-      return 'picked from your customer list';
-  }
-}
-
-/**
- * Proposal cards show a friendly title; the raw machine name
- * (`OBJECTIVE • SOURCE • YYYY-MM-DD`) stays as a small receipt line for
- * search/support.
- */
-export function friendlyProposalTitle(name: string, source?: string): { title: string; raw: string } {
-  const raw = name || '';
-  const parts = raw.split(' • ');
-  const objectiveLabel = OBJECTIVE_LABELS[parts[0]];
-  const parsedSource = parts.length >= 2 ? parts[1] : '';
-  const isAgent = source === 'agent' || AGENT_SOURCES.has(parsedSource);
-  if (!objectiveLabel) return { title: raw, raw };
-  return { title: `${objectiveLabel} — ${isAgent ? 'AI suggestion' : 'Your draft'}`, raw };
-}
-
-/** The rung encoded in a proposal name (`OBJECTIVE • RESPONSE_MODEL • date`). */
-export function sourceFromProposalName(name: string): string | undefined {
-  const parts = (name || '').split(' • ');
-  return parts.length >= 2 && AGENT_SOURCES.has(parts[1]) ? parts[1] : undefined;
-}
-
-/** Gate reasons like "treated rows 30 < 100 minimum" → owner language. */
-function friendlyGateReason(reason: string): string {
-  let m = reason.match(/treated rows (\d+) < (\d+) minimum/);
-  if (m) return `only ${m[1]} offers tracked (${m[2]} needed)`;
-  m = reason.match(/conversions (\d+) < (\d+) minimum/);
-  if (m) return `only ${m[1]} redemptions recorded (${m[2]} needed)`;
-  m = reason.match(/non-converters (\d+) < (\d+) minimum/);
-  if (m) return `only ${m[1]} non-redeemers in the test group (${m[2]} needed)`;
-  m = reason.match(/experiment too small: (\d+) treatment assignments < (\d+) minimum/);
-  if (m) return `experiment too small: only ${m[1]} offers assigned (${m[2]} needed)`;
-  if (reason === 'no assignment events recorded') return 'no offers have been tracked yet';
-  if (reason.startsWith('no control arm:')) return 'no control group yet — offers go to everyone, so extra sales cannot be proven';
-  if (reason === 'no evaluable experiment') return 'no usable experiment yet';
-  if (reason === 'model not trained for this tenant') return 'the response model has no training data yet';
-  return reason;
-}
-
-function friendlyGateReasons(list: string): string {
-  return list
-    .split('; ')
-    .map(friendlyGateReason)
-    .join('; ');
-}
-
-/** Why the response-model rung was skipped → owner language. */
-function friendlyUnavailableWhy(why: string): string {
-  if (/not configured/i.test(why)) return "the customer-response service isn't switched on";
-  if (/unreachable|failed/i.test(why)) return "the customer-response service can't be reached";
-  if (/No trained offer-response model/i.test(why)) return "the response model hasn't trained yet (needs more offer + redemption history)";
-  if (/No recent customers/i.test(why)) return 'there are no recent customers to score';
-  if (/lack pre-treatment feature snapshots/i.test(why)) return 'customer profiles are missing visit history';
-  if (/not trained at score time/i.test(why)) return 'the response model lost its training data';
-  if (/<\s*\d+\s*minimum/.test(why)) return friendlyGateReasons(why);
-  return why;
-}
-
-/**
- * The agent's targetingReason (one sentence built from rung notes) → plain
- * language. Covers every reason string marketingAgent.ts can produce; unknown
- * text passes through unchanged.
- */
-export function friendlyTargetingReason(reason: string): string {
-  if (!reason) return reason;
-  let out = reason;
-
-  // Composition first (these reasons can chain several rung notes).
-  out = out.replace(
-    /^Uplift gate not passed: ([^.]+)\./,
-    (_m, p1: string) => `Not enough experiment data to prove extra sales yet (${friendlyGateReasons(p1)}).`,
-  );
-  out = out.replace(
-    /Offer-response rung unavailable: ([^.]+)\./,
-    (_m, p1: string) => `The customer response model isn't ready (${friendlyUnavailableWhy(p1)}).`,
-  );
-  out = out.replace(
-    /Trained offer-response model used: (\d+) of (\d+) recent customers ranked by p\(redeem \| offer\) — non-causal\./,
-    (_m, k: string, n: string) =>
-      `your customer response model ranked ${k} of ${n} recent customers by how likely they are to use an offer (a predicted response, not proven extra sales).`,
-  );
-  out = out.replace(
-    /Experiment passed the evaluability gate \(([^)]*)\)\./,
-    (_m, p1: string) => `Proven by a live experiment with ${p1}.`,
-  );
-  out = out.replace('Falling back to stored segmentation.', 'Using your saved customer groups instead.');
-  out = out.replace(/using stored segmentation/g, 'using your saved customer groups');
-  out = out.replace(/Uplift service unavailable/g, 'The experiment tracker is offline');
-  out = out.replace(
-    /^No evaluable uplift experiment, no response-model batch scoring, and no stored segments\./,
-    "No targeting signal yet — there's no experiment data, response model, or saved customer groups to learn from.",
-  );
-  return out;
-}
-
-/** Scope label (the confidence caveat) → owner language. */
-export function friendlyScope(scope: string): string {
-  if (!scope) return scope;
-  if (scope.startsWith('causal uplift')) return 'High confidence — extra sales estimated from a real experiment.';
-  if (scope.startsWith('response likelihood')) return 'Moderate confidence — predicts who may use an offer, not who would have bought anyway.';
-  if (scope.startsWith('segment membership')) return 'Low confidence — based on customer groups, not individual scores.';
-  if (scope.startsWith('no ML signal')) return 'No targeting signal yet.';
-  return scope;
-}
-
-/** One stored evidence line (risks.notes) → friendly bullet. */
-export function friendlyEvidenceLine(line: string): string {
-  if (!line) return line;
-  if (line.startsWith('Targeting source: ')) {
-    const idx = line.indexOf(' — ');
-    if (idx >= 0) return friendlyTargetingReason(line.slice(idx + 3));
-    return friendlyTargetingReason(line.slice('Targeting source: '.length));
-  }
-  if (line.startsWith('Scope: ')) return friendlyScope(line.slice('Scope: '.length));
-  // Context lines (festival/cricket/competition/basket/demand) are already
-  // written for humans — pass them through untouched.
-  return line;
-}
-
-/** Best-score hint for a grouped customer chip (kept in rung vocabulary). */
-export function customerScoreHint(targetingSource: string | undefined, score: number | null): string {
-  if (score == null) return '';
-  if (targetingSource === 'CAUSAL_UPLIFT') return ` · best +${score.toFixed(1)} pp`;
-  if (targetingSource === 'RESPONSE_MODEL') return ` · top ${Math.round(score * 100)}% likely to redeem`;
-  return '';
-}
-
-// ─── Phase 3–7 intelligence copy (plain language for owners) ───────────────
 
 /** Canonical business-signal codes → owner language. */
 export const SIGNAL_LABELS: Record<string, string> = {
@@ -240,32 +82,342 @@ export function friendlyMoney(amount: number, symbol = '₹'): string {
 }
 
 /** "Breaks even after N extra sales" — honest economics phrasing. */
-export function friendlyBreakEven(units: number): string {
+export function friendlyBreakEven(units: number, available = true): string {
+  // Placeholder economics (no price/cost data) must never read as a real
+  // break-even; "0 extra sales" would falsely imply the offer is free money.
+  if (!available) return 'profit impact not available yet';
   if (!Number.isFinite(units) || units < 0) return 'break-even point not available';
   if (units === 0) return 'no extra sales needed to cover the discount';
   return `needs about ${units} extra sale${units === 1 ? '' : 's'} to cover the discount`;
 }
 
 /** Margin/discount safety phrasing from the engine's own constraints. */
-export function friendlyEconomics(discountPct: number, marginPct: number, safe: boolean): string {
+export function friendlyEconomics(discountPct: number, marginPct: number, safe: boolean, available = true): string {
+  if (!available) return 'Profit impact not available yet — no cost and price data for this option.';
   if (safe) return `Keeps ${Math.round(marginPct)}% profit per plate even after the ${Math.round(discountPct)}% discount.`;
   return `Careful: the ${Math.round(discountPct)}% discount leaves only ${Math.round(marginPct)}% profit — below your usual safety limit.`;
 }
 
-export interface OfferLike {
-  title?: string;
-  type?: string;
-  value?: number;
+// ─── Agentic insight copy (System #2) ─────────────────────────────────────
+
+/**
+ * Internal agent tool ids → owner-friendly chip labels. The owner must never
+ * see `getSalesTrends`; they see "Sales". Unknown ids resolve to NOTHING
+ * (we never leak an internal name), and duplicates collapse to one chip.
+ */
+export const TOOL_LABELS: Record<string, string> = {
+  // Sales / products / economics
+  getSalesTrends: 'Sales',
+  getMenuPerformance: 'Menu performance',
+  getProductMargins: 'Product margins',
+  getProductCombinations: 'Dishes sold together',
+  // Inventory exposure
+  getInventoryStatus: 'Inventory',
+  getStockoutRisk: 'Stockout risk',
+  getExpiryRisk: 'Expiry risk',
+  // Customers / targeting
+  getCustomerSegments: 'Customers',
+  getRetentionSignals: 'Retention signals',
+  // Marketing history
+  getOfferPerformance: 'Offer performance',
+  getCampaignPerformance: 'Campaign performance',
+  getActiveOffers: 'Active offers',
+  getPromotionCandidates: 'Promotion opportunities',
+  // ML signals (honest labels — prediction, never "proven")
+  getOfferResponseBatchScores: 'Offer response predictions',
+  getOfferResponsePrediction: 'Offer response prediction',
+  getUpliftSignals: 'Uplift signals',
+  getDemandForecast: 'Demand forecast',
+  // Context
+  getFestivalContext: 'Festivals',
+  getSportsContext: 'Sports events',
+  getWeatherContext: 'Weather',
+  getNearbyCompetition: 'Nearby competition',
+  getBranches: 'Your branches',
+};
+
+/**
+ * Deduped, owner-friendly labels for the sources an insight actually used.
+ * Order is preserved (it reflects what the investigation consulted), unknown
+ * ids are skipped so an internal tool name can never reach the UI.
+ */
+export function friendlyToolLabels(tools: string[] | undefined): string[] {
+  if (!tools || tools.length === 0) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of tools) {
+    const label = TOOL_LABELS[id];
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
 }
 
-/** Deal shorthand for a real attached offer ("20% off", "₹50 off", …). */
-export function friendlyDeal(offer: OfferLike | null | undefined): string | null {
-  if (!offer) return null;
-  if (offer.type === 'percentage') return `${offer.value ?? 10}% off`;
-  if (offer.type === 'flat') return `₹${offer.value ?? 50} off`;
-  if (offer.type === 'combo') return `Combo at ₹${offer.value ?? 199}`;
-  if (offer.type === 'buy_x_get_y') return 'Buy X get Y';
-  if (offer.type === 'add_on') return 'Add-on deal';
-  if (typeof offer.value === 'number' && offer.value > 0) return `Special at ₹${offer.value}`;
-  return null;
+/**
+ * Card category badge from real recommendation data ("PROMOTION",
+ * "WEEKDAY", …). Prefers the engine's own strategy label; falls back to the
+ * recommendation type. Never invented.
+ */
+export function friendlyCategory(rec: { type?: string; strategyLabel?: string } | null | undefined): string {
+  const strategy = (rec?.strategyLabel || '').trim();
+  if (strategy) return strategy;
+  const derived = (rec?.type || '')
+    .trim()
+    .replace(/^CREATE_/i, '')
+    .replace(/_/g, ' ')
+    .trim();
+  return derived || 'RECOMMENDATION';
+}
+
+// ─── Deep analysis copy (canonical /analyze path) ─────────────────────────
+
+/**
+ * Domain → what it actually covers. These are short, faithful paraphrases of
+ * the backend's own domain questions (`ai/marketing/domains.ts`), not new
+ * claims: the owner sees "Sales" and what it looked at instead of a machine
+ * code.
+ */
+export const DOMAIN_LABELS: Record<string, string> = {
+  sales: 'Sales',
+  products: 'Menu items',
+  inventory: 'Stock',
+  customers: 'Customers',
+  marketing_history: 'Past offers & campaigns',
+  context: 'Festivals, sports & weather',
+  ml: 'Predictions',
+  feedback: 'Guest feedback',
+  competition: 'Nearby competition',
+};
+
+/** What each domain answers — the backend's own wording, shortened. */
+export const DOMAIN_DESCRIPTIONS: Record<string, string> = {
+  sales: 'how revenue, average bill size and demand shape are moving',
+  products: 'which dishes are high-demand, low-margin, declining or slow',
+  inventory: 'what is exposed to waste, expiry or running out',
+  customers: 'which customer groups exist and who has stopped coming',
+  marketing_history: 'how past offers and campaigns actually performed',
+  context: 'which festivals, matches or weather change demand right now',
+  ml: 'what the prediction models currently say',
+  feedback: 'what guest ratings and comments say',
+  competition: 'what nearby competitors are doing',
+};
+
+/** Unknown domains stay readable instead of disappearing. */
+export function friendlyDomain(domain: string | undefined): string {
+  if (!domain) return 'Unknown area';
+  return DOMAIN_LABELS[domain] ?? domain.replace(/_/g, ' ');
+}
+
+/**
+ * Domain status → owner language. `unavailable` is a REAL result and must
+ * never read as "all good" or as an error the owner caused.
+ */
+export const DOMAIN_STATUS_LABELS: Record<string, string> = {
+  ok: 'Checked',
+  partial: 'Partly checked',
+  unavailable: 'No data',
+};
+
+/** Validation check name → owner language (the 7 deterministic checks). */
+export const VALIDATION_CHECK_LABELS: Record<string, string> = {
+  economic_safety: 'Profit safety',
+  business_constraints: 'Your business rules',
+  promotion_fatigue: 'Too many offers lately',
+  inventory_feasibility: 'Stock feasibility',
+  marketing_conflict: 'Overlap with a live offer',
+  customer_eligibility: 'Who can receive it',
+  safety: 'Safety',
+};
+
+/** Check status → owner language. `skipped` is NOT a pass and says so. */
+export const VALIDATION_STATUS_LABELS: Record<string, string> = {
+  pass: 'Passed',
+  fail: 'Failed',
+  skipped: 'Not checked',
+  not_implemented: 'Not available yet',
+};
+
+/** Machine rejection codes → why the engine put a candidate aside. */
+export const REJECTION_CODE_LABELS: Record<string, string> = {
+  ECONOMICS_UNSAFE: 'the discount would eat too much profit',
+  VIOLATES_BUSINESS_CONSTRAINTS: 'it breaks one of your business rules',
+  PROMOTION_FATIGUE_HIGH: 'you have run too many offers recently',
+  STOCKOUT_RISK_ON_TARGET: 'a targeted item may run out',
+  DUPLICATE_ACTIVE_OFFER: 'an offer covering the same items is already running',
+  NO_TARGET_SEGMENT: 'no eligible customers were found for it',
+};
+
+/** Rejection codes → readable list; an unknown code stays visible, never dropped. */
+export function friendlyRejectionCodes(codes: string[] | undefined): string[] {
+  if (!codes || codes.length === 0) return [];
+  return codes.map((c) => REJECTION_CODE_LABELS[c] ?? c.replace(/_/g, ' ').toLowerCase());
+}
+
+/** Critic verdict → owner language ("PASS" is an internal token). */
+export function friendlyCriticVerdict(verdict: string | undefined): { label: string; tone: 'good' | 'warn' | 'bad' } {
+  switch (verdict) {
+    case 'PASS':
+      return { label: 'Looks sound', tone: 'good' };
+    case 'DOWNGRADE':
+      return { label: 'Treat with caution', tone: 'warn' };
+    case 'REJECT':
+      return { label: 'Not recommended', tone: 'bad' };
+    default:
+      return { label: 'Not reviewed', tone: 'warn' };
+  }
+}
+
+/** Run status → owner language. Degraded runs must say so plainly. */
+export function friendlyAnalyzeStatus(status: string | undefined): {
+  label: string;
+  description: string;
+  degraded: boolean;
+} {
+  switch (status) {
+    case 'completed':
+      return { label: 'Analysis complete', description: 'Every area answered with usable data.', degraded: false };
+    case 'completed_degraded':
+      return {
+        label: 'Analysis complete, with gaps',
+        description: 'Some areas had no data or were unavailable — the gaps are listed below.',
+        degraded: true,
+      };
+    case 'degraded_no_llm':
+      return {
+        label: 'Analysis limited',
+        description: 'The AI assistant was unavailable, so only the deterministic checks ran.',
+        degraded: true,
+      };
+    case 'failed':
+      return { label: 'Analysis failed', description: 'Nothing usable could be produced.', degraded: true };
+    default:
+      return { label: 'Analysis', description: '', degraded: true };
+  }
+}
+
+/** Risk level → owner language. */
+export const RISK_LABELS: Record<string, string> = {
+  low: 'Low risk',
+  medium: 'Medium risk',
+  high: 'High risk',
+};
+
+/** "72% confidence" — omitted entirely when the number is absent. */
+export function friendlyConfidence(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}% confidence`;
+}
+
+/**
+ * Evidence refs → owner-readable labels.
+ *
+ * A raw ref looks like `signal:sales_revenue_level:80022f:restaurant` — it
+ * carries internal ids, so it is NEVER rendered. Only the recognisable prefix
+ * is translated, deduped; anything unrecognisable is dropped and the caller
+ * falls back to the (real) count of supporting evidence instead of inventing a
+ * label.
+ */
+export function friendlyEvidenceRefs(refs: string[] | undefined): string[] {
+  if (!refs || refs.length === 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (typeof ref !== 'string' || !ref) continue;
+    const [prefix, key] = ref.split(':');
+    let label: string | undefined;
+    if (prefix === 'signal' && key) label = SIGNAL_LABELS[key] ?? key.replace(/_/g, ' ');
+    else if (prefix === 'ml' && key) label = ML_KIND_LABELS[key];
+    else if (prefix === 'declared' && key) label = `${friendlyDomain(key)} — not available yet`;
+    else if (prefix === 'memory') label = 'something learned from earlier runs';
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
+}
+
+/**
+ * A measured signal value + unit, or an empty string when the source had no
+ * number (the caller then shows "No measured value" rather than a fake 0).
+ * Units come from the existing normalizers: `currency`, `currency/day`,
+ * `currency/order`, `%`, `units`, `units/day`, `customers`, `days`, `rate`,
+ * `°C`, … — the currency family keeps its `/day` style suffix instead of being
+ * flattened to a bare amount.
+ */
+export function friendlySignalValue(
+  signal: { value?: number; unit?: string; changePct?: number } | null | undefined,
+  symbol = '₹',
+): string {
+  const parts: string[] = [];
+  const value = signal?.value;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const unit = (signal?.unit || '').trim();
+    const rounded = Math.round(value * 100) / 100;
+    if (unit.toLowerCase().startsWith('currency')) {
+      parts.push(`${friendlyMoney(value, symbol)}${unit.slice('currency'.length)}`);
+    } else if (unit === '%') {
+      parts.push(`${rounded}%`);
+    } else {
+      parts.push(unit ? `${rounded} ${unit}` : `${rounded}`);
+    }
+  }
+  if (typeof signal?.changePct === 'number' && Number.isFinite(signal.changePct) && signal.changePct !== 0) {
+    const pct = Math.round(signal.changePct * 100);
+    parts.push(`${pct > 0 ? '+' : ''}${pct}% vs usual`);
+  }
+  return parts.join(' · ');
+}
+
+// ─── AI request failures → owner language ─────────────────────────
+
+/**
+ * Why an owner-invoked AI endpoint (AI Insights, Recommendations, deep
+ * analysis, AI Inventory Insights) returned no result. Mirrors
+ * `AiFailureKind` in src/api/client.ts — duplicated as a raw string type so
+ * this module stays free of api-layer imports.
+ */
+export type AiFailureReason =
+  | 'offline'
+  | 'timeout'
+  | 'network_error'
+  | 'rate_limited'
+  | 'auth_required'
+  | 'server_error'
+  | 'http_error';
+
+/**
+ * A null result from an AI endpoint used to show one generic "couldn't be
+ * completed" line for four very different causes (device offline, client
+ * abort, rate limit, expired session, server trouble). The catch-block
+ * regexes that were meant to tell them apart were unreachable — the request
+ * layer returns null instead of throwing — so the owner never knew which
+ * remediation applied: wait, re-login, or reconnect Wi-Fi.
+ *
+ * `aiFailureCopy` turns the recorded reason (read with
+ * `getLastAiFailureReason` right after the null) into one extra detail
+ * sentence. The screens keep their own base line ("Recommendations couldn't
+ * be loaded right now.") so unknown reasons degrade to exactly the same
+ * copy as before; recognized reasons ADD an honest explanation and the
+ * matching remediation. Deterministic — covered in agentCopy.test.ts.
+ */
+export function aiFailureCopy(
+  reason: string | undefined,
+): string {
+  switch (reason) {
+    case 'offline':
+      return 'This device is offline. Reconnect to the internet and try again.';
+    case 'timeout':
+      return 'The analysis took longer than the app allows this time, so it was stopped mid-way. Nothing was lost — please run it again; a retry usually finishes within a minute.';
+    case 'network_error':
+      return 'The connection to the server dropped during the analysis. Please try again.';
+    case 'rate_limited':
+      return 'Another analysis is already running for your restaurant, or several ran just now. Please wait a few seconds and try again.';
+    case 'auth_required':
+      return 'Your session has expired. Please sign in again to run the analysis.';
+    case 'server_error':
+      return 'The server is having trouble right now. Please try again in a little while — nothing was changed.';
+    default:
+      return '';
+  }
 }

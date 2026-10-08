@@ -17,6 +17,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   generatePromotionCandidates,
   deduplicateCandidates,
+  violatesRestrictions,
+  type BusinessConstraints,
   type PromotionCandidate,
   type PromotionCandidateOptions,
 } from '../promotionCandidateService';
@@ -27,6 +29,30 @@ import { detectCustomerOpportunities } from '../customerOpportunityService';
 import { analyzeMenuEngineering } from '../menuEngineeringService';
 import { detectMarginSignals } from '../marginSignalsService';
 import { detectAllDemandAnomalies } from '../demandAnomalyService';
+
+describe('violatesRestrictions (D-17 restricted/excluded enforcement)', () => {
+  const base = { target: { productIds: ['p1'], categoryIds: ['c1'], segmentIds: [] } } as unknown as PromotionCandidate;
+  const constraints = (restricted: string[], excluded: string[]): BusinessConstraints => ({
+    minMarginPercent: 15,
+    maxDiscountPercent: 30,
+    minSellingPrice: 50,
+    restrictedCategories: restricted,
+    excludedProductIds: excluded,
+  });
+
+  it('rejects a restricted category', () => {
+    expect(violatesRestrictions(base, constraints(['c1'], []))).toBe(true);
+  });
+  it('rejects an excluded product', () => {
+    expect(violatesRestrictions(base, constraints([], ['p1']))).toBe(true);
+  });
+  it('allows unrelated targets', () => {
+    expect(violatesRestrictions(base, constraints(['c9'], ['p9']))).toBe(false);
+  });
+  it('is a no-op when no restrictions are configured', () => {
+    expect(violatesRestrictions(base, constraints([], []))).toBe(false);
+  });
+});
 
 vi.mock('../comboOpportunityService', () => ({
   detectComboOpportunities: vi.fn(),
@@ -155,6 +181,32 @@ describe('Promotion Candidate Service', () => {
 
       expect(candidates).toHaveLength(1);
       expect(candidates[0].id).toBe('promo_combo_1');
+    });
+
+    it('demand-anomaly candidate ids are stable and never contain "undefined"', async () => {
+      mockDetectors([]);
+      // A REVENUE_DROP anomaly has no single entity — it must still get a
+      // deterministic id (previously `promo_demand_undefined`).
+      vi.mocked(detectAllDemandAnomalies).mockResolvedValue([
+        {
+          type: 'REVENUE_DROP',
+          entityType: 'restaurant',
+          severity: 'high',
+          confidence: 0.8,
+          percentageChange: -22,
+          evidence: [{ description: 'Revenue fell 22%', value: -22, confidence: 0.8 }],
+        },
+      ] as never);
+
+      const candidates = await generatePromotionCandidates(defaultOpts);
+
+      const anomalyCandidate = candidates.find((c) => c.type === 'CREATE_PROMOTION');
+      expect(anomalyCandidate).toBeDefined();
+      expect(anomalyCandidate!.id).toBe('promo_demand_restaurant_revenue_drop');
+      expect(anomalyCandidate!.id).not.toContain('undefined');
+      // Placeholder economics must remain explicitly unavailable (D-08).
+      expect(anomalyCandidate!.financialModel.economicsUnavailable).toBe(true);
+      expect(anomalyCandidate!.financialModel.discountPercent).toBe(0);
     });
 
     it('should sort by score descending', async () => {

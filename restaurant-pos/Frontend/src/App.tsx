@@ -200,7 +200,6 @@ const AnalyticsWorkspace = safeLazy(() => import('./components/insights/Analytic
 const FinanceWorkspace = safeLazy(() => import('./components/finance/FinanceWorkspace'));
 const InventoryManager = safeLazy(() => import('./components/inventory/InventoryManager'));
 const FeedbackPanel = safeLazy(() => import('./components/marketing/FeedbackPanel'));
-const MLInsightsWorkspace = safeLazy(() => import('./components/insights/MLInsightsWorkspace'));
 const GuidedTour = safeLazy(() => import('./components/shell/GuidedTour'));
 
 // Hooks
@@ -958,7 +957,6 @@ export default function App() {
     Expenses: { manager: 'managerCanManageExpenses', cashier: 'cashierCanManageExpenses' },
     Reservations: { manager: 'managerCanAccessReservations', cashier: 'cashierCanAccessReservations' },
     Analytics: { manager: 'managerCanAccessAnalytics', cashier: 'cashierCanAccessAnalytics' },
-    MLInsights: { manager: 'managerCanAccessAnalytics', cashier: 'cashierCanAccessAnalytics' },
     Finance: { manager: 'managerCanAccessFinance', cashier: 'cashierCanAccessFinance' },
     Inventory: { manager: 'managerCanAccessInventory', cashier: 'cashierCanAccessInventory' },
     InventoryDashboard: { manager: 'managerCanAccessInventory', cashier: 'cashierCanAccessInventory' },
@@ -2607,18 +2605,6 @@ export default function App() {
               )}
               {pos.activeWorkspace === 'Inventory' && pos.hasInventory && (
                 <div className="flex flex-col flex-1 min-h-0"><InventoryManager onBack={() => pos.setActiveWorkspace('More')} moduleSettings={pos.moduleSettings} products={pos.products} /></div>
-              )}
-              {pos.activeWorkspace === 'MLInsights' && (
-                <div className="flex flex-col flex-1 min-h-0">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-white)] border-b border-[var(--color-border-default)] shrink-0">
-                    <button onClick={() => pos.setActiveWorkspace('More')} className="p-1.5 text-gray-400 hover:text-[var(--brand-color)] hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Back to More"><ArrowLeft className="w-4 h-4" /></button>
-                    <span className="text-sm font-bold text-[var(--color-text-primary)]">ML Insights</span>
-                    <span className="text-[10px] text-gray-400 ml-auto">Demand · Combos · Uplift</span>
-                  </div>
-                  <div className="flex-1 min-h-0 overflow-auto">
-                    <MLInsightsWorkspace currencySymbol={pos.effectiveSettings.currencySymbol} />
-                  </div>
-                </div>
               )}
               {pos.activeWorkspace === 'Feedback' && (
                 <div className="flex flex-col flex-1 min-h-0">

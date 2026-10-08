@@ -33,6 +33,16 @@ export interface CricketMatchContext {
   teams?: string[];
   /** Deterministic classification (spec §7) — name/teams contain India. */
   isIndiaMatch: boolean;
+  /**
+   * The senior ("original") India men's side ONLY — excludes India A/B, India
+   * Women, India U19 and the domestic composite "Rest of India".
+   *
+   * `isIndiaMatch` stays the broad "involves an Indian side" signal used for
+   * relevance tiers; THIS is the flag the admin Context Calendar scopes on.
+   * An India A fixture is India context, but it is not Team India, and an
+   * offer built on it under the wrong name is a wrong offer.
+   */
+  isTeamIndiaMatch: boolean;
   /** Derived from the match name suffix (", <series>" tail) when present. */
   tournament?: string;
   source: 'cricapi';
@@ -43,6 +53,13 @@ export interface CricketMatchContext {
 export interface CricketContextCache {
   matches: CricketMatchContext[];
   fetchedAt: string;
+  /**
+   * Look-ahead (days) this payload was collected for. A payload collected for
+   * a narrower window cannot answer a wider request, so the service refreshes
+   * instead of silently under-reporting. Absent on payloads written before
+   * this field existed (treated as usable, matching the legacy behaviour).
+   */
+  horizonDays?: number;
 }
 
 /** Service-level output (spec §14/§16): availability is always explicit. */

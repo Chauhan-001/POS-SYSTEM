@@ -37,6 +37,15 @@ const recipeFieldsSchema = z.object({
   servingSize: z.number().min(1).optional(),
   preparationNotes: z.string().max(4000).optional(),
   components: z.array(componentSchema).max(200).default([]),
+  /**
+   * Ingredients with no inventory item yet. On create, each is added to
+   * inventory with 0 stock and becomes a component of the recipe.
+   */
+  newIngredients: z.array(z.object({
+    name: z.string().min(1).max(120).trim(),
+    unit: z.string().min(1).max(20).trim().default('pcs'),
+    quantity: z.number().min(0).default(0),
+  })).max(100).optional(),
 });
 
 export const createRecipeSchema = recipeFieldsSchema.strict();

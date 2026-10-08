@@ -166,4 +166,38 @@ describe('FIFO batch consumption', () => {
     expect(row.batches).toBeUndefined(); // full batch array NOT transferred
     expect(row.variants).toBeUndefined();
   });
+
+  it('keeps currentStock to 4 decimals across repeated fractional reductions', async () => {
+    const sugar = await makeItem('SugarFrac');
+    // Legacy item: has stock but no FIFO batches (currentStock-only path).
+    await Product.updateOne({ _id: sugar._id }, { $set: { currentStock: 100, batches: [] } });
+
+    for (let i = 0; i < 7; i++) await sell(sugar._id, 0.1);
+
+    const fresh = await Product.findById(sugar._id).lean().exec();
+    // Exactly 99.3 — never 99.29999999999998.
+    expect(Number(fresh!.currentStock)).toBe(99.3);
+    const decimals = String(fresh!.currentStock).split('.')[1]?.length || 0;
+    expect(decimals).toBeLessThanOrEqual(4);
+  });
+
+  it('cleans an already-drifted stored stock on the next reduction (no float noise)', async () => {
+    const flour = await makeItem('FlourDrift');
+    // Simulate a row already carrying binary-float noise from earlier movements.
+    const drifted = 63.2 - 12; // 51.199999999999996
+    await Product.updateOne({ _id: flour._id }, { $set: { currentStock: drifted, batches: [] } });
+
+    const res = await stockMovementService.applyMovement({
+      restaurantId: REST,
+      productId: String(flour._id),
+      delta: -1.2,
+      type: 'sale',
+      unit: 'kg',
+      allowNegative: true,
+    });
+
+    expect(res.after).toBe(50); // 51.2 - 1.2, rounded — no drift
+    const fresh = await Product.findById(flour._id).lean().exec();
+    expect(Number(fresh!.currentStock)).toBe(50);
+  });
 });

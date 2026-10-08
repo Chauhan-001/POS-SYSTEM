@@ -2,36 +2,41 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * marketingAgentProposal.ts — WP1 of the agent→campaign bridge.
+ * marketingAgentProposal.ts — the recommendation → proposal bridge.
  *
- * Converts a read-only MarketingAgentResult into a persisted, validated
- * CampaignProposal by delegating ALL writes to the existing authoritative
- * campaignService — the agent never writes to Mongo directly, and no LLM is
- * involved anywhere in this flow.
+ * SCOPE (after the architecture change): only the RANKED INTELLIGENCE
+ * RECOMMENDATION path exists. The old deterministic marketing agent is
+ * removed, so the agent-result → proposal bridge (and its ML-label audience
+ * resolver) is gone with it: an agentic INSIGHT is advisory and can never be
+ * turned into a campaign.
  *
- * Edge cases handled explicitly (never silently):
- *   - targetingSource NONE   → no proposal is created (agent's own rule:
- *     "Do not send targeted campaigns without a signal").
- *   - New restaurant / no data → agent returns NONE; caller gets the agent's
- *     nextActions instead of a fabricated proposal.
- *   - ML down / uplift gate fails → agent falls to RESPONSE_MODEL,
- *     ML_SEGMENTS or NONE; the dataSufficiency label travels with the
- *     proposal as evidence.
- *   - Audience resolves to zero phones → proposal is still created (so the
- *     owner can see the evidence), but validation will flag the audience and
- *     scheduling is impossible until it is fixed.
- *   - No delivery channels configured (no WhatsApp/webhook) → draft created,
- *     validation flags communication; scheduling is blocked.
- *   - Duplicate proposals for the same day → date-stable name + the existing
- *     duplicate-name rejection in validateCampaignProposal.
+ * The mapper delegates ALL writes to the existing model validation/services —
+ * the pipeline never writes campaign data directly, no LLM is involved, and
+ * owner approval remains mandatory (`approvalStatus: 'pending'`).
  */
 
 import mongoose from 'mongoose';
 import CampaignProposal from '../../models/marketing/CampaignProposal';
 import { availableChannels } from '../../services/deliveryService';
-import { campaignService } from '../../services';
-import { resolveAgentTargets, type ResolvedAudience } from './audienceResolver';
-import type { MarketingAgentResult, TargetingSource } from './marketingAgent';
+
+/** A resolved audience for a draft proposal (deterministic labels only). */
+export interface ResolvedAudience {
+  /** Resolved 10-digit phones (deduped). */
+  phones: string[];
+  /** Human-readable labels kept for proposal display (segment labels). */
+  segmentNames: string[];
+  /** Aggregate per-source breakdown — never exposes customer PII. */
+  sources: Array<{
+    refId: string;
+    refType: 'customer' | 'segment';
+    matched: number;
+    reason?: string;
+  }>;
+  /** Fully empty audience = nothing was resolvable. */
+  isEmpty: boolean;
+  /** Deterministic explanation surfaced to the owner in the proposal. */
+  notes: string[];
+}
 
 /** A draft proposal + the validation verdict + human-readable status. */
 export interface AgentProposalOutcome {
@@ -51,118 +56,124 @@ export interface AgentProposalOutcome {
   audience: ResolvedAudience;
 }
 
-// ─── Deterministic mapping tables ────────────────────────────────────────
+/** The subset of a ranked recommendation the owner selects in /intelligence. */
+export interface SelectedRecommendationInput {
+  id: string;
+  type: string;
+  title: string;
+  description?: string;
+  recommendedAction?: string;
+  strategyLabel?: string;
+  engineScore?: number;
+  confidence?: number;
+  priority?: string;
+  economics?: Record<string, unknown>;
+  target?: { productIds?: string[]; categoryIds?: string[]; segmentIds?: string[] };
+  provenance?: { signalCodes?: string[]; signalThemes?: string[]; mlKinds?: string[]; memoryRefs?: string[] };
+  why?: string[];
+}
 
-const SUFFICIENCY_BY_SOURCE: Record<TargetingSource, 'INSUFFICIENT_DATA' | 'LOW_CONFIDENCE' | 'MODERATE_CONFIDENCE' | 'HIGH_CONFIDENCE'> = {
-  CAUSAL_UPLIFT: 'HIGH_CONFIDENCE',
-  RESPONSE_MODEL: 'MODERATE_CONFIDENCE',
-  ML_SEGMENTS: 'LOW_CONFIDENCE',
-  NONE: 'INSUFFICIENT_DATA',
+/** PromotionType → proposal objective (deterministic, no LLM). */
+const OBJECTIVE_BY_PROMOTION_TYPE: Record<string, Campaign['objective']> = {
+  CREATE_COMBO: 'INCREASE_AOV',
+  CREATE_ADDON: 'INCREASE_ADDON_ATTACHMENT',
+  CREATE_PROMOTION: 'INCREASE_ORDERS',
+  RUN_REACTIVATION: 'REACTIVATE_CUSTOMERS',
+  PROMOTE_SLOW_ITEM: 'INCREASE_ORDERS',
+  PROTECT_HIGH_DEMAND_STOCK: 'PROTECT_HIGH_PERFORMERS',
+  REDUCE_WASTAGE: 'REDUCE_WASTAGE',
+  REVIEW_PRICE: 'INCREASE_HIGH_MARGIN_SALES',
+  REVIEW_RECIPE_COST: 'INCREASE_HIGH_MARGIN_SALES',
 };
 
-const STRATEGY_BY_SOURCE: Record<Exclude<TargetingSource, 'NONE'>, Campaign['strategy']> = {
-  CAUSAL_UPLIFT: 'REACTIVATION',
-  RESPONSE_MODEL: 'DISCOUNT',
-  ML_SEGMENTS: 'DISCOUNT',
+/** PromotionType → proposal strategy (deterministic, no LLM). */
+const STRATEGY_BY_PROMOTION_TYPE: Record<string, Campaign['strategy']> = {
+  CREATE_COMBO: 'COMBO',
+  CREATE_ADDON: 'ADDON',
+  CREATE_PROMOTION: 'DISCOUNT',
+  RUN_REACTIVATION: 'REACTIVATION',
+  PROMOTE_SLOW_ITEM: 'DISCOUNT',
+  PROTECT_HIGH_DEMAND_STOCK: 'TIME_BASED',
+  REDUCE_WASTAGE: 'DISCOUNT',
+  REVIEW_PRICE: 'DISCOUNT',
+  REVIEW_RECIPE_COST: 'DISCOUNT',
 };
-
-/** Canonical context signal → proposal objective. First match wins. */
-function objectiveFromResult(r: MarketingAgentResult): Campaign['objective'] {
-  const has = (sig: string) => r.sportsSignals.includes(sig) || r.competitionSignals.includes(sig);
-  const festivalSignals = (r as { festivalSignals?: string[] }).festivalSignals ?? [];
-  if (festivalSignals.includes('festival_upcoming') || festivalSignals.includes('festival_active')) {
-    return 'PROMOTE_NEW_ITEM';
-  }
-  if (has('INDIA_MATCH') || has('INDIA_MATCH_HIGH_RELEVANCE')) return 'INCREASE_ORDERS';
-  if (has('COMPETITION_DENSITY_HIGH')) return 'INCREASE_ORDERS';
-  if (r.targetingSource === 'ML_SEGMENTS') return 'REACTIVATE_CUSTOMERS';
-  return 'INCREASE_ORDERS';
-}
-
-function strategyFromResult(r: MarketingAgentResult): Campaign['strategy'] {
-  const festivalSignals = (r as { festivalSignals?: string[] }).festivalSignals ?? [];
-  if (festivalSignals.includes('festival_upcoming')) return 'CATEGORY_PROMOTION';
-  if (r.sportsSignals.length > 0) return 'TIME_BASED';
-  return STRATEGY_BY_SOURCE[r.targetingSource as Exclude<TargetingSource, 'NONE'>] ?? 'DISCOUNT';
-}
-
-/** Evidence notes appended to the proposal description (audit trail). */
-function evidenceLines(r: MarketingAgentResult): string[] {
-  const lines: string[] = [];
-  lines.push(`Targeting source: ${r.targetingSource} — ${r.targetingReason}`);
-  lines.push(`Scope: ${r.targetingScope}`);
-  if (r.festivalContext) lines.push(r.festivalContext);
-  if (r.sportsContext) lines.push(r.sportsContext);
-  if (r.competitionContext) lines.push(r.competitionContext);
-  if (r.basketContext) lines.push(r.basketContext);
-  if (r.demandContext) lines.push(r.demandContext);
-  return lines;
-}
-
-// ─── Main mapper ─────────────────────────────────────────────────────────
 
 /**
- * Build + persist a CampaignProposal draft from an agent result.
- * Tenant identity (restaurantId) comes from the authenticated context only —
- * the agent result carries no tenant authority of its own.
+ * Build a CampaignProposal from the EXACT recommendation the owner selected in
+ * /intelligence. It does NOT re-run any agent and does NOT regenerate a
+ * different decision: the source recommendation id + snapshot are persisted on
+ * the proposal for traceability (`sourceRecommendationId`).
+ *
+ * Tenant identity comes from the authenticated context only. No audience phones
+ * are fabricated: the engine's own segment ids are carried through and the
+ * owner resolves the audience before scheduling (existing lifecycle unchanged).
  */
-export async function createProposalFromAgentResult(
+export async function createProposalFromRankedRecommendation(
   restaurantId: string,
-  result: MarketingAgentResult,
+  rec: SelectedRecommendationInput,
   ctx: { operator?: string } = {},
 ): Promise<AgentProposalOutcome> {
-  // Gate 0 — the agent's own honesty rule: no signal, no proposal.
-  if (result.targetingSource === 'NONE' || result.targets.length === 0) {
+  if (!rec?.id || !rec.type || !rec.title) {
     return {
       created: false,
-      skipReason:
-        'No ML targeting signal available (new restaurant, ML not synced, or uplift gate failed). ' +
-        'Follow the agent nextActions instead — no proposal was created.',
-      readiness: {
-        canSchedule: false,
-        blockers: ['NO_TARGETING_SIGNAL'],
-        availableChannels: await availableChannels(restaurantId),
-        audienceCount: 0,
-      },
+      skipReason: 'A recommendation id, type and title are required to create a proposal.',
+      readiness: { canSchedule: false, blockers: ['INVALID_RECOMMENDATION'], availableChannels: await availableChannels(restaurantId), audienceCount: 0 },
       audience: { phones: [], segmentNames: [], sources: [], isEmpty: true, notes: [] },
     };
   }
 
-  // Step 1 — resolve the audience server-side (segment labels / ids → phones).
-  const audience = await resolveAgentTargets(restaurantId, result.targets);
-
-  // Step 2 — propose only channels that are actually configured.
   const usable = await availableChannels(restaurantId);
   const channels = (usable.length > 0 ? usable : ['webhook']).slice(0, 5) as Campaign['channels'];
 
-  // Step 3 — assemble the draft. Economics are NOT guessed here: the campaign
-  // service calculates them from real offer/audience data below.
-  const evidence = evidenceLines(result).concat(audience.notes);
-  const date = result.generatedAt.slice(0, 10);
-  const name = `${objectiveFromResult(result)} • ${result.targetingSource} • ${date}`;
+  const segmentIds = rec.target?.segmentIds ?? [];
+  const audience: ResolvedAudience = {
+    phones: [],
+    segmentNames: segmentIds,
+    sources: segmentIds.map((id) => ({ refId: id, refType: 'segment' as const, matched: 0, reason: 'carried from selected recommendation' })),
+    isEmpty: segmentIds.length === 0,
+    notes: [`Created from ranked recommendation ${rec.id} (${rec.type}) — the owner selected this exact recommendation.`],
+  };
+
+  const economicsAvailable = (rec.economics as { available?: boolean } | undefined)?.available !== false;
+  const evidence = [
+    `Recommendation ${rec.id} (${rec.type})`,
+    ...(rec.why ?? []).slice(0, 3),
+    ...(rec.provenance?.signalCodes ?? []).map((s) => `signal:${s}`),
+    ...(rec.provenance?.signalThemes ?? []).map((s) => `theme:${s}`),
+  ];
+  const status = economicsAvailable ? 'economy from the engine' : 'economy unavailable — not fabricated';
+  const date = new Date().toISOString().slice(0, 10);
 
   const draft = {
     restaurantId,
-    name,
-    description: `AI marketing agent draft — ${evidence.join(' | ')}`.slice(0, 480),
-    objective: objectiveFromResult(result),
-    strategy: strategyFromResult(result),
-    offerId: result.offerDraft?.offerId ?? undefined,
-    source: 'agent' as const,
+    name: `${rec.title} • RECOMMENDATION • ${date}`.slice(0, 200),
+    description: `Intelligence recommendation draft (${status}) — ${evidence.join(' | ')}`.slice(0, 480),
+    objective: OBJECTIVE_BY_PROMOTION_TYPE[rec.type] ?? 'INCREASE_ORDERS',
+    strategy: STRATEGY_BY_PROMOTION_TYPE[rec.type] ?? 'DISCOUNT',
+    offerId: undefined,
+    source: 'recommendation' as const,
+    sourceRecommendationId: rec.id,
+    sourceRecommendation: {
+      id: rec.id,
+      type: rec.type,
+      title: rec.title,
+      engineScore: rec.engineScore ?? null,
+      confidence: rec.confidence ?? null,
+      economics: rec.economics ?? null,
+      provenance: rec.provenance ?? null,
+      selectedAt: new Date().toISOString(),
+    },
     audience: {
-      segmentIds: [] as string[], // ML labels are resolved to phones, not rule-segment ids
+      segmentIds,
       segmentNames: audience.segmentNames,
-      customerPhones: audience.phones,
+      customerPhones: [] as string[],
       excludedProductIds: [] as string[],
       excludedSegmentIds: [] as string[],
     },
     schedule: { mode: 'immediate' as const, scheduledAt: undefined as unknown as Date },
     channels,
-    budgetLimits: {
-      maxDiscountPercent: 20,
-      maxPerCustomer: 1,
-      maxFreeItems: 0,
-    },
+    budgetLimits: { maxDiscountPercent: 30, maxPerCustomer: 1, maxFreeItems: 0 },
     financialModel: {
       totalCost: 0,
       discountCost: 0,
@@ -172,11 +183,11 @@ export async function createProposalFromAgentResult(
       expectedIncrementalContribution: 0,
       expectedROI: 0,
       costBreakdown: { discountCost: 0, communicationCost: 0, freeItemCost: 0 },
-      confidence: (result.targetingSource === 'CAUSAL_UPLIFT' ? 'high' : result.targetingSource === 'RESPONSE_MODEL' ? 'moderate' : 'low') as 'high' | 'moderate' | 'low',
+      confidence: (rec.confidence ?? 0) >= 0.7 ? 'high' : (rec.confidence ?? 0) >= 0.4 ? 'moderate' : 'low',
     },
     expectedImpact: {
-      expectedReach: audience.phones.length,
-      expectedRedemptionRate: result.targetingSource === 'CAUSAL_UPLIFT' ? 15 : 10,
+      expectedReach: 0,
+      expectedRedemptionRate: 0,
       expectedIncrementalOrders: 0,
       expectedAOVImpact: 0,
       expectedNewCustomers: 0,
@@ -185,11 +196,11 @@ export async function createProposalFromAgentResult(
     evidence: {
       elasticityEstimate: undefined,
       historicalPromotionIds: [],
-      dataSufficiency: SUFFICIENCY_BY_SOURCE[result.targetingSource],
-      modelVersion: 'marketing-agent-ladder-v1',
+      dataSufficiency: economicsAvailable ? 'LOW_CONFIDENCE' : 'INSUFFICIENT_DATA',
+      modelVersion: 'marketing-intelligence-recommendation-v1',
     },
     risks: {
-      marginRisk: 'moderate' as const,
+      marginRisk: (economicsAvailable && (rec.economics as { economicallySafe?: boolean } | undefined)?.economicallySafe ? 'low' : 'moderate') as 'low' | 'moderate' | 'high',
       cannibalizationRisk: 'low' as const,
       fatigueRisk: 'low' as const,
       conflictRisk: 'low' as const,
@@ -199,36 +210,12 @@ export async function createProposalFromAgentResult(
     executionStatus: 'pending' as const,
   };
 
-  // Step 4 — economics from the authoritative calculator (no placeholders).
-  let economics: Awaited<ReturnType<CampaignService['calculateCampaignEconomics']>> | null = null;
-  try {
-    economics = await campaignService.calculateCampaignEconomics(restaurantId, draft as any, ctx);
-  } catch {
-    economics = null; // kept null → validation carries the uncertainty
-  }
-  if (economics) {
-    draft.financialModel = {
-      totalCost: economics.totalCost,
-      discountCost: economics.discountCost,
-      communicationCost: economics.communicationCost,
-      freeItemCost: economics.freeItemCost,
-      expectedRevenue: 0,
-      expectedIncrementalContribution: economics.expectedIncrementalContribution,
-      expectedROI: economics.expectedROI,
-      costBreakdown: economics.costBreakdown,
-      confidence: draft.financialModel.confidence,
-    };
-  }
-
-  // Step 5 — persist via the model (tenant-scoped). No service write needed.
   const proposal = await CampaignProposal.create({ ...draft, restaurantId: new mongoose.Types.ObjectId(restaurantId) } as any);
 
-  // Step 6 — validate immediately so the owner sees blockers at creation time.
   let validation: { valid: boolean; errors: string[]; warnings: string[] };
   try {
     const v = await (proposal as any).validateCampaignProposal();
     validation = { valid: Boolean(v?.valid), errors: v?.errors ?? [], warnings: v?.warnings ?? [] };
-    // Store the verdict on the document for the lifecycle UI.
     await CampaignProposal.updateOne(
       { _id: proposal._id },
       { $set: { validationResult: { ...validation, checks: validation.valid ? allChecksTrue() : heuristicChecks(validation, audience) } } },
@@ -243,19 +230,13 @@ export async function createProposalFromAgentResult(
     proposalId: String(proposal._id),
     proposal,
     validation,
-    readiness: {
-      canSchedule: blockers.length === 0,
-      blockers,
-      availableChannels: usable,
-      audienceCount: audience.phones.length,
-    },
+    readiness: { canSchedule: blockers.length === 0, blockers, availableChannels: usable, audienceCount: audience.phones.length },
     audience,
   };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
-type CampaignService = import('../../services/campaignService').CampaignService;
 type Campaign = import('../../models/marketing/CampaignProposal').ICampaignProposal;
 
 function allChecksTrue() {

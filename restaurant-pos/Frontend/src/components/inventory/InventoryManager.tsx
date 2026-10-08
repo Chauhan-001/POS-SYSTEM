@@ -29,9 +29,18 @@ import {
 import { useAuth } from '../../hooks/useAuth';
 import { invalidateCache } from '../../data';
 
+/**
+ * Stock is stored to 4 decimal places. Round every quantity that reaches the
+ * UI so fractional movements (recipe consumption, unit conversion) never
+ * render as 51.199999999999996.
+ */
+function roundQty(n: number): number {
+  return Math.round((Number(n) || 0) * 10000) / 10000;
+}
+
 /** Map a backend Product document into the frontend InventoryItem shape. */
 function productToInventoryItem(p: any): InventoryItem {
-  const stock = Number(p?.currentStock) || 0;
+  const stock = roundQty(Number(p?.currentStock) || 0);
   const min = Number(p?.minStock) || 0;
   let status: InventoryItem['status'] = 'healthy';
   if (min > 0 && stock <= 0) status = 'critical';
@@ -57,7 +66,7 @@ function productToInventoryItem(p: any): InventoryItem {
       ? p.batches.map((b: any) => ({
           batchNumber: b.batchNumber || '',
           expiryDate: b.expiryDate || '',
-          quantity: Number(b.quantity) || 0,
+          quantity: roundQty(Number(b.quantity) || 0),
           receivedDate: b.receivedDate || '',
           cost: Number(b.cost) || 0,
         }))
@@ -84,7 +93,7 @@ function inventoryItemToProduct(item: InventoryItem) {
     price: 0,
     type: 'inventory',
     availability: false, // inventory-only item — hidden from the billing menu
-    currentStock: Number(item.currentStock) || 0,
+    currentStock: roundQty(Number(item.currentStock) || 0),
     unit: item.unit || 'pcs',
     minStock: Number(item.minStock) || 0,
     maxStock: Number(item.maxStock) || 0,
@@ -449,7 +458,7 @@ export default function InventoryManager({ onBack, moduleSettings, products }: I
         if (!line) return i;
         const qty = Math.max(0, Number(line.quantity) || 0);
         if (qty === 0) return i;
-        const currentStock = Math.max(0, Number(i.currentStock) - qty);
+        const currentStock = roundQty(Math.max(0, Number(i.currentStock) - qty));
         return { ...i, currentStock, status: computeStatus({ currentStock, minStock: Number(i.minStock) || 0 }), lastUpdated: today };
       }));
     };
@@ -641,13 +650,13 @@ export default function InventoryManager({ onBack, moduleSettings, products }: I
         unit: unit || item.unit,
       });
       if (res && typeof res.after === 'number') {
-        setItems(prev => prev.map(i => i.id === item.id ? { ...i, currentStock: res.after, lastUpdated: new Date().toISOString().slice(0, 10) } : i));
+        setItems(prev => prev.map(i => i.id === item.id ? { ...i, currentStock: roundQty(res.after), lastUpdated: new Date().toISOString().slice(0, 10) } : i));
         return;
       }
     }
     // Offline/local fallback — the sync engine replays the queued write.
     setItems(prev => prev.map(i =>
-      i.name === itemName ? { ...i, currentStock: i.currentStock + qty, lastUpdated: new Date().toISOString().slice(0, 10) } : i
+      i.name === itemName ? { ...i, currentStock: roundQty(i.currentStock + qty), lastUpdated: new Date().toISOString().slice(0, 10) } : i
     ));
   }, [items]);
 
@@ -663,13 +672,13 @@ export default function InventoryManager({ onBack, moduleSettings, products }: I
         unit: item.unit,
       });
       if (res && typeof res.after === 'number') {
-        setItems(prev => prev.map(i => i.id === item.id ? { ...i, currentStock: res.after, lastUpdated: new Date().toISOString().slice(0, 10) } : i));
+        setItems(prev => prev.map(i => i.id === item.id ? { ...i, currentStock: roundQty(res.after), lastUpdated: new Date().toISOString().slice(0, 10) } : i));
         return;
       }
     }
     // Offline/local fallback (never below zero).
     setItems(prev => prev.map(i =>
-      i.name === itemName ? { ...i, currentStock: Math.max(0, i.currentStock - qty), lastUpdated: new Date().toISOString().slice(0, 10) } : i
+      i.name === itemName ? { ...i, currentStock: roundQty(Math.max(0, i.currentStock - qty)), lastUpdated: new Date().toISOString().slice(0, 10) } : i
     ));
   }, [items]);
 

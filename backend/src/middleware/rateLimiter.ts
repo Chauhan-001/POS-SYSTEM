@@ -201,6 +201,97 @@ export const adminApiLimiter = rateLimit({
 // so one noisy terminal can't exhaust another tenant's quota. Falls back to
 // the client IP for unauthenticated requests (e.g. /status).
 
+// ══════════════════════════════════════════════════════════════════════
+// MARKETING INTELLIGENCE RATE LIMITER (per-restaurant) + CONCURRENCY GUARD
+// ══════════════════════════════════════════════════════════════════════
+// POST /api/ai/marketing-agent/intelligence runs a tool fan-out plus an
+// optional LLM call; without a guard a frontend retry loop can trigger a tool
+// storm. Keyed on the authenticated restaurantId (falls back to IP), tighter
+// than apiLimiter, and paired with a per-tenant concurrency cap so one tenant
+// can never run two expensive pipelines at once.
+
+export const intelligenceLimiter = rateLimit({
+  windowMs: config.rateLimiting.intelligence.windowMs,
+  max: config.rateLimiting.intelligence.maxRequests,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const restaurantId = (req as any).user?.restaurantId;
+    if (typeof restaurantId === 'string' && restaurantId) {
+      return `intel:tenant:${restaurantId}`;
+    }
+    return `intel:ip:${ipKeyGenerator(req.ip || 'unknown')}`;
+  },
+  message: {
+    error: 'Too many intelligence requests for this restaurant. Please slow down.',
+    code: 'RATE_LIMITED',
+  },
+});
+
+/**
+ * In-process count of in-flight runs, keyed by AGENT and tenant.
+ *
+ * Keyed per agent on purpose. The three expensive AI pipelines (marketing
+ * intelligence, deep analysis, the inventory agent) are independent, but a
+ * single tenant-wide counter made them mutually exclusive: a marketing page
+ * load holds the "/intelligence" slot for as long as that pipeline runs, so an
+ * owner clicking "Run deep analysis" — or any inventory-agent run — got a 429
+ * for the whole duration with no way to make progress. The guard exists to
+ * stop a retry loop stacking the SAME costly pipeline on one tenant, not to
+ * serialise unrelated agents.
+ */
+const intelligenceInFlight = new Map<string, number>();
+
+/**
+ * Build a per-tenant concurrency guard for ONE agent.
+ *
+ * Rejects a new run while the same tenant already has `maxConcurrent` runs of
+ * `agent` in flight, with a structured 429 carrying a retryable code. The slot
+ * is released on both `finish` and `close` so a dropped connection cannot leak
+ * it — released EXACTLY once, because both events fire for a normal response.
+ */
+export function concurrencyGuardFor(agent: string): (req: Request, res: Response, next: NextFunction) => void {
+  return function agentConcurrencyGuard(req: Request, res: Response, next: NextFunction): void {
+    const restaurantId = (req as any).user?.restaurantId;
+    if (typeof restaurantId !== 'string' || !restaurantId) return next();
+    const key = `${agent}:${restaurantId}`;
+    const max = Math.max(1, config.rateLimiting.intelligence.maxConcurrent);
+    const current = intelligenceInFlight.get(key) ?? 0;
+    if (current >= max) {
+      res.status(429).json({
+        error: 'An intelligence run is already in progress for this restaurant. Please wait for it to finish.',
+        code: 'CONCURRENCY_LIMIT',
+        retryAfter: 5,
+      });
+      return;
+    }
+    intelligenceInFlight.set(key, current + 1);
+    // `finish` and `close` BOTH fire for a normal response, so an unguarded
+    // release decremented the in-flight count twice per run. That under-counted
+    // concurrent runs: a second run's slot was freed while it was still
+    // executing, letting a third in — exactly the tool storm this guard exists
+    // to prevent. Release exactly once.
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const n = (intelligenceInFlight.get(key) ?? 1) - 1;
+      if (n <= 0) intelligenceInFlight.delete(key);
+      else intelligenceInFlight.set(key, n);
+    };
+    res.on('finish', release);
+    res.on('close', release);
+    next();
+  };
+}
+
+/**
+ * The marketing INTELLIGENCE pipeline's guard (`POST /intelligence`).
+ * Deep analysis and the inventory agent have their own counters — see
+ * `concurrencyGuardFor` at their route definitions.
+ */
+export const intelligenceConcurrencyGuard = concurrencyGuardFor('marketing_intelligence');
+
 // Express-rate-limit v7+ requires the official ipKeyGenerator helper when a
 // custom keyGenerator reads the request IP (handles IPv6 / X-Forwarded-For).
 export const voiceApiLimiter = rateLimit({

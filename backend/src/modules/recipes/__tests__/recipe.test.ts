@@ -190,6 +190,48 @@ describe('RecipeCostEngine', () => {
     expect(cost.perServingCost).toBe(100);
   });
 
+  it('creates a 0-stock inventory item for a brand-new ingredient on save', async () => {
+    dish = await makeMenuProduct('Dragon Dish', 200);
+
+    const recipe = await recipeService.create(REST_A, {
+      variantName: 'Default',
+      productId: String(dish._id),
+      yieldQuantity: 1,
+      yieldUnit: 'plate',
+      components: [],
+      newIngredients: [{ name: 'Dragon Fruit', unit: 'grams', quantity: 100 }],
+    }, { operator: 'owner' });
+
+    // Created in inventory with 0 stock and a normalized unit.
+    const item = await Product.findOne({ restaurantId: REST_A, name: 'Dragon Fruit', type: 'inventory' });
+    expect(item).toBeTruthy();
+    expect((item as any).currentStock).toBe(0);
+    expect((item as any).unit).toBe('g');
+
+    // …and it is a component of the saved recipe.
+    const comp = ((recipe as any).components || [])
+      .find((c: any) => String(c.inventoryItemId) === String(item!._id));
+    expect(comp).toBeTruthy();
+    expect(comp.itemName).toBe('Dragon Fruit');
+  });
+
+  it('reuses an existing inventory item instead of duplicating a new ingredient', async () => {
+    await makeIngredient('Dragon Fruit', 'g', 4);
+    dish = await makeMenuProduct('Dragon Dish 2', 200);
+
+    await recipeService.create(REST_A, {
+      variantName: 'Default',
+      productId: String(dish._id),
+      yieldQuantity: 1,
+      yieldUnit: 'plate',
+      components: [],
+      newIngredients: [{ name: 'dragon fruit', unit: 'g', quantity: 50 }],
+    }, { operator: 'owner' });
+
+    const count = await Product.countDocuments({ restaurantId: REST_A, name: /^dragon fruit$/i, type: 'inventory' });
+    expect(count).toBe(1);
+  });
+
   it('applies component wastage percent', async () => {
     paneer = await makeIngredient('Paneer', 'kg', 100);
     dish = await makeMenuProduct('Wastage Dish', 100);

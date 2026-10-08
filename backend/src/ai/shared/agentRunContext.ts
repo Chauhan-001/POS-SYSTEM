@@ -73,6 +73,12 @@ export interface AgentToolCallRecord {
   code?: string;
   message?: string;
   durationMs: number;
+  /**
+   * Set when the loop SERVED a cached observation instead of re-executing the
+   * identical (tool + args) call. Bounded duplicate suppression — the model
+   * still gets a result, the tool still runs at most once per unique input.
+   */
+  deduped?: boolean;
 }
 
 /** Compact tool output fed back into the loop (never the raw dataset). */
@@ -82,6 +88,15 @@ export interface AgentObservation {
   ok: boolean;
   /** Truncated, structured summary — safe to place in a prompt. */
   summary: string;
+  /**
+   * Whether this source actually RETURNED DATA. `ok:true` only means the
+   * read-only call executed without error — a source can execute perfectly and
+   * still report `available:false` / `NO_*DATA` (nothing to report). That
+   * distinction is what lets a stop guard refuse to conclude "not enough data"
+   * from sources that merely had nothing, and lets the prompt show which areas
+   * are still unread. Omitted (undefined) means "not judged" (older callers).
+   */
+  usable?: boolean;
 }
 
 /** Something the run could not establish (surfaced, never papered over). */
@@ -95,6 +110,42 @@ export interface AgentRejection {
   ref: string;
   reason: string;
   stage: 'policy' | 'budget' | 'validation';
+}
+
+/**
+ * One replayable investigation decision: what the model SAW before deciding
+ * (the observations available at that step), what it DECIDED (tools to call,
+ * whether more evidence was needed, its stated reason), and what it GOT (the
+ * calls actually executed). Recorded only when the caller opts in
+ * (`replayEpisode`) — every other agent stays byte-identical. The observation
+ * summaries are the same already-bounded renderings the next prompt used, so
+ * a replay shows exactly the evidence the decision was made from; no raw tool
+ * payloads are recorded.
+ */
+export interface AgentStepDecision {
+  step: number;
+  /** Observation summaries visible to the model when it made this decision. */
+  seen: Array<{ tool: string; ok: boolean; summary: string }>;
+  /** Tools the model asked to call at this step (policy-check happens after). */
+  requested: string[];
+  /** The model's own reason for this move (bounded, may be undefined). */
+  reason?: string;
+  /** Whether the model said it still needed more evidence. */
+  needMoreEvidence: boolean;
+  /** Stop-guard objection raised at this step, if any (the stop was deferred). */
+  stopObjection?: string;
+  /** Calls that actually executed at this step, with outcomes. */
+  executed: Array<{ tool: string; ok: boolean; code?: string; deduped?: boolean }>;
+}
+
+/**
+ * Replayable chain for one run: each decision links the evidence seen so far
+ * to the action taken, so a past investigation can be inspected step by step
+ * and compared with later runs.
+ */
+export interface AgentReplayEpisode {
+  promptVersion: string;
+  steps: AgentStepDecision[];
 }
 
 /**
@@ -117,6 +168,13 @@ export interface AgentRunMemory {
   toolCalls: AgentToolCallRecord[];
   observations: AgentObservation[];
   /**
+   * Full successful tool OUTPUTS, captured only when the caller opts in
+   * (`captureToolData`) so a deterministic analyzer can consume the exact
+   * observations without re-executing the same tools. Empty by default.
+   * Never written to the audit row (counts/names only) — no payloads logged.
+   */
+  toolData: Array<{ step: number; tool: string; ok: boolean; data: unknown }>;
+  /**
    * Canonical business signals — Phase 1 keeps this as an empty typed slot;
    * the canonical signal layer lands in Phase 3.
    */
@@ -125,6 +183,13 @@ export interface AgentRunMemory {
   candidates: unknown[];
   rejections: AgentRejection[];
   uncertainties: AgentUncertainty[];
+  /**
+   * Replayable decision chain — recorded ONLY when the caller opts in
+   * (`replayEpisode`). Empty by default so existing agents keep their current
+   * observability footprint. Never written anywhere unless the caller's own
+   * observability writer persists it (no raw tool payloads are included).
+   */
+  replay?: AgentReplayEpisode;
   /**
    * Phase 2 — memory snapshot loaded at run start (recent episodic + relevant
    * long-term memories, tenant/branch scoped, expired excluded). Run-LOCAL:
@@ -185,6 +250,7 @@ export function createAgentRun(input: {
     plan: [],
     toolCalls: [],
     observations: [],
+    toolData: [],
     signals: [],
     candidates: [],
     rejections: [],

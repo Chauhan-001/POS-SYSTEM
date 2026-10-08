@@ -129,7 +129,10 @@ async function getMenuItemRecipes(restaurantId: string): Promise<Map<string, Arr
     isDeleted: { $ne: true },
     status: 'active',
   })
-    .select('productId ingredients')
+    // The canonical schema stores recipe lines in `components`
+    // (models/recipes/Recipe.ts). `ingredients` is a legacy field kept as a
+    // read-only fallback so a pre-migration row still contributes.
+    .select('productId components ingredients')
     .lean()
     .exec();
 
@@ -140,16 +143,22 @@ async function getMenuItemRecipes(restaurantId: string): Promise<Map<string, Arr
     unit: string;
   }>>();
 
-  for (const recipe of recipes) {
+  for (const recipe of recipes as any[]) {
     const productId = String(recipe.productId);
-    const ingredients = recipe.ingredients
-      .filter((ing: any) => ing.componentType === 'ingredient' && ing.inventoryItemId)
+    const lines: any[] = Array.isArray(recipe.components) && recipe.components.length > 0
+      ? recipe.components
+      : Array.isArray(recipe.ingredients)
+        ? recipe.ingredients
+        : [];
+    const ingredients = lines
+      .filter((ing: any) => (ing.componentType ?? 'ingredient') === 'ingredient' && (ing.inventoryItemId || ing.productId))
       .map((ing: any) => ({
-        ingredientId: String(ing.inventoryItemId),
-        ingredientName: ing.itemName,
-        quantity: ing.normalizedQuantity || ing.quantity || 0,
+        ingredientId: String(ing.inventoryItemId || ing.productId),
+        ingredientName: String(ing.itemName || ing.productName || ''),
+        quantity: Number(ing.normalizedQuantity || ing.quantity || 0),
         unit: ing.normalizedUnit || ing.unit || 'units',
-      }));
+      }))
+      .filter((ing) => ing.ingredientName.length > 0 && ing.quantity > 0);
 
     if (ingredients.length > 0) {
       recipeMap.set(productId, ingredients);
@@ -195,6 +204,23 @@ async function getInventoryItems(restaurantId: string): Promise<Map<string, {
     });
   }
   return map;
+}
+
+/**
+ * Inventory items store `expiryDate` as a 'YYYY-MM-DD' string (see
+ * models/catalog/Product.ts), but this engine historically called
+ * `expiryDate.getTime()` on it. That threw a TypeError for EVERY item that
+ * carried an expiry date, and every caller's try/catch silently degraded to
+ * "no expiry data" — so expiry/stockout forecasting never worked for a tenant
+ * with any expiry date recorded. Parse the stored value defensively here.
+ */
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /**
@@ -316,9 +342,10 @@ export async function generateIngredientConsumptionForecasts(
     else if (daysOfStock <= 20) stockoutRisk = 'low';
 
     // Expiry risk
+    const expiryAt = toDate(expiryDate);
     let expiryRisk: IngredientConsumptionForecast['expiryRisk'] = 'none';
-    if (expiryDate) {
-      const daysToExpiry = Math.ceil((expiryDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    if (expiryAt) {
+      const daysToExpiry = Math.ceil((expiryAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
       if (daysToExpiry <= 2) expiryRisk = 'critical';
       else if (daysToExpiry <= 5) expiryRisk = 'high';
       else if (daysToExpiry <= 10) expiryRisk = 'medium';
@@ -360,7 +387,7 @@ export async function generateIngredientConsumptionForecasts(
       minStock: inventoryItem.minStock,
       maxStock: inventoryItem.maxStock,
       averageCost: inventoryItem.averageCost,
-      expiryDate: inventoryItem.expiryDate,
+      expiryDate: expiryAt ?? undefined,
       forecastPeriod,
       predictedConsumption: {
         min: consumption.totalMin,
@@ -439,6 +466,23 @@ export async function generateStockoutAlerts(
   branchId: string | undefined,
   horizonDays: number = 14
 ): Promise<StockoutAlert[]> {
+  return (await assessStockoutRisk(restaurantId, branchId, horizonDays)).alerts;
+}
+
+/**
+ * Stockout assessment that distinguishes the two very different empty results:
+ *   - `assessed: false` → the forecast engine had no usable input at all
+ *     (no recipes / no consumption history), so the source is UNAVAILABLE.
+ *   - `assessed: true, alerts: []` → the engine ran and found NO item at risk.
+ *
+ * Callers must not report the second case as "unavailable": a working check
+ * with nothing to flag is not the same as a source that could not be read.
+ */
+export async function assessStockoutRisk(
+  restaurantId: string,
+  branchId: string | undefined,
+  horizonDays: number = 14
+): Promise<{ assessed: boolean; alerts: StockoutAlert[] }> {
   const forecasts = await generateIngredientConsumptionForecasts({
     restaurantId,
     branchId,
@@ -471,7 +515,7 @@ export async function generateStockoutAlerts(
     }
   }
 
-  return alerts.sort((a, b) => a.daysUntilDepletion - b.daysUntilDepletion);
+  return { assessed: forecasts.length > 0, alerts: alerts.sort((a, b) => a.daysUntilDepletion - b.daysUntilDepletion) };
 }
 
 /**
@@ -533,13 +577,34 @@ export async function generateExpiryAlerts(
   branchId: string | undefined,
   horizonDays: number = 30
 ): Promise<ExpiryAlert[]> {
+  return (await assessExpiryRisk(restaurantId, branchId, horizonDays)).alerts;
+}
+
+/**
+ * Expiry assessment that distinguishes the two very different empty results:
+ *   - `assessed: false` → no inventory item carries an expiry date at all, so
+ *     expiry is not tracked here and the source is UNAVAILABLE.
+ *   - `assessed: true, alerts: []` → expiry IS tracked and nothing expires
+ *     within the horizon. That is a clean check, not a failed one.
+ */
+export async function assessExpiryRisk(
+  restaurantId: string,
+  branchId: string | undefined,
+  horizonDays: number = 30
+): Promise<{ assessed: boolean; alerts: ExpiryAlert[] }> {
   const inventoryItems = await getInventoryItems(restaurantId);
   const alerts: ExpiryAlert[] = [];
+  let expiryTrackedItems = 0;
 
   for (const [id, item] of inventoryItems) {
-    if (!item.expiryDate) continue;
+    // `expiryDate` is a 'YYYY-MM-DD' string in the catalog — never call Date
+    // methods on it directly (that threw and silently disabled this whole
+    // source). Blank strings mean "no expiry recorded".
+    const expiryAt = toDate(item.expiryDate);
+    if (!expiryAt) continue;
+    expiryTrackedItems += 1;
 
-    const daysToExpiry = Math.ceil((item.expiryDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    const daysToExpiry = Math.ceil((expiryAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
     if (daysToExpiry > horizonDays) continue;
 
     let severity: ExpiryAlert['severity'] = 'warning';
@@ -554,7 +619,7 @@ export async function generateExpiryAlerts(
       recommendedActions.push('URGENT: Use or dispose immediately');
       recommendedActions.push('Cannot promote - safety risk');
     } else {
-      recommendedActions.push(`Use in promotions before ${item.expiryDate.toLocaleDateString()}`);
+      recommendedActions.push(`Use in promotions before ${expiryAt.toLocaleDateString()}`);
       recommendedActions.push('Ensure FIFO (First In, First Out) is strictly followed');
     }
 
@@ -562,7 +627,7 @@ export async function generateExpiryAlerts(
       ingredientId: id,
       ingredientName: item.name,
       currentStock: item.currentStock,
-      expiryDate: item.expiryDate,
+      expiryDate: expiryAt,
       daysUntilExpiry: daysToExpiry,
       severity,
       canPromote,
@@ -570,7 +635,7 @@ export async function generateExpiryAlerts(
     });
   }
 
-  return alerts.sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
+  return { assessed: expiryTrackedItems > 0, alerts: alerts.sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry) };
 }
 
 /**

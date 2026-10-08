@@ -63,6 +63,7 @@ import { ipBlocklist, refreshIpBlocklist } from './middleware/ipBlocklist';
 import { errorHandler } from './middleware/errorHandler';
 import { responseCache } from './utils/ResponseCache';
 import { RedisAdapter } from './cache/adapters';
+import { checkLlmKeyPoolHealth } from './ai/shared/llmClient';
 
 // Dual-environment module dir: works under tsx (ESM) and the esbuild CJS
 // bundle (where import.meta.url is undefined). `__filename` is referenced as
@@ -127,6 +128,7 @@ import forecastRouter from './routes/forecast';
 import inventoryDemandRouter from './routes/inventoryDemand';
 import scenarioRouter from './routes/scenario';
 import intelligenceRouter from './routes/intelligence';
+import feedbackIntelligenceRouter from './routes/feedbackIntelligence';
 import loyaltyRouter from './routes/loyalty';
 import otpRouter from './routes/otp';
 import referralsRouter from './routes/referrals';
@@ -156,6 +158,7 @@ import mlPipelineRouter from './modules/ml-pipeline/mlPipelineRoutes';
 import { startMLSyncScheduler } from './modules/ml-pipeline/mlSyncScheduler';
 import marketingAgentRouter from './ai/agents/marketingAgentRoutes';
 import inventoryAgentRouter from './ai/agents/inventoryAgentRoutes';
+import zReportRouter from './ai/agents/zReportRoutes';
 import { startCricketCalendarScheduler } from './context/sports/cricket/cricketCalendarScheduler';
 
 import { renderPublicStorePage } from './modules/public-store/publicStorePage';
@@ -376,6 +379,8 @@ app.use('/api/forecast', forecastRouter);
 app.use('/api/inventory-demand', inventoryDemandRouter);
 app.use('/api/scenario', scenarioRouter);
 app.use('/api/intelligence', intelligenceRouter);
+// Feedback intelligence (FeedRag-style aspect analysis / RAG over receipt-QR feedback)
+app.use('/api/feedback', feedbackIntelligenceRouter);
 app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/otp', otpRouter);
 app.use('/api/referrals', referralsRouter);
@@ -385,6 +390,9 @@ app.use('/api/customer-reports', customerReportsRouter);
 app.use('/api/ml-pipeline', mlPipelineRouter);
 app.use('/api/ai/marketing-agent', marketingAgentRouter);
 app.use('/api/ai/inventory-agent', inventoryAgentRouter);
+// Daily Summary / Z-Report Intelligence (read-only; the deterministic
+// GET /api/reports/closing/z path is untouched).
+app.use('/api/ai/z-report', zReportRouter);
 app.use('/api', recipesRouter);
 app.use('/api', promotionsRouter);
 app.use('/api', mediaRouter);
@@ -403,9 +411,16 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+// Deliberately NON-FATAL: one stray rejection must not take the whole POS
+// offline mid-shift. Every fire-and-forget call site in this codebase is
+// already guarded (the observability writers, the schedulers, cache
+// invalidation), so reaching here means an unexpected path — log it loudly
+// with the untouched console so it is always visible in the terminal, then let
+// the affected request fail on its own instead of dropping every other
+// terminal in the restaurant. Contrast `uncaughtException` above, which stays
+// fatal on purpose: after an uncaught throw the process's state is undefined.
 process.on('unhandledRejection', (reason) => {
-  logFatal('[FATAL] Unhandled rejection:', reason);
-  process.exit(1);
+  logFatal('[FATAL] Unhandled rejection (process kept alive):', reason);
 });
 // =============================================================================
 // STATIC FILE SERVING (Production Only)
@@ -474,6 +489,32 @@ async function start() {
   responseCache.startCleanup(2 * 60_000);
   // ─── 3. Start subscription state transition scheduler ─────────
   startSubscriptionScheduler();
+
+  // ─── 3.02. LLM key-pool health check ─────────────────────────
+  // A revoked/rotated key in the pool used to be discovered mid-investigation:
+  // the agent spent its failover attempts on dead credentials and the run came
+  // back degraded (or as a bare "not enough data"). Probe every pooled key once
+  // at startup, report how many authenticate, and quarantine the rejected ones
+  // so no agent run pays for them. Deliberately NOT awaited (it makes network
+  // calls and must never delay the listener) and never able to throw.
+  if (config.ai.keyHealthCheckEnabled) {
+    void checkLlmKeyPoolHealth({ quarantineDead: true })
+      .then((report) => {
+        if (report.skippedReason) {
+          console.log(`[AI] Key-pool health check skipped: ${report.skippedReason}`);
+          return;
+        }
+        const line = `[AI] Key pool: ${report.validKeys}/${report.totalKeys} authenticate (rate-limited: ${report.rateLimitedKeys}, dead: ${report.deadKeys}, unreachable: ${report.unreachableKeys})`;
+        if (report.allDead) {
+          console.error(`${line} — EVERY key was rejected; AI Insights will degrade until the keys in .env are replaced.`);
+        } else if (report.deadKeys > 0) {
+          console.warn(`${line} — dead slots ${report.deadSlots.join(', ')} are quarantined for this process; prune them from .env (npm run verify:llm-keys).`);
+        } else {
+          console.log(line);
+        }
+      })
+      .catch((err) => console.warn('[AI] Key-pool health check failed:', (err as Error)?.message));
+  }
 
   // ─── 3.05. ML pipeline daily sync scheduler (opt-in via ML_SYNC_ENABLED=on) ──
   try {

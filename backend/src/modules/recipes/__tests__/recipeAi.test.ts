@@ -111,6 +111,66 @@ describe('recipeAiService (quick create, deterministic extraction)', () => {
     expect(attention?.inventoryItemId).toBeUndefined();
   });
 
+  it('extracts every ingredient from a sentence spoken in one go (quantities with no connectors between them)', async () => {
+    await makeProduct('Fresh Paneer', 'kg', 320);
+    await makeProduct('Tomato', 'g', 0.06);
+    await makeProduct('Butter', 'kg', 500);
+    const product = await makeMenuProduct('Dish', 'plate', 299);
+
+    const draft = await recipeAiService.quickCreate(
+      REST_A,
+      'take 200 grams of paneer add 150 grams of tomato and 30 grams of butter',
+      String(product._id)
+    );
+
+    // All three named ingredients are found and matched to THIS inventory.
+    expect(draft.matched.map((m) => m.ingredientText).sort()).toEqual(['butter', 'paneer', 'tomato']);
+    expect(draft.matched.every((m) => m.confidence === 'HIGH')).toBe(true);
+    expect(draft.matched.find((m) => m.ingredientText === 'paneer')?.costPreview).toBe(64);
+    expect(draft.matched.find((m) => m.ingredientText === 'tomato')?.costPreview).toBe(9);
+    expect(draft.matched.find((m) => m.ingredientText === 'butter')?.costPreview).toBe(15);
+  });
+
+  it('detects a quantity that follows the ingredient name ("paneer 200g")', async () => {
+    await makeProduct('Fresh Paneer', 'kg', 320);
+    const product = await makeMenuProduct('Dish', 'plate', 299);
+
+    const draft = await recipeAiService.quickCreate(REST_A, 'paneer 200g', String(product._id));
+
+    const paneer = draft.matched.find((m) => m.ingredientText === 'paneer');
+    expect(paneer).toBeDefined();
+    expect(paneer?.quantity).toBe(200);
+    expect(paneer?.unit).toBe('g');
+    expect(paneer?.costPreview).toBe(64);
+  });
+
+  it('extracts multiple Hinglish number-word ingredients in one sentence', async () => {
+    await makeProduct('Flour', 'kg', 40);
+    await makeProduct('Salt', 'kg', 20);
+    const product = await makeMenuProduct('Dish', 'plate', 299);
+
+    const draft = await recipeAiService.quickCreate(REST_A, 'do kilo atta aur teen gram namak', String(product._id));
+
+    expect(draft.matched.map((m) => m.ingredientText).sort()).toEqual(['atta', 'namak']);
+    expect(draft.matched.find((m) => m.ingredientText === 'atta')?.quantity).toBe(2);
+    expect(draft.matched.find((m) => m.ingredientText === 'namak')?.quantity).toBe(3);
+  });
+
+  it('flags an unknown ingredient as new and proposes creating it (0 stock) on save', async () => {
+    const product = await makeMenuProduct('Dish', 'plate', 299);
+
+    const draft = await recipeAiService.quickCreate(REST_A, '100g dragon fruit', String(product._id));
+
+    const item = draft.needsAttention.find((m) => m.ingredientText === 'dragon fruit');
+    expect(item?.isNew).toBe(true);
+    expect(item?.confidence).toBe('LOW');
+    expect(item?.inventoryItemId).toBeUndefined();
+
+    expect(draft.newIngredients).toEqual([{ name: 'dragon fruit', unit: 'g', quantity: 100 }]);
+    // The draft itself writes nothing to inventory.
+    expect(await Product.countDocuments({ restaurantId: REST_A, name: /dragon fruit/i })).toBe(0);
+  });
+
   it('flags unit-family mismatches instead of silently accepting them', async () => {
     await makeProduct('Fresh Paneer', 'kg', 320);
     const product = await makeMenuProduct('Dish', 'plate', 299);

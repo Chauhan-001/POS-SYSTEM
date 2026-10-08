@@ -66,6 +66,24 @@ export const BUSINESS_SIGNAL_CODES = [
   'sports_event_relevant',
   'competition_density',
   'weather_shift',
+  // ── Z-Report daily intelligence (Daily Summary pipeline) ──
+  // Appended for the Daily Summary / Z-Report Intelligence pipeline. Purely
+  // additive: existing codes and every normalizer output stay untouched.
+  'sales_growth',
+  'sales_decline',
+  'volume_aov_divergence',
+  'discount_pressure',
+  'margin_pressure',
+  'refund_spike',
+  'cash_over_short',
+  'inventory_wastage_spike',
+  // Observed wastage without a same-item previous-period comparison.
+  'inventory_wastage',
+  // Closing-day sales level, as stated by the deterministic Z-report itself.
+  'sales_day_close',
+  // Net revenue on the closing day vs the weekday-aware rolling baseline
+  // (same weekday over up to 4 prior weeks + trailing 7-day average).
+  'sales_weekday_baseline',
 ] as const;
 
 export type BusinessSignalCode = (typeof BUSINESS_SIGNAL_CODES)[number];
@@ -101,6 +119,10 @@ export const BUSINESS_SIGNAL_SOURCES = [
   'sports_context',
   'competition_context',
   'weather_context',
+  // Daily Summary / Z-Report pipeline: the closing cash ledger (CashLedger via
+  // closingReportService.zReport) is its own authoritative source, distinct
+  // from bill-derived sales_context.
+  'cash_ledger',
 ] as const;
 
 export type BusinessSignalSource = (typeof BUSINESS_SIGNAL_SOURCES)[number];
@@ -249,6 +271,10 @@ export const PERSISTED_SIGNAL_TYPE_MAP: Partial<Record<BusinessSignalCode, Signa
   festival_upcoming: 'FESTIVAL_DEMAND_LIFT',
   competition_density: 'COMPETITION_DENSITY_HIGH',
   weather_shift: 'WEATHER_DEMAND_SHIFT',
+  // Daily Summary / Z-Report additions (persisted vocabulary reused verbatim).
+  inventory_wastage_spike: 'INVENTORY_HIGH_WASTAGE',
+  inventory_wastage: 'INVENTORY_HIGH_WASTAGE',
+  sales_day_close: 'SALES_DAILY_REVENUE',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

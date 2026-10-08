@@ -236,10 +236,48 @@ describe('5. provenance and evidence are carried through', () => {
     expect(rec.evidence.length).toBeGreaterThan(0);
     expect(rec.risks).toContain('Stock risk');
     expect(rec.provenance.sourceSignals).toContain('sig:42');
-    expect(rec.provenance.signalCodes).toContain('basket_pair_strength');
+    // The fixture signal has NO subject/product link, so it must be disclosed as
+    // a dimension-level THEME — never as product-specific evidence (D-19).
+    expect(rec.provenance.signalCodes).not.toContain('basket_pair_strength');
+    expect(rec.provenance.signalThemes).toContain('basket_pair_strength');
+    expect(rec.why.join(' ')).toContain('not specific to these products');
     expect(rec.provenance.mlKinds).toContain('basket');
     expect(rec.provenance.memoryRefs).toContain('mem:1');
     expect(rec.why.join(' ')).toContain('validated past learning');
+  });
+
+  it('D-19: a signal ABOUT the candidate product counts as correlated evidence', () => {
+    const result = rankAndDiversify({
+      candidates: [
+        candidate({
+          id: 'a',
+          type: 'CREATE_COMBO',
+          score: 80,
+          target: { productIds: ['paneer-1'], productNames: ['Paneer Tikka'], categoryIds: ['starters'], segmentIds: [] },
+        }),
+      ],
+      signals: [
+        {
+          signalId: 's1',
+          code: 'basket_pair_strength',
+          category: 'basket',
+          source: 'market_basket',
+          statement: 'Paneer Tikka pairs with Naan',
+          direction: 'up',
+          confidence: 0.8,
+          freshness: 'fresh',
+          generatedAt: '2026-10-04T00:00:00.000Z',
+          subject: { type: 'product', id: 'paneer-1', label: 'Paneer Tikka' },
+          scope: { restaurantId: '507f1f77bcf86cd799439011', branchId: null, scope: 'tenant' },
+          evidence: [{ kind: 'metric', ref: 'metric:product:paneer-1:pairScore', value: 0.7 }],
+        },
+      ],
+      limit: 1,
+    });
+    const rec = result.recommendations[0];
+    expect(rec.provenance.signalCodes).toContain('basket_pair_strength');
+    expect(rec.provenance.signalThemes).not.toContain('basket_pair_strength');
+    expect(rec.why.join(' ')).toContain('product-correlated');
   });
 
   it('labels unsafe economics transparently in the why', () => {

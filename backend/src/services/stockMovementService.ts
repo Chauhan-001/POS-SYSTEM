@@ -289,9 +289,14 @@ export class StockMovementService {
       if (!fresh) throw new AppError(404, 'Product not found for stock movement');
       product = fresh;
 
-      const before = Number(product.currentStock) || 0;
-      let effectiveDelta = input.delta;
-      let after = before + effectiveDelta;
+      // Stock is stored to 4 decimal places. Round the incoming delta and the
+      // running balance so repeated fractional movements (e.g. recipe
+      // consumption) can never accumulate binary-float noise like
+      // 51.199999999999996 in the UI.
+      const storedBefore = Number(product.currentStock) || 0;
+      const before = round4(storedBefore);
+      let effectiveDelta = round4(Number(input.delta) || 0);
+      let after = round4(before + effectiveDelta);
       /** Total FIFO cost consumed by this movement (stock-outs only). */
       let costBasis = 0;
       /** Per-unit FIFO cost consumed (stock-outs only). */
@@ -325,13 +330,13 @@ export class StockMovementService {
           (b) => (b.expiryDate || '') === expiry && (b.batchNumber || '') === batchNo
         );
         if (existing) {
-          existing.quantity = (existing.quantity || 0) + effectiveDelta;
+          existing.quantity = round4((existing.quantity || 0) + effectiveDelta);
           if (input.purchasePrice != null) existing.cost = input.purchasePrice;
         } else {
           batches.push({
             batchNumber: batchNo,
             expiryDate: expiry,
-            quantity: effectiveDelta,
+            quantity: round4(effectiveDelta),
             receivedDate: today,
             cost: input.purchasePrice ?? undefined,
           });
@@ -357,21 +362,24 @@ export class StockMovementService {
       const expiryDate = batches.length > 0
         ? earliestBatchExpiry(batches)
         : (after > 0 ? (product.expiryDate || '') : '');
-      // currentStock = sum of batches (consistency). If no batches, currentStock
-      // is the delta-computed value (backward compat for legacy products).
-      if (batches.length > 0) {
-        after = round4(batches.reduce((s, b) => s + (Number(b.quantity) || 0), 0));
-      }
+      // currentStock is the AUTHORITATIVE balance — always the rounded
+      // delta-computed value. (A legacy item can carry stock with no batches
+      // until its first movement, so the batch sum is not used here; batches
+      // still drive FIFO cost and expiry.)
+      after = round4(before + effectiveDelta);
 
       // ── Atomic stock update ───────────────────────────────────────
+      // Store the rounded target (not `$inc` of a float delta) so the persisted
+      // currentStock is always rounded to 4 decimals.
+      // CAS on the EXACT stored value we read: a concurrent movement makes
+      // this a no-op and the caller retries instead of clobbering.
       const updated = await productRepo.findOneAndUpdate(
         {
           _id: product._id,
-          currentStock: { $gte: -effectiveDelta },
+          currentStock: storedBefore,
         } as any,
         {
-          $inc: { currentStock: effectiveDelta } as any,
-          $set: { batches, expiryDate } as any,
+          $set: { currentStock: after, batches, expiryDate } as any,
         },
         { upsert: false }
       );

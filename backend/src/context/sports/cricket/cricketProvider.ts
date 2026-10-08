@@ -101,7 +101,7 @@ export interface CricketKeyQuotaState {
 
 /** Quota state of the key pool — safe to surface (no key material). */
 export function getCricketKeyQuotaState(now = Date.now()): CricketKeyQuotaState {
-  const pool = keyPool();
+  const pool = cricketKeyPool();
   const blocked = pool.filter((k) => !keyUsable(k, now));
   const nextRetryAt = blocked.length > 0
     ? Math.min(...blocked.map((k) => keyCooldownUntil.get(k) ?? now))
@@ -121,7 +121,7 @@ export function clearCricketKeyCooldowns(): void {
 }
 
 /** All configured keys in rotation order: primary first, then fallbacks. */
-function keyPool(): string[] {
+export function cricketKeyPool(): string[] {
   const { apiKey, fallbackApiKeys } = config.cricket;
   return [apiKey, ...fallbackApiKeys].filter((k, i, arr) => k && arr.indexOf(k) === i);
 }
@@ -131,7 +131,7 @@ export function getCricketProviderConfig(): CricketProviderConfig | null {
   if (!enabled || !apiKey) return null;
   // Prefer the first usable key; fall back to a cooled-down key only if the
   // whole pool is exhausted (better to try than to report no data at all).
-  const pool = keyPool();
+  const pool = cricketKeyPool();
   const usable = pool.find((k) => keyUsable(k)) ?? pool[0];
   return { baseUrl: baseUrl.replace(/\/$/, ''), apiKey: usable, fallbackApiKeys, timeoutMs };
 }
@@ -150,6 +150,167 @@ export class CricketProviderError extends Error {
 /** Fetch one page of matches. Offset follows CricAPI's ?offset= semantics.
  *  On a quota-block (HTTP 200 + reason), the caller rotates to the next key
  *  in the pool via the retry wrapper in cricketService. */
+export interface CricApiSeriesRaw {
+  id?: string;
+  name?: string;
+  /** The provider is inconsistent here: the list uses camelCase, /series_info
+   *  uses lowercase `startdate`/`enddate`, and end dates are sometimes a
+   *  short form ("Oct 17") with no year. Both spellings are read. */
+  startDate?: string;
+  endDate?: string;
+  startdate?: string;
+  enddate?: string;
+  odi?: number;
+  t20?: number;
+  test?: number;
+  squads?: number;
+  matches?: number;
+}
+
+export interface CricApiSeriesResponse {
+  apikey?: unknown;
+  data?: CricApiSeriesRaw[];
+  info?: { hitsToday?: number; totalRows?: number; offsetRows?: number; [k: string]: unknown };
+  reason?: unknown;
+}
+
+export interface CricApiSeriesInfoResponse {
+  apikey?: unknown;
+  /** `/series_info` returns an OBJECT (info + matchList), not a list. */
+  data?: { info?: CricApiSeriesRaw; matchList?: CricApiMatchRaw[] };
+  info?: { hitsToday?: number; [k: string]: unknown };
+  reason?: unknown;
+}
+
+/**
+ * Quota block vs rejected key, from an HTTP-200 body carrying a `reason`.
+ * `expectArray` distinguishes the list endpoints from `/series_info`, whose
+ * `data` is an object — an empty object still means "no payload for you".
+ */
+function reasonError(
+  body: { reason?: unknown; data?: unknown },
+  expectArray: boolean,
+): CricketProviderError | null {
+  if (!body.reason) return null;
+  const reason = String(body.reason);
+  if (/invalid api key/i.test(reason)) {
+    return new CricketProviderError('CricAPI rejected the API key', 'invalid_key');
+  }
+  const empty = expectArray
+    ? !Array.isArray(body.data) || body.data.length === 0
+    : !body.data || Object.keys(body.data as object).length === 0;
+  return empty ? new CricketProviderError(`CricAPI blocked the request: ${reason}`, 'rate_limited') : null;
+}
+
+/** One authenticated GET against CricAPI with a timeout, defensive JSON parse
+ *  and reason classification. The key is in the query string per the provider's
+ *  contract and the authenticated URL is never logged or returned. */
+async function requestCricApi<T extends { reason?: unknown; data?: unknown }>(
+  cfg: CricketProviderConfig,
+  path: string,
+  expectArray: boolean,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  try {
+    const res = await fetch(`${cfg.baseUrl}${path}${path.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(cfg.apiKey)}`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (res.status === 429) {
+      throw new CricketProviderError('CricAPI rate limit reached', 'rate_limited', 429);
+    }
+    if (!res.ok) {
+      throw new CricketProviderError(`CricAPI ${path.split('?')[0]} failed (HTTP ${res.status})`, 'http_error', res.status);
+    }
+    let body: T;
+    try {
+      body = (await res.json()) as T;
+    } catch {
+      throw new CricketProviderError('CricAPI returned invalid JSON', 'invalid_json');
+    }
+    const classified = reasonError(body, expectArray);
+    if (classified) throw classified;
+    return body;
+  } catch (err) {
+    if (err instanceof CricketProviderError) throw err;
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new CricketProviderError('CricAPI request timed out', 'timeout');
+    }
+    throw new CricketProviderError(
+      `CricAPI unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      'http_error',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One page of series (path `/series`), paginated by row offset like /matches. */
+export function getSeries(cfg: CricketProviderConfig, offset = 0): Promise<CricApiSeriesResponse> {
+  return requestCricApi<CricApiSeriesResponse>(cfg, `/series?offset=${offset}`, true);
+}
+
+/** The full match list of one series — one request covers the whole tour,
+ *  past and future, which is why Team India discovery uses this instead of
+ *  walking ~15k match rows. */
+export function getSeriesInfo(cfg: CricketProviderConfig, seriesId: string): Promise<CricApiSeriesInfoResponse> {
+  return requestCricApi<CricApiSeriesInfoResponse>(
+    cfg,
+    `/series_info?id=${encodeURIComponent(seriesId)}`,
+    false,
+  );
+}
+
+/** Cursor shared by all pages of one logical fetch so the key that worked is
+ *  reused instead of re-tried, and rotation is reported once. */
+export interface CricketKeyCursor {
+  index: number;
+  rotated: boolean;
+}
+
+export function createCricketKeyCursor(): CricketKeyCursor {
+  return { index: 0, rotated: false };
+}
+
+/**
+ * Run one provider call through the quota-aware key pool: skips keys the pool
+ * already knows are in cooldown (a request to a blocked key extends the
+ * provider's block window without producing data), rotates on quota-block or
+ * rejected key, and pins the working key on the caller's cursor for subsequent
+ * pages. Non-quota failures are not fixable by rotating, so they propagate.
+ *
+ * Shared by the series endpoints; `cricketService.fetchAllMatches` keeps its
+ * own inline equivalent for the /matches walk.
+ */
+export async function withCricketKeyPool<T>(
+  cfg: CricketProviderConfig,
+  cursor: CricketKeyCursor,
+  request: (cfg: CricketProviderConfig) => Promise<T>,
+): Promise<T> {
+  const pool = cricketKeyPool();
+  let lastError: CricketProviderError | null = null;
+  for (let i = cursor.index; i < pool.length; i++) {
+    if (!isCricketKeyUsable(pool[i])) continue;
+    try {
+      const out = await request({ ...cfg, apiKey: pool[i] });
+      cursor.index = i;
+      return out;
+    } catch (err) {
+      if (err instanceof CricketProviderError && err.kind === 'invalid_key') {
+        markCricketKeyInvalid(pool[i]);
+      } else if (err instanceof CricketProviderError && err.kind === 'rate_limited') {
+        markCricketKeyQuotaBlocked(pool[i]);
+      } else {
+        throw err;
+      }
+      lastError = err;
+      cursor.rotated = true;
+    }
+  }
+  throw lastError ?? new CricketProviderError('all cricket API keys exhausted', 'rate_limited');
+}
+
 export async function getMatches(cfg: CricketProviderConfig, offset = 0): Promise<CricApiMatchesResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);

@@ -113,6 +113,7 @@ interface Row {
   needsReview: boolean;        // must be confirmed before saving
   reason?: string;
   manual?: boolean;            // added by tapping tiles (not AI)
+  isNew?: boolean;             // no inventory item yet — created (0 stock) on save
   image?: string;              // real product photo (shown instead of an emoji)
 }
 
@@ -226,6 +227,16 @@ export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Pr
           wastagePercent: 0,
           optional: false,
         }));
+      // Ingredients with no inventory match: the backend creates each as an
+      // inventory item with 0 stock and includes it as a recipe component.
+      const newIngredients = rows
+        .filter((r) => r.isNew)
+        .map((r) => ({
+          name: String(r.ingredientText || r.itemName || '').trim(),
+          unit: r.unit || r.itemUnit || 'pcs',
+          quantity: Math.max(0, Number(r.quantity) || 0),
+        }))
+        .filter((n) => n.name);
       const saved = await createRecipe({
         productId: pidOf(product),
         variantName: selectedVariant || 'Default',
@@ -235,6 +246,7 @@ export default function EasyRecipeMaker({ onClose, onSaved, initialProduct }: Pr
         yieldUnit: 'unit',
         servingSize: 1,
         components,
+        newIngredients,
         status: 'active',
       });
       if (!saved) { setFatal('Save failed — check the connection and try again.'); return; }
@@ -649,6 +661,7 @@ function HowScreen({ product, inventoryItems, onRows, selectedVariant }: {
           itemName: n.itemName || n.ingredientText, unit: n.unit, quantity: Number(n.quantity) || 0,
           itemUnit: n.itemUnit, costPreview: n.costPreview, confidence: n.confidence,
           needsReview: true, reason: n.reason, image: imgOf(n.inventoryItemId),
+          isNew: n.isNew === true,
           ...withPricing(n),
         });
       }
@@ -1018,7 +1031,7 @@ function CheckScreen({ product, rows, settings, onRows, onBack, onNext }: {
         </button>
         <button
           onClick={onNext}
-          disabled={rows.filter((r) => r.inventoryItemId).length === 0}
+          disabled={rows.filter((r) => r.inventoryItemId || r.isNew).length === 0}
           className="flex-1 py-5 rounded-2xl bg-[var(--color-emerald-500-solid)] text-white text-xl font-black flex items-center justify-center gap-2 cursor-pointer hover:bg-[var(--color-emerald-600-solid)] transition-colors disabled:opacity-30"
         >
           Looks good <ChevronRight className="w-7 h-7" />
@@ -1099,7 +1112,7 @@ function MoneyScreen({ product, rows, settings, saving, onBack, onSave, selected
         </button>
         <button
           onClick={onSave}
-          disabled={saving || rows.filter((r) => r.inventoryItemId).length === 0}
+          disabled={saving || rows.filter((r) => r.inventoryItemId || r.isNew).length === 0}
           className="flex-1 py-6 rounded-2xl bg-[var(--color-emerald-500-solid)] hover:bg-[var(--color-emerald-600-solid)] text-white text-2xl font-black flex items-center justify-center gap-3 cursor-pointer transition-colors disabled:opacity-40 shadow-lg"
         >
           {saving ? <Loader2 className="w-8 h-8 animate-spin" /> : <Check className="w-8 h-8" />}

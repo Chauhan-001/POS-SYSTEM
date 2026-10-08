@@ -131,11 +131,31 @@ router.get('/feedback', requireAuth, requireRole('Owner', 'Manager'), async (req
       : [];
     const billMap = new Map(bills.map((b: any) => [String(b._id), b]));
 
+    // Attach AI analysis (aspect chips / sentiment) when available.
+    // Lazy: rows not yet analyzed simply come back without an `analysis` key.
+    const { default: FeedbackAnalysis } = await import('../models/customers/FeedbackAnalysis');
+    const analyses = await FeedbackAnalysis.find({ feedbackId: { $in: items.map((f: any) => f._id) } })
+      .select('feedbackId overallSentiment sentimentScore aspects summary source')
+      .lean();
+    const analysisMap = new Map(analyses.map((a: any) => [String(a.feedbackId), a]));
+
     const enriched = items.map((f: any) => ({
       _id: f._id,
       rating: f.rating,
       comment: f.comment || null,
       createdAt: f.createdAt,
+      analysis: (() => {
+        const a: any = analysisMap.get(String(f._id));
+        return a
+          ? {
+              overallSentiment: a.overallSentiment,
+              sentimentScore: a.sentimentScore,
+              source: a.source,
+              summary: a.summary,
+              aspects: (a.aspects || []).slice(0, 4).map((x: any) => ({ aspect: x.aspect, sentiment: x.sentiment, score: x.score })),
+            }
+          : null;
+      })(),
       bill: (() => {
         const b = billMap.get(String(f.billId));
         return b ? { invoiceNumber: (b as any).invoiceNumber, date: (b as any).date, total: (b as any).grandTotal } : null;

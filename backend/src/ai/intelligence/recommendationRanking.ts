@@ -83,6 +83,8 @@ export interface RankedRecommendation {
     breakEvenIncrementalUnits: number;
     paybackPeriodDays: number;
     economicallySafe: boolean;
+    /** FALSE when the engine had no authoritative price/cost data. */
+    available: boolean;
   };
   cannibalization: { rate: number; incrementalVsCannibalized: number };
   target: PromotionCandidate['target'];
@@ -92,7 +94,17 @@ export interface RankedRecommendation {
   /** Which canonical signals/ML kinds/memory supported this pick. */
   provenance: {
     sourceSignals: string[];
+    /**
+     * Signal codes whose evidence is CORRELATED to this candidate's products /
+     * categories (D-19). Only these count as product-specific evidence.
+     */
     signalCodes: string[];
+    /**
+     * Signal codes present in the restaurant's data whose subject could NOT be
+     * tied to this candidate's products/categories. These are dimension-level
+     * THEMES that were consulted — never product-specific evidence (D-19).
+     */
+    signalThemes: string[];
     mlKinds: string[];
     memoryRefs: string[];
   };
@@ -133,9 +145,19 @@ export interface RankingResult {
  *        ∧ break-even units are finite
  *        ∧ payback is finite (or not applicable)
  * This re-uses the engine's numbers verbatim; it never recomputes economics.
+ *
+ * D-14 — DEFENSE-IN-DEPTH, not the primary gate: `validateFinancialModel` in
+ * the engine already drops economically invalid candidates before ranking, so
+ * the "unsafe" branch here is normally unreachable. It is kept deliberately so
+ * that a future/alternate candidate source (a tool, a fixture, a new builder)
+ * still cannot rank a bad-money candidate above a safe one, and it is the only
+ * path that also demotes `economicsUnavailable` placeholders. No code change
+ * was required for D-14; the observation is documented here instead.
  */
 export function isEconomicallySafe(c: PromotionCandidate): boolean {
   const f = c.financialModel;
+  // A candidate with no authoritative economics is NEVER "safe".
+  if (f.economicsUnavailable) return false;
   if (!Number.isFinite(f.projectedContributionMargin)) return false;
   if (!Number.isFinite(f.discountPercent) || f.discountPercent > f.maxDiscountConstraint) return false;
   if (f.projectedContributionMargin < f.minMarginConstraint) return false;
@@ -159,6 +181,40 @@ export function isEconomicallySafe(c: PromotionCandidate): boolean {
  * The engine score dominates (max 100 vs ≤39 total adjustment), so ranking
  * never overrides the existing deterministic economics with narrative.
  */
+/**
+ * ML alignment for ONE candidate: the bonus AND the exact evidence kinds that
+ * produced it. This is the single source of truth for both scoring and
+ * provenance — a recommendation records only the ML it actually used, never
+ * the whole pipeline's available set. `availableKinds` already excludes any
+ * ungated `causal_uplift` (mlSemantics sets `available` only when the
+ * randomization gate passed), so causal evidence cannot leak as a generic
+ * label.
+ */
+export function mlAlignment(
+  c: Pick<PromotionCandidate, 'type'>,
+  availableKinds: Set<string>,
+): { bonus: number; kinds: string[] } {
+  const kinds: string[] = [];
+  let bonus = 0;
+  switch (c.type) {
+    case 'CREATE_COMBO':
+      if (availableKinds.has('basket')) { bonus += 6; kinds.push('basket'); }
+      break;
+    case 'RUN_REACTIVATION':
+      if (availableKinds.has('response_model')) { bonus += 6; kinds.push('response_model'); }
+      if (availableKinds.has('causal_uplift')) { bonus += 6; kinds.push('causal_uplift'); }
+      break;
+    case 'CREATE_PROMOTION':
+    case 'PROMOTE_SLOW_ITEM':
+      if (availableKinds.has('segment')) { bonus += 4; kinds.push('segment'); }
+      break;
+    case 'PROTECT_HIGH_DEMAND_STOCK':
+      if (availableKinds.has('forecast')) { bonus += 6; kinds.push('forecast'); }
+      break;
+  }
+  return { bonus, kinds };
+}
+
 export function rankScore(
   c: PromotionCandidate,
   ctx: { mlKinds: Set<string>; memoryTypes: Set<string> },
@@ -168,11 +224,10 @@ export function rankScore(
   if (isEconomicallySafe(c)) s += 8;
   if (c.financialModel.incrementalContribution > 0) s += 6;
   else if (c.financialModel.incrementalContribution < 0) s -= 6;
-  if (c.type === 'CREATE_COMBO' && ctx.mlKinds.has('basket')) s += 6;
-  if (c.type === 'RUN_REACTIVATION' && (ctx.mlKinds.has('response_model') || ctx.mlKinds.has('causal_uplift'))) s += 6;
-  if ((c.type === 'CREATE_PROMOTION' || c.type === 'PROMOTE_SLOW_ITEM') && ctx.mlKinds.has('segment')) s += 4;
-  if (c.type === 'PROTECT_HIGH_DEMAND_STOCK' && ctx.mlKinds.has('forecast')) s += 6;
-  if (ctx.memoryTypes.has(c.type)) s += 4;
+  s += mlAlignment(c, ctx.mlKinds).bonus;
+  // Canonical mapping: memoryTypes are snake_case long-term types while c.type
+  // is a UPPER_SNAKE PromotionType — comparing them directly was always false.
+  if (memoryTypesFor(c).some((t) => ctx.memoryTypes.has(t))) s += 4;
   s -= Math.min(c.cannibalization.estimatedCannibalizationRate, 1) * 6;
   return Math.round(s * 1000) / 1000;
 }
@@ -181,8 +236,46 @@ export function rankScore(
 // Ranking + diversity selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Signal codes relevant to a candidate type (for provenance only). */
-function signalCodesFor(c: PromotionCandidate, signals: BusinessSignal[]): string[] {
+/** The products/categories a candidate actually targets (for correlation). */
+function candidateSubjectKeys(c: PromotionCandidate): Set<string> {
+  const keys = new Set<string>();
+  for (const id of c.target.productIds ?? []) keys.add(String(id).toLowerCase());
+  for (const name of c.target.productNames ?? []) keys.add(String(name).toLowerCase());
+  for (const id of c.target.categoryIds ?? []) keys.add(String(id).toLowerCase());
+  keys.delete('');
+  return keys;
+}
+
+/**
+ * TRUE only when the signal is about one of the candidate's own products or
+ * categories — either via its typed `subject`, or via a product/category ref
+ * embedded in its evidence (e.g. `metric:product:<id>:marginPct`).
+ * A dimension-level signal (no subject) is NEVER product-correlated (D-19).
+ */
+function signalMatchesCandidate(s: BusinessSignal, keys: Set<string>): boolean {
+  if (keys.size === 0) return false;
+  const subject = s.subject;
+  if (subject) {
+    if (keys.has(subject.id.toLowerCase())) return true;
+    if (subject.label && keys.has(subject.label.toLowerCase())) return true;
+  }
+  return s.evidence.some((e) => {
+    if (typeof e.ref !== 'string') return false;
+    const ref = e.ref.toLowerCase();
+    for (const key of keys) if (ref.includes(key)) return true;
+    return false;
+  });
+}
+
+/**
+ * Signal provenance for a candidate, split into product-correlated evidence
+ * (`correlated`) and dimension-level themes that merely exist and were
+ * consulted (`themes`). Never conflates the two (D-19).
+ */
+function signalCodesFor(
+  c: PromotionCandidate,
+  signals: BusinessSignal[],
+): { correlated: string[]; themes: string[] } {
   const wanted: string[] = [];
   switch (c.type) {
     case 'CREATE_COMBO':
@@ -210,13 +303,31 @@ function signalCodesFor(c: PromotionCandidate, signals: BusinessSignal[]): strin
     default:
       wanted.push('sales_revenue_level', 'sales_aov_level');
   }
-  const present = new Set<string>(signals.map((s) => s.code));
-  return wanted.filter((w) => present.has(w));
+  const byCode = new Map<string, BusinessSignal[]>();
+  for (const s of signals) {
+    const list = byCode.get(s.code);
+    if (list) list.push(s);
+    else byCode.set(s.code, [s]);
+  }
+  const keys = candidateSubjectKeys(c);
+  const correlated: string[] = [];
+  const themes: string[] = [];
+  for (const w of wanted) {
+    const matches = byCode.get(w);
+    if (!matches) continue;
+    if (matches.some((s) => signalMatchesCandidate(s, keys))) correlated.push(w);
+    else themes.push(w);
+  }
+  return { correlated, themes };
 }
 
-/** Memory types relevant to a candidate type (provenance only). */
-function memoryTypesFor(c: PromotionCandidate): string[] {
-  switch (c.type) {
+/**
+ * Canonical PromotionType → relevant long-term memory types (snake_case).
+ * Exported so the pipeline can apply the SAME relevance filter when it
+ * attaches memory statements to a recommendation (no blanket attachment).
+ */
+export function memoryTypesForType(type: string): string[] {
+  switch (type) {
     case 'CREATE_COMBO':
       return ['customer_behavior_pattern', 'audience_response_pattern'];
     case 'RUN_REACTIVATION':
@@ -228,6 +339,11 @@ function memoryTypesFor(c: PromotionCandidate): string[] {
     default:
       return ['campaign_performance_pattern'];
   }
+}
+
+/** Memory types relevant to a candidate (provenance + ranking gate). */
+function memoryTypesFor(c: PromotionCandidate): string[] {
+  return memoryTypesForType(c.type);
 }
 
 /**
@@ -335,7 +451,9 @@ export function rankAndDiversify(input: RankingInput): RankingResult {
     const relevantMemory = (input.memoryHints ?? []).filter((m) => memoryTypesFor(c).includes(m.memoryType));
     const why: string[] = [];
     why.push(`Scored ${c.score}/100 by the existing candidate engine (confidence ${(c.confidence * 100).toFixed(0)}%).`);
-    if (item.safe) {
+    if (c.financialModel.economicsUnavailable) {
+      why.push('No verified economics are available for this candidate yet — treat it as an opportunity, not a validated money-making action.');
+    } else if (item.safe) {
       why.push(
         `Passes its own economics: ${c.financialModel.discountPercent}% discount within the ${c.financialModel.maxDiscountConstraint}% limit and a projected ${c.financialModel.projectedContributionMargin}% margin above the ${c.financialModel.minMarginConstraint}% floor.`,
       );
@@ -345,8 +463,13 @@ export function rankAndDiversify(input: RankingInput): RankingResult {
     if (c.cannibalization.estimatedCannibalizationRate > 0.4) {
       why.push(`High estimated cannibalization (${(c.cannibalization.estimatedCannibalizationRate * 100).toFixed(0)}%).`);
     }
-    const codes = signalCodesFor(c, signals);
-    if (codes.length) why.push(`Supported by current business signals: ${codes.join(', ')}.`);
+    const { correlated: correlatedCodes, themes: signalThemes } = signalCodesFor(c, signals);
+    if (correlatedCodes.length) {
+      why.push(`Supported by product-correlated business signals: ${correlatedCodes.join(', ')}.`);
+    }
+    if (signalThemes.length) {
+      why.push(`Signal themes present in your data (not specific to these products): ${signalThemes.join(', ')}.`);
+    }
     if (relevantMemory.length) {
       why.push(`Consistent with validated past learning: ${relevantMemory.map((m) => m.statement).join(' ')}`);
     }
@@ -373,6 +496,7 @@ export function rankAndDiversify(input: RankingInput): RankingResult {
         breakEvenIncrementalUnits: Number.isFinite(c.financialModel.breakEvenIncrementalUnits) ? c.financialModel.breakEvenIncrementalUnits : -1,
         paybackPeriodDays: Number.isFinite(c.financialModel.paybackPeriodDays) ? c.financialModel.paybackPeriodDays : -1,
         economicallySafe: item.safe,
+        available: !c.financialModel.economicsUnavailable,
       },
       cannibalization: {
         rate: c.cannibalization.estimatedCannibalizationRate,
@@ -384,13 +508,21 @@ export function rankAndDiversify(input: RankingInput): RankingResult {
       evidence: c.evidence,
       provenance: {
         sourceSignals: c.sourceSignals,
-        signalCodes: codes,
-        mlKinds: [...mlKinds],
+        signalCodes: correlatedCodes,
+        signalThemes,
+        // Per-recommendation ML provenance: only the kinds that actually
+        // influenced THIS candidate's rank (never the whole pipeline set).
+        mlKinds: mlAlignment(c, mlKinds).kinds,
         memoryRefs: relevantMemory.map((m) => m.ref),
       },
       why,
     };
   });
+
+  const unavailableEconomics = recommendations.filter((r) => !r.economics.available).length;
+  if (unavailableEconomics > 0) {
+    notes.push(`${unavailableEconomics} recommendation(s) have no verified economics — shown as opportunities, never as validated profit.`);
+  }
 
   const strategies = [...new Set(recommendations.map((r) => r.strategy))];
   if (recommendations.length > 1 && strategies.length === 1) {

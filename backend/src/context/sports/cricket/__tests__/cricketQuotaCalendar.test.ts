@@ -11,7 +11,10 @@
  *     never key material).
  *  3. Calendar sync persists fixtures as deduped Context Calendar events
  *     and is idempotent across runs.
- *  4. The sports offer provider reads ctx.sportsEvents (Mongo-loaded)
+ *  4. Pagination depth: the provider list is sliced by ROW offset, so a
+ *     fixture buried deep in it still reaches the calendar — the offset must
+ *     advance by the page size, never by one row.
+ *  5. The sports offer provider reads ctx.sportsEvents (Mongo-loaded)
  *     and never calls the sports provider — zero marginal API cost.
  */
 
@@ -250,6 +253,48 @@ describe('cricket → Context Calendar sync', () => {
     expect(await CalendarEvent.countDocuments({ type: 'sports' })).toBe(1);
   });
 
+  it('only IPL and India fixtures reach the Context Calendar', async () => {
+    const iso = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const base = { status: 'Match not started', venue: 'Test Ground', date: iso.slice(0, 10), dateTimeGMT: `${iso.slice(0, 10)}T14:00:00` };
+    const india = { ...base, id: 'scope-ind', name: 'India vs Australia, 1st T20I, Australia tour of India 2026', matchType: 't20', teams: ['India', 'Australia'] };
+    const ipl = { ...base, id: 'scope-ipl', name: 'Mumbai Indians vs Chennai Super Kings, 12th Match, Indian Premier League 2026', matchType: 't20', teams: ['Mumbai Indians', 'Chennai Super Kings'] };
+    const other = { ...base, id: 'scope-other', name: 'England vs Pakistan, 3rd Test, Pakistan tour of England 2026', matchType: 'test', teams: ['England', 'Pakistan'] };
+
+    vi.stubGlobal('fetch', vi.fn(async () => apiResponse([india, ipl, other])) as unknown as typeof fetch);
+
+    const run = await syncCricketEventsToCalendar({ daysAhead: 14 });
+    expect(run.considered).toBe(2);
+    expect(run.skipped).toBe(1);
+    expect(run.created).toBe(2);
+
+    const docs = await CalendarEvent.find({ type: 'sports' }).lean();
+    expect(docs).toHaveLength(2);
+    const tags = docs.flatMap((d) => d.tags);
+    expect(tags).toContain('cricapi:scope-ind');
+    expect(tags).toContain('cricapi:scope-ipl');
+    expect(tags).not.toContain('cricapi:scope-other');
+  });
+
+  it('archives previously synced fixtures that fall outside the scope', async () => {
+    await CalendarEvent.create({
+      name: 'England vs Pakistan, 3rd Test, Pakistan tour of England 2026',
+      type: 'sports',
+      startDate: new Date(Date.now() + 86_400_000),
+      endDate: new Date(Date.now() + 2 * 86_400_000),
+      scope: 'india',
+      tags: ['cricket-sync', 'cricapi:legacy-1'],
+      status: 'active',
+      source: 'external',
+    });
+
+    vi.stubGlobal('fetch', vi.fn(async () => apiResponse([])) as unknown as typeof fetch);
+    const run = await syncCricketEventsToCalendar({ daysAhead: 14 });
+    expect(run.archived).toBe(1);
+
+    const doc = await CalendarEvent.findOne({ tags: 'cricapi:legacy-1' }).lean();
+    expect(doc?.status).toBe('archived');
+  });
+
   it('archives sync events whose end has passed', async () => {
     const past = new Date(Date.now() - 5 * 86_400_000);
     await CalendarEvent.create({
@@ -269,6 +314,63 @@ describe('cricket → Context Calendar sync', () => {
 
     const doc = await CalendarEvent.findOne({ tags: 'cricapi:old-1' }).lean();
     expect(doc?.status).toBe('archived');
+  });
+});
+
+// ─── 4b. Pagination depth (row-offset slicing) ───────────────────
+
+describe('deep pagination reaches fixtures buried in the provider list', () => {
+  it('collects an India fixture sitting ~180 rows down and saves it to the calendar', async () => {
+    const PAGE_SIZE = 25;
+    const farDate = new Date(Date.now() + 200 * 86_400_000).toISOString().slice(0, 10);
+    const nearDate = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+
+    // Rows 0..179 are long-out-of-window foreign fixtures (the provider lists
+    // finished/horizon-distant matches first); the India fixture hides at 180.
+    const rows: Array<Record<string, unknown>> = [];
+    const filler = (i: number) => ({
+      id: `filler-${i}`,
+      name: `England vs Pakistan, ${i}th Match, Pakistan tour of England 2026`,
+      matchType: 'test',
+      status: 'Match not started',
+      venue: 'Ground',
+      date: farDate,
+      dateTimeGMT: `${farDate}T06:00:00`,
+      teams: ['England', 'Pakistan'],
+    });
+    for (let i = 0; i < 180; i++) rows.push(filler(i));
+    rows.push({
+      id: 'deep-india',
+      name: 'India vs Australia, 1st T20I, Australia tour of India 2026',
+      matchType: 't20',
+      status: 'Match not started',
+      venue: 'Wankhede Stadium, Mumbai',
+      date: nearDate,
+      dateTimeGMT: `${nearDate}T14:00:00`,
+      teams: ['India', 'Australia'],
+    });
+    for (let i = 180; i < 400; i++) rows.push(filler(i));
+
+    const fetchSpy = vi.fn(async (url: string) => {
+      const parsed = /offset=(\d+)/.exec(String(url));
+      const offset = parsed ? parseInt(parsed[1], 10) : 0;
+      return apiResponse(rows.slice(offset, offset + PAGE_SIZE));
+    });
+    vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+
+    const run = await syncCricketEventsToCalendar({ daysAhead: 14 });
+    expect(run.dataStatus).toBe('fresh');
+    expect(run.considered).toBe(1);
+    expect(run.created).toBe(1);
+
+    const doc = await CalendarEvent.findOne({ tags: 'cricapi:deep-india' }).lean();
+    expect(doc).not.toBeNull();
+    expect(doc).toMatchObject({ type: 'sports', status: 'active', source: 'external' });
+    // Nothing out of scope was written alongside it.
+    expect(await CalendarEvent.countDocuments({ type: 'sports' })).toBe(1);
+    // The fixture is on the 8th page: reaching it proves the offset advances
+    // by the provider's page size instead of re-reading overlapping rows.
+    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(8);
   });
 });
 

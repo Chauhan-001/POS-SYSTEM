@@ -84,7 +84,7 @@ export type CampaignProposalExecutionStatus =
   | 'measured';
 
 /** Where the proposal came from — provenance for audit/learning. */
-export type CampaignProposalSource = 'owner' | 'agent' | 'command';
+export type CampaignProposalSource = 'owner' | 'agent' | 'command' | 'recommendation';
 
 export type CampaignProposalChannel = 'sms' | 'whatsapp' | 'email' | 'app_notification' | 'webhook';
 
@@ -96,8 +96,15 @@ export interface ICampaignProposal extends Document {
   strategy: CampaignProposalStrategy;
   offerId?: mongoose.Types.ObjectId; // reference to Offer document
   comboId?: mongoose.Types.ObjectId; // reference to combo product set
-  /** Provenance: owner builder, AI marketing agent, or NL command flow. */
+  /** Provenance: owner builder, AI marketing agent, NL command flow, or a
+   * ranked recommendation selected from the intelligence pipeline. */
   source?: CampaignProposalSource;
+  /** The EXACT ranked recommendation this proposal was built from — the owner
+   * selected it from /intelligence; the proposal never regenerates a different
+   * decision. */
+  sourceRecommendationId?: string | null;
+  /** Immutable snapshot of the selected recommendation (audit trail). */
+  sourceRecommendation?: Record<string, unknown> | null;
   /** Campaign created from this proposal (set at schedule time). */
   campaignId?: mongoose.Types.ObjectId | null;
   audience: {
@@ -341,7 +348,9 @@ const campaignProposalSchema = new Schema<ICampaignProposal>(
     approvalStatus: { type: String, enum: ['pending', 'validating', 'ready_for_approval', 'approved', 'rejected'], default: 'pending', index: true },
     executionStatus: { type: String, enum: ['pending', 'scheduled', 'active', 'paused', 'completed', 'measured'], default: 'pending', index: true },
     /** Provenance: owner builder, AI marketing agent, or NL command flow. */
-    source: { type: String, enum: ['owner', 'agent', 'command'], default: 'owner', index: true },
+    source: { type: String, enum: ['owner', 'agent', 'command', 'recommendation'], default: 'owner', index: true },
+    sourceRecommendationId: { type: String, default: null, index: true },
+    sourceRecommendation: { type: Schema.Types.Mixed, default: null },
     /** Campaign materialized from this proposal at schedule time. */
     campaignId: { type: Schema.Types.ObjectId, ref: 'Campaign', default: null, index: true },
     validationResult: {

@@ -27,6 +27,7 @@ import {
   type BusinessConstraints,
 } from '../../../services/promotionCandidateService';
 import { AiError } from '../../shared/aiErrors';
+import { resolveBranchScope } from '../../../services/recommendationContext';
 
 export const getPromotionCandidatesInputSchema = z
   .object({
@@ -155,14 +156,22 @@ export async function executeGetPromotionCandidates(
   const generatedAt = new Date().toISOString();
   const restaurantId = ctx.tenant.restaurantId;
 
-  // Branch scope is only ever used as a filter INSIDE this tenant.
-  if (input.branchId && input.branchId === restaurantId) {
-    throw new AiError('TOOL_TENANT_MISMATCH', 'branchId must reference a branch, not the restaurant');
+  // D-15: branch ownership is validated against the tenant (same contract as
+  // getSalesTrends / getInventoryStatus / customerTools). A foreign branch is
+  // rejected with TOOL_TENANT_MISMATCH — never silently used as a filter.
+  let branchId: string | undefined;
+  if (input.branchId) {
+    if (input.branchId === restaurantId) {
+      throw new AiError('TOOL_TENANT_MISMATCH', 'branchId must reference a branch, not the restaurant');
+    }
+    const scope = await resolveBranchScope(restaurantId, input.branchId);
+    if (!scope) throw new AiError('TOOL_TENANT_MISMATCH', 'branchId does not belong to this restaurant');
+    branchId = scope.branchId;
   }
 
   const opts: PromotionCandidateOptions = {
     restaurantId,
-    branchId: input.branchId,
+    branchId,
     lookbackDays: input.lookbackDays ?? 90,
     minScore: input.minScore ?? 40,
     minConfidence: input.minConfidence ?? 0.4,

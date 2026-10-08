@@ -154,6 +154,19 @@ describe('1. sales normalization', () => {
     expect(r.signals.every((s) => s.freshness === 'unknown')).toBe(true);
   });
 
+  it('D-22: a MISSING source timestamp stays unknown — never substituted with "now"', () => {
+    const r = normalizeSalesTrends(
+      { available: true, dailyRevenue: 1000, orderCount: 10, averageOrderValue: 100 } as never,
+      tenantInput,
+    );
+    expect(r.status).toBe('ok');
+    expect(r.signals.length).toBeGreaterThan(0);
+    // No fabricated freshness and no fabricated period window.
+    expect(r.signals.every((s) => s.freshness === 'unknown')).toBe(true);
+    expect(r.signals.every((s) => s.generatedAt === '')).toBe(true);
+    expect(r.signals.every((s) => s.periodStart === undefined && s.periodEnd === undefined)).toBe(true);
+  });
+
   it('stale source data is labelled stale', () => {
     const r = normalizeSalesTrends(
       { ...base, generatedAt: '2026-08-01T10:00:00.000Z' },

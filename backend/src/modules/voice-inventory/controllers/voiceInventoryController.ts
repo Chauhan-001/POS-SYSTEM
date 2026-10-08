@@ -1177,8 +1177,12 @@ export async function getVoiceHistory(
         .sort({ createdAt: -1 })
         .skip(Number(offset))
         .limit(Number(limit))
+        // parsedJson carries the purchase details captured at parse/confirm
+        // time (supplier, purchase date, expiry date, brand) — the history UI
+        // shows them alongside each action, so this must not be dropped.
+        // undoStatus/undoLogId let the UI hide Undo on already-undone rows.
         .select(
-          'transcript intent confidence confirmationStatus items latencyMs createdAt'
+          'transcript intent confidence confirmationStatus undoStatus items parsedJson latencyMs createdAt'
         )
         .lean(),
       VoiceAuditLog.countDocuments(filter),

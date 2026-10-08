@@ -1,4 +1,4 @@
-import { Layers, Users, Award, Shield, DollarSign, Activity, FileText, RefreshCw, TrendingDown, BarChart3, CalendarClock, Building2, Receipt, TrendingUp, Monitor, ToggleLeft, QrCode, MessageSquare, BrainCircuit } from 'lucide-react';
+import { Layers, Users, Award, Shield, DollarSign, Activity, FileText, RefreshCw, TrendingDown, BarChart3, CalendarClock, Building2, Receipt, TrendingUp, Monitor, ToggleLeft, QrCode, MessageSquare } from 'lucide-react';
 
 import { useState, useEffect } from 'react';
 import type { RolePermissions } from '../../types';
@@ -74,7 +74,6 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
   const isExpensesEnabled = ownerFullAccess(moduleSettings.enableExpenseManagement !== false, 'expense_tracking');
   const isInventoryEnabled = ownerFullAccess(true, 'inventory');
   const isAnalyticsEnabled = ownerFullAccess(true, 'analytics');
-  const isMlInsightsEnabled = ownerFullAccess(true, 'analytics');
   const isFinanceEnabled = ownerFullAccess(true, 'finance');
   const isProductsEnabled = ownerFullAccess(moduleSettings.enableProducts !== false, 'products');
   const isOffersEnabled = moduleSettings.enableOffers !== false && planHasAny('offers', 'marketing');
@@ -133,7 +132,6 @@ export default function MoreWorkspace({ onNavigate, onOpenDailySales, onOpenActi
     ...(isExpensesEnabled ? [{ icon: TrendingDown, label: 'Expenses', desc: 'Expense tracking', action: () => onNavigate('Expenses'), color: 'text-red-600' as const }] : []),
     ...(isReservationsEnabled ? [{ icon: CalendarClock, label: 'Reservations', desc: 'Table booking & waitlist', action: () => onNavigate('Reservations'), color: 'text-rose-600' as const }] : []),
     ...(isAnalyticsEnabled ? [{ icon: TrendingUp, label: 'Analytics', desc: 'Business intelligence & trends', action: () => onNavigate('Analytics'), color: 'text-indigo-600' as const }] : []),
-    ...(isMlInsightsEnabled ? [{ icon: BrainCircuit, label: 'ML Insights', desc: 'Demand, combos & customer uplift', action: () => onNavigate('MLInsights'), color: 'text-violet-600' as const }] : []),
     ...(isFinanceEnabled ? [{ icon: BarChart3, label: 'Finance', desc: 'Profit & Loss statement', action: () => onNavigate('Finance'), color: 'text-emerald-600' as const }] : []),
     ...(isLoyaltyEnabled ? [{ icon: Users, label: 'Customers', desc: 'Loyalty management', action: () => onNavigate('Customers'), color: 'text-green-600' as const }] : []),
     ...(isOffersEnabled ? [{ icon: Award, label: 'Marketing', desc: 'Offers, campaigns & promotions', action: () => onNavigate('Offers'), color: 'text-amber-600' as const }] : []),

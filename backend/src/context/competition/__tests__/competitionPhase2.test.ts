@@ -387,12 +387,37 @@ describe('E2E: 14 nearby → signals → agent', () => {
     const allEvidence = svc.intelligence!.signals.flatMap((s) => s.evidence).join(' ').toLowerCase();
     expect(allEvidence).not.toMatch(/steal|losing|switch|popular|cheaper|revenue|sales (will|dropped)/);
 
-    // Agent level: competition context + signals flow through.
-    const agent = await runMarketingAgent({ tenant: { restaurantId: R1, actorId: 'a1' } });
-    expect(agent.competitionContext).toMatch(/^Competition context: 14 nearby restaurants/);
-    expect(agent.competitionSignals).toContain('HIGH_CUISINE_OVERLAP');
-    expect(agent.competitionSignals).toContain('CLOSE_CATEGORY_COMPETITION');
-    // The agent must NOT be instructed to create an offer by competition data.
-    expect(agent.nextActions.join(' ')).not.toMatch(/create .*competition/i);
+    // Agent level: the competition source is one of the tools the AGENTIC
+    // insight agent may choose (the old deterministic context LINE was removed
+    // with the targeting ladder).
+    const run = await runMarketingAgent(
+      { tenant: { restaurantId: R1, actorId: 'a1' } },
+      {
+        llm: async () => ({
+          value: { toolCalls: [{ name: 'getNearbyCompetition', args: {} }], needMoreEvidence: false },
+          model: 'fake-model',
+          provider: 'fake',
+          latencyMs: 1,
+          usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+        }),
+        synthesisLlm: async () => ({
+          value: {
+            title: 'Competition context',
+            summary: 'Nearby competition evidence was reviewed for this restaurant.',
+            priority: 'low',
+            evidenceRefs: ['getNearbyCompetition'],
+            confidence: 0.4,
+          },
+          model: 'fake',
+          provider: 'fake',
+          latencyMs: 1,
+          usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+        }),
+      },
+    );
+    expect(run.investigation.toolNames).toContain('getNearbyCompetition');
+    expect(run.insights[0].toolsUsed).toContain('getNearbyCompetition');
+    // Competition evidence must never instruct an automatic campaign.
+    expect(JSON.stringify(run.insights[0])).not.toMatch(/create .*competition/i);
   });
 });
