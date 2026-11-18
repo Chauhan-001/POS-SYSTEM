@@ -7,7 +7,7 @@
  * Mental model: Discover → Advise → Promote → Sell → Measure.
  *   Home             — marketing command center (what should I promote now?)
  *   Advisory         — AI business advisor + create your own offer
- *   Recommendations  — AI/rule-detected opportunities
+ *   Opportunities   � deterministic, data-driven promotion ideas
  *   Offers           — manage live / upcoming / draft / expired offers
  *   Promote          — tell customers about an offer (campaigns)
  *   Analytics        — did my promotion work?
@@ -298,7 +298,7 @@ export default function MarketingWorkspace({
   const tabs: { id: MarketingTab; label: string; icon: React.ElementType }[] = [
     { id: 'home', label: 'Home', icon: LayoutGrid },
     { id: 'advisory', label: 'Advisory', icon: Briefcase },
-    { id: 'insights', label: 'Insights', icon: Sparkles },
+    { id: 'insights', label: 'Opportunities', icon: Sparkles },
     { id: 'offers', label: 'Offers', icon: Tag },
     { id: 'promote', label: 'Promote', icon: Megaphone },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -312,11 +312,8 @@ export default function MarketingWorkspace({
   }, [data.offers, data.recommendations]);
 
   // One refresh control for the whole module: the header button refreshes the
-  // underlying offers/recommendations data. The Insights page runs its own
-  // analyses (agentic insight + intelligence pipeline) from its buttons.
+  // underlying offers and recommendations data.
   const handleRefresh = useCallback(() => {
-    // The Insights page owns its own analysis buttons (agentic insight run +
-    // intelligence pipeline); the header refreshes the underlying data only.
     void data.refresh();
   }, [data]);
 

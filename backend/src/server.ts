@@ -101,7 +101,6 @@ import adminRouter from './routes/admin';
 import adminReportsRouter from './routes/adminReports';
 import calendarRouter from './modules/calendar/routes/calendar';
 import cricketRouter from './context/sports/cricket/cricketRoutes';
-import competitionRouter from './context/competition/competitionRoutes';
 import productsRouter from './routes/products';
 import ordersRouter from './routes/orders';
 import availabilityRouter from './routes/availability';
@@ -127,7 +126,6 @@ import advisorRouter from './routes/advisor';
 import forecastRouter from './routes/forecast';
 import inventoryDemandRouter from './routes/inventoryDemand';
 import scenarioRouter from './routes/scenario';
-import intelligenceRouter from './routes/intelligence';
 import feedbackIntelligenceRouter from './routes/feedbackIntelligence';
 import loyaltyRouter from './routes/loyalty';
 import otpRouter from './routes/otp';
@@ -146,6 +144,7 @@ import expenseCategoriesRouter from './routes/expenseCategories';
 import vendorsRouter from './routes/vendors';
 import recurringExpensesRouter from './routes/recurringExpenses';
 import cashLedgerRouter from './routes/cashLedger';
+import shiftRouter from './routes/shifts';
 import financeRouter from './routes/finance';
 import reportsRouter from './modules/reports/routes/reports';
 import settingsRouter from './modules/settings/routes/settings';
@@ -154,11 +153,6 @@ import receiptRouter from './modules/public-store/routes/receipt';
 import legalRouter from './modules/legal/routes/legal';
 import helpAnalyticsRouter from './modules/help-analytics/routes/helpAnalytics';
 import marketingRouter from './routes/marketing';
-import mlPipelineRouter from './modules/ml-pipeline/mlPipelineRoutes';
-import { startMLSyncScheduler } from './modules/ml-pipeline/mlSyncScheduler';
-import marketingAgentRouter from './ai/agents/marketingAgentRoutes';
-import inventoryAgentRouter from './ai/agents/inventoryAgentRoutes';
-import zReportRouter from './ai/agents/zReportRoutes';
 import { startCricketCalendarScheduler } from './context/sports/cricket/cricketCalendarScheduler';
 
 import { renderPublicStorePage } from './modules/public-store/publicStorePage';
@@ -292,11 +286,6 @@ app.use('/api/calendar', calendarRouter);
 // admin-dashboard JWT; the CricAPI key/base URL never leave the backend.
 app.use('/api/sports', cricketRouter);
 
-// Competition Context (Phase 2) — authenticated read-only surface at
-// /api/competition. Tenant identity comes only from requireAuth; the Google
-// key/base URL never leave the backend. Refresh is explicit on-demand only.
-app.use('/api/competition', competitionRouter);
-
 // Health check — public endpoint
 // Not cached because dbConnected must always be fresh per-request
 // Includes the server version so ops can identify the running build.
@@ -356,6 +345,7 @@ app.use('/api/expense-categories', expenseCategoriesRouter);
 app.use('/api/vendors', vendorsRouter);
 app.use('/api/recurring-expenses', recurringExpensesRouter);
 app.use('/api/cash-ledger', cashLedgerRouter);
+app.use('/api/shifts', shiftRouter);
 app.use('/api/finance', financeRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/settings', settingsRouter);
@@ -378,8 +368,7 @@ app.use('/api', advisorRouter);
 app.use('/api/forecast', forecastRouter);
 app.use('/api/inventory-demand', inventoryDemandRouter);
 app.use('/api/scenario', scenarioRouter);
-app.use('/api/intelligence', intelligenceRouter);
-// Feedback intelligence (FeedRag-style aspect analysis / RAG over receipt-QR feedback)
+// Feedback intelligence (deterministic aspect analysis over receipt-QR feedback)
 app.use('/api/feedback', feedbackIntelligenceRouter);
 app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/otp', otpRouter);
@@ -387,12 +376,6 @@ app.use('/api/referrals', referralsRouter);
 app.use('/api/campaigns', campaignsRouter);
 app.use('/api/automations', automationsRouter);
 app.use('/api/customer-reports', customerReportsRouter);
-app.use('/api/ml-pipeline', mlPipelineRouter);
-app.use('/api/ai/marketing-agent', marketingAgentRouter);
-app.use('/api/ai/inventory-agent', inventoryAgentRouter);
-// Daily Summary / Z-Report Intelligence (read-only; the deterministic
-// GET /api/reports/closing/z path is untouched).
-app.use('/api/ai/z-report', zReportRouter);
 app.use('/api', recipesRouter);
 app.use('/api', promotionsRouter);
 app.use('/api', mediaRouter);
@@ -514,13 +497,6 @@ async function start() {
         }
       })
       .catch((err) => console.warn('[AI] Key-pool health check failed:', (err as Error)?.message));
-  }
-
-  // ─── 3.05. ML pipeline daily sync scheduler (opt-in via ML_SYNC_ENABLED=on) ──
-  try {
-    startMLSyncScheduler();
-  } catch (err) {
-    console.warn('[MLSyncScheduler] startup failed:', (err as Error)?.message);
   }
 
   // ─── 3.06. Cricket → Calendar interval sync (CricAPI fixtures into the

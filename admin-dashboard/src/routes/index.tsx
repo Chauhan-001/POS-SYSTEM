@@ -38,8 +38,10 @@ const CustomerCrm = lazy(() => import('../pages/marketing/CustomerCrm'))
 const CalendarManager = lazy(() => import('../pages/marketing/CalendarManager'))
 const FinanceConsole = lazy(() => import('../pages/finance/FinanceConsole'))
 const RestaurantFinance = lazy(() => import('../pages/restaurants/RestaurantFinance'))
+const RestaurantProfitCost = lazy(() => import('../pages/restaurants/RestaurantProfitCost'))
 const ReportsConsole = lazy(() => import('../pages/reports/ReportsConsole'))
 const RestaurantReports = lazy(() => import('../pages/restaurants/RestaurantReports'))
+const RestaurantMenuEngineering = lazy(() => import('../pages/restaurants/RestaurantMenuEngineering'))
 const AdminReports = lazy(() => import('../pages/reports/AdminReports'))
 const Owners = lazy(() => import('../pages/platform/Owners'))
 const Subscriptions = lazy(() => import('../pages/platform/Subscriptions'))
@@ -113,8 +115,16 @@ export const router = createBrowserRouter([
         element: <Suspense fallback={<LazyFallback />}><RestaurantFinance /></Suspense>,
       },
       {
+        path: 'restaurants/:id/profit-cost',
+        element: <Suspense fallback={<LazyFallback />}><RestaurantProfitCost /></Suspense>,
+      },
+      {
         path: 'restaurants/:id/reports',
         element: <Suspense fallback={<LazyFallback />}><RestaurantReports /></Suspense>,
+      },
+      {
+        path: 'restaurants/:id/menu-engineering',
+        element: <Suspense fallback={<LazyFallback />}><RestaurantMenuEngineering /></Suspense>,
       },
       {
         path: 'finance',

@@ -27,16 +27,12 @@ import {
   assessStockoutRisk,
   generateExpiryAlerts,
 } from '../inventoryDemandForecastingService';
-import { getExpiryRiskToolDefinition } from '../../ai/tools/inventory/getExpiryRiskTool';
-import { getStockoutRiskToolDefinition } from '../../ai/tools/inventory/getStockoutRiskTool';
 import Product from '../../models/catalog/Product';
 import Recipe from '../../modules/recipes/models/Recipe';
 
 let mongod: MongoMemoryServer;
 
 const R1 = '507f1f77bcf86cd799439011';
-const tenantR1 = { restaurantId: R1, actorId: 'actor-1' };
-const ctx = { tenant: tenantR1 } as never;
 
 /** 'YYYY-MM-DD' (the catalog's storage format) N days from now. */
 function isoDay(offsetDays: number): string {
@@ -116,21 +112,20 @@ describe('expiry assessment', () => {
   });
 });
 
-describe('expiry tool contract', () => {
-  it('marks a tracked, clean source as available with no alerts', async () => {
+describe('expiry assessment contract', () => {
+  it('marks a tracked, clean source as assessed with no alerts', async () => {
     await makeInventoryItem('Rice', isoDay(200));
 
-    const out = await getExpiryRiskToolDefinition.execute({ horizonDays: 30 }, ctx);
-    expect(out.available).toBe(true);
+    const out = await assessExpiryRisk(R1, undefined, 30);
+    expect(out.assessed).toBe(true);
     expect(out.alerts).toEqual([]);
   });
 
-  it('marks an untracked source as unavailable with an explicit reason', async () => {
+  it('marks an untracked source as not assessed', async () => {
     await makeInventoryItem('Blank', '');
 
-    const out = await getExpiryRiskToolDefinition.execute({ horizonDays: 30 }, ctx);
-    expect(out.available).toBe(false);
-    expect(out.reason).toBe('NO_EXPIRY_DATA');
+    const out = await assessExpiryRisk(R1, undefined, 30);
+    expect(out.assessed).toBe(false);
   });
 });
 
@@ -186,10 +181,9 @@ describe('stockout assessment', () => {
     expect(assessment.assessed).toBe(false);
   });
 
-  it('the stockout tool never throws and reports an explicit reason', async () => {
+  it('the stockout assessment never throws and reports not assessed', async () => {
     await makeInventoryItem('Tomato', '');
-    const out = await getStockoutRiskToolDefinition.execute({ horizonDays: 14 }, ctx);
-    expect(out.available).toBe(false);
-    expect(out.reason).toBe('NO_STOCKOUT_DATA');
+    const out = await assessStockoutRisk(R1, undefined, 14);
+    expect(out.assessed).toBe(false);
   });
 });

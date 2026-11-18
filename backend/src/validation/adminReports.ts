@@ -51,7 +51,7 @@ export const restaurantSubscriptionParamsSchema = z.object({
 }).strict();
 
 export const reportSnapshotBodySchema = z.object({
-  kind: z.enum(['growth', 'revenue', 'usage', 'feature', 'subscription', 'ai_revenue']),
+  kind: z.enum(['growth', 'revenue', 'usage', 'feature', 'subscription', 'ai_revenue']).optional(),
 }).strict();
 
 export { nonEmptyString };

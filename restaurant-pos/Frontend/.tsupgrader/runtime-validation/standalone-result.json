@@ -1,0 +1,133 @@
+{
+  "planHash": "76cd27378ef8baea0d9b60cb0c0bf30143d77909c12eb08bfec77c9d3c9d0dd4",
+  "phase": "standalone",
+  "recordedAtUtc": "2026-11-06T15:00:22.5830418Z",
+  "retryCount": 3,
+  "resetBaseline": false,
+  "complete": true,
+  "result": {
+    "setupSucceeded": true,
+    "setupDurationMs": 0,
+    "setupFailureOutput": null,
+    "assertions": [
+      {
+        "name": "tsc-no-emit",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E react-example@0.0.0 lint\r\n\u003E tsc --noEmit\r\n\r\n",
+        "durationMs": 14007
+      },
+      {
+        "name": "production-build",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E react-example@0.0.0 build\r\n\u003E vite build \u0026\u0026 esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs\r\n\r\n\u001B[36mvite v6.4.3 \u001B[32mbuilding for production...\u001B[36m\u001B[39m\r\ntransforming...\r\n\u001B[32m\u2713\u001B[39m 2974 modules transformed.\r\nrendering chunks...\r\n\u001B[33m[plugin vite:reporter] \r\n(!) C:/Loyalty_POS system/restaurant-pos/Frontend/src/components/customers/CustomerCallsPanel.tsx is dynamically imported by C:/Loyalty_POS system/restaurant-pos/Frontend/src/App.tsx but also statically imported by C:/Loyalty_POS system/restaurant-pos/Frontend/src/App.tsx, dynamic import will not move module into another chunk.\r\n\u001B[39m\r\ncomputing gzip size...\r\n\u001B[2mdist/\u001B[22m\u001B[32mindex.html                               \u001B[39m\u001B[1m\u001B[2m  2.11 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   0.81 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[32massets/brand-logo-DvLlUBCq.png           \u001B[39m\u001B[1m\u001B[2m 28.23 kB\u001B[22m\u001B[1m\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[35massets/index-DY3TyCBL.css                \u001B[39m\u001B[1m\u001B[2m161.48 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  22.97 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/Modal-D_B4fHSq.js                 \u001B[39m\u001B[1m\u001B[2m  1.25 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   0.65 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/LegalAcceptanceGate-BkLuhK_H.js   \u001B[39m\u001B[1m\u001B[2m  3.49 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   1.50 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/units-DcviH70d.js                 \u001B[39m\u001B[1m\u001B[2m  7.25 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   2.78 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/BranchComparison-B6vZC8aI.js      \u001B[39m\u001B[1m\u001B[2m  7.97 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   2.62 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/shared-BXzfrj86.js                \u001B[39m\u001B[1m\u001B[2m  8.85 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   3.03 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/ReceiptHistory-DWHX9K7t.js        \u001B[39m\u001B[1m\u001B[2m 13.29 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   3.16 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-react-CcDwy2WD.js          \u001B[39m\u001B[1m\u001B[2m 14.66 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   5.24 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/StaffManager-9wUItrDn.js          \u001B[39m\u001B[1m\u001B[2m 15.12 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   4.32 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-tour-CQD_dMrx.js           \u001B[39m\u001B[1m\u001B[2m 15.36 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   6.12 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/MenuAvailabilityPage-CvOXmP99.js  \u001B[39m\u001B[1m\u001B[2m 15.47 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   4.66 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/FeedbackPanel-BcX99R6F.js         \u001B[39m\u001B[1m\u001B[2m 16.26 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   4.70 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/GuidedTour-k_Ao4T4W.js            \u001B[39m\u001B[1m\u001B[2m 18.16 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   6.69 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/QrStudioPage-C6ISKEvd.js          \u001B[39m\u001B[1m\u001B[2m 19.88 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   5.27 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/FinanceWorkspace-DYx9fz_2.js      \u001B[39m\u001B[1m\u001B[2m 24.91 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   5.64 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/CustomerManager-ClaFksUK.js       \u001B[39m\u001B[1m\u001B[2m 26.49 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   6.62 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/AnalyticsWorkspace-BUSkWeR_.js    \u001B[39m\u001B[1m\u001B[2m 27.91 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   6.35 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-router-HdmymZeu.js         \u001B[39m\u001B[1m\u001B[2m 35.09 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  12.85 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/ReservationWorkspace-hoq4aejz.js  \u001B[39m\u001B[1m\u001B[2m 35.58 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   7.32 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-dnd-Dh9aPXGw.js            \u001B[39m\u001B[1m\u001B[2m 45.43 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  15.20 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-http-DhXgJQ-f.js           \u001B[39m\u001B[1m\u001B[2m 46.09 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  17.77 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/ExpenseManager-Nr0Jr_-R.js        \u001B[39m\u001B[1m\u001B[2m 47.22 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:   9.10 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/BranchManager-Bc_SsYR5.js         \u001B[39m\u001B[1m\u001B[2m 51.50 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  11.77 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/ReportsManager-n6Yj9To4.js        \u001B[39m\u001B[1m\u001B[2m 51.88 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  10.58 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-icons-fOFEdsSf.js          \u001B[39m\u001B[1m\u001B[2m 80.51 kB\u001B[22m\u001B[1m\u001B[22m\u001B[2m \u2502 gzip:  15.90 kB\u001B[22m\r\n\u001B[2mdist/\u001B[22m\u001B[36massets/vendor-motion-CLEHX6XR.js    \n\u2026[truncated]",
+        "durationMs": 11232
+      },
+      {
+        "name": "tests-pass",
+        "kind": "process",
+        "verificationMethod": "test-results",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E react-example@0.0.0 test\r\n\u003E vitest run\r\n\r\n\r\n RUN  v4.1.10 C:/Loyalty_POS system/restaurant-pos/Frontend\r\n\r\n\r\n Test Files  23 passed (23)\r\n      Tests  211 passed (211)\r\n   Start at  20:29:42\r\n   Duration  40.37s (transform 880ms, setup 3.56s, import 4.24s, tests 1.66s, environment 26.49s)\r\n\r\n",
+        "durationMs": 41656,
+        "testResults": {
+          "testFramework": "vitest",
+          "runnerDetectedFrom": "package_json",
+          "testsTotal": 211,
+          "testsPassed": 211,
+          "testsFailed": 0,
+          "testsSkipped": 0,
+          "parseFailed": false
+        }
+      },
+      {
+        "name": "dev-server-serves-home",
+        "kind": "http-probe",
+        "verificationMethod": "http-status",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": null,
+        "outputSample": "HTTP 200\n\u003C!doctype html\u003E\n\u003Chtml lang=\u0022en\u0022\u003E\n  \u003Chead\u003E\n    \u003Cscript type=\u0022module\u0022\u003Eimport { injectIntoGlobalHook } from \u0022/@react-refresh\u0022;\ninjectIntoGlobalHook(window);\nwindow.$RefreshReg$ = () =\u003E {};\nwindow.$RefreshSig$ = () =\u003E (type) =\u003E type;\u003C/script\u003E\n\n    \u003Cscript type=\u0022module\u0022 src=\u0022/@vite/client\u0022\u003E\u003C/script\u003E\n\n    \u003Cmeta charset=\u0022UTF-8\u0022 /\u003E\n    \u003Cmeta name=\u0022viewport\u0022 content=\u0022width=device-width, initial-scale=1.0\u0022 /\u003E\n    \u003Cmeta name=\u0022description\u0022 content=\u0022ChitKuber POS \u2014 Order management, billing, inventory \u0026 kitchen display\u0022 /\u003E\n    \u003Cmeta name=\u0022theme-color\u0022 content=\u0022#191b23\u0022 /\u003E\n    \u003Clink rel=\u0022icon\u0022 type=\u0022image/png\u0022 href=\u0022/favicon.png\u0022 /\u003E\n    \u003Clink rel=\u0022preconnect\u0022 href=\u0022https://fonts.googleapis.com\u0022 crossorigin /\u003E\n    \u003Clink rel=\u0022preconnect\u0022 href=\u0022https://fonts.gstatic.com\u0022 crossorigin /\u003E\n    \u003Clink rel=\u0022dns-prefetch\u0022 href=\u0022https://fonts.googleapis.com\u0022 /\u003E\n    \u003Clink rel=\u0022preload\u0022 href=\u0022https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800\u0026family=Space\u002BGrotesk:wght@400;500;600;700\u0026family=JetBrains\u002BMono:wght@400;500;700\u0026display=swap\u0022 as=\u0022style\u0022 /\u003E\n    \u003Ctitle\u003EChitKuber POS\u003C/title\u003E\n  \u003C/head\u003E\n  \u003Cbody\u003E\n    \u003Cdiv id=\u0022root\u0022\u003E\u003C/div\u003E\n    \u003Cscript type=\u0022module\u0022 src=\u0022/src/main.tsx?t=1793977155618\u0022\u003E\u003C/script\u003E\n  \u003C/body\u003E\n\u003C/html\u003E\n\n",
+        "durationMs": 18
+      }
+    ],
+    "executions": [
+      {
+        "source": "devServer",
+        "resolvedExecutable": "C:\\nvm4w\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "dev"
+        ],
+        "cwd": "C:\\Loyalty_POS system\\restaurant-pos\\Frontend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "tsc-no-emit",
+        "resolvedExecutable": "C:\\nvm4w\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "lint"
+        ],
+        "cwd": "C:\\Loyalty_POS system\\restaurant-pos\\Frontend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "production-build",
+        "resolvedExecutable": "C:\\nvm4w\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "build"
+        ],
+        "cwd": "C:\\Loyalty_POS system\\restaurant-pos\\Frontend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "tests-pass",
+        "resolvedExecutable": "C:\\nvm4w\\nodejs\\npm.CMD",
+        "args": [
+          "test"
+        ],
+        "cwd": "C:\\Loyalty_POS system\\restaurant-pos\\Frontend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "dev-server-serves-home",
+        "resolvedExecutable": "C:\\nvm4w\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "dev"
+        ],
+        "cwd": "C:\\Loyalty_POS system\\restaurant-pos\\Frontend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      }
+    ]
+  }
+}

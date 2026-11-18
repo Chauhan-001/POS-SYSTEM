@@ -18,6 +18,7 @@
 import mongoose from 'mongoose';
 import { cashLedgerRepo, auditLogRepo } from '../repositories';
 import CashLedger from '../models/finance/CashLedger';
+import Bill from '../models/intelligence/Bill';
 import { AppError } from '../utils/AppError';
 
 function objectId(v: string): mongoose.Types.ObjectId {
@@ -170,12 +171,167 @@ export class CashLedgerService {
   }
 
   /**
-   * Close a shift — expected cash is the running balance; over/short =
+   * Shared expected-cash calculation used by closeShift() and zReport().
+   *
+   * Expected Cash = Opening Cash + Cash Sales(from bills) + Manual Cash In
+   *   − Manual Cash Out − Cash Expenses − Cash Refunds
+   *
+   * Cash Sales = Σ grandTotal where paymentMethod='Cash'
+   *           + Σ splitDetails.cashAmount where paymentMethod='Split'
+   *
+   * Cash Refunds = Σ refundAmount where paymentMethod='Cash'
+   *            + Σ splitDetails.cashAmount where paymentMethod='Split' && isRefunded
+   *
+   * Both closeShift and zReport use this identical formula so they always
+   * produce the same expected-cash figure for the same period.
+   */
+  async computeExpectedCash(
+    restaurantId: string,
+    params: { branchId?: string; date?: string; shiftStart?: Date; shiftEnd?: Date; shiftId?: string } = {}
+  ): Promise<{
+    openingCash: number;
+    cashSales: number;
+    cashIn: number;
+    cashOut: number;
+    cashExpenses: number;
+    adjustments: number;
+    cashRefunds: number;
+    expectedCash: number;
+  }> {
+    const oid = objectId(restaurantId);
+    const date = params.date || new Date().toISOString().slice(0, 10);
+
+    // ── Opening cash from ledger ─────────────────────────────────────
+    const openingQuery: any = { restaurantId: oid, type: 'opening', date };
+    if (params.branchId) openingQuery.branchId = objectId(params.branchId);
+    const openingEntry = await cashLedgerRepo.forTenant(restaurantId).findOne(openingQuery);
+    const openingCash = Math.round((openingEntry?.amount || 0) * 100) / 100;
+
+    // ── Cash sales from bills ────────────────────────────────────────
+    const billMatch: any = {
+      restaurantId: oid,
+      date,
+      isVoided: { $ne: true },
+    };
+    if (params.branchId) billMatch.branchId = objectId(params.branchId);
+    if (params.shiftId) billMatch.shiftId = params.shiftId;
+    if (params.shiftStart || params.shiftEnd) {
+      billMatch.createdAt = {};
+      if (params.shiftStart) billMatch.createdAt.$gte = params.shiftStart;
+      if (params.shiftEnd) billMatch.createdAt.$lte = params.shiftEnd;
+    }
+
+    const [cashBills, splitBills] = await Promise.all([
+      Bill.aggregate([
+        { $match: { ...billMatch, paymentMethod: 'Cash' } },
+        { $group: { _id: null, total: { $sum: '$grandTotal' } } },
+      ]).exec(),
+      Bill.aggregate([
+        { $match: { ...billMatch, paymentMethod: 'Split' } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ['$splitDetails.cashAmount', 0] } },
+          },
+        },
+      ]).exec(),
+    ]);
+
+    const cashSales = Math.round(
+      ((cashBills[0]?.total || 0) + (splitBills[0]?.total || 0)) * 100
+    ) / 100;
+
+    // ── Manual cash movements from ledger ────────────────────────────
+    const ledgerMatch: any = {
+      restaurantId: oid,
+      ...(params.branchId ? { branchId: objectId(params.branchId) } : {}),
+      date,
+      ...(params.shiftId ? { shiftId: params.shiftId } : {}),
+      ...(params.shiftStart || params.shiftEnd
+        ? { createdAt: { ...(params.shiftStart ? { $gte: params.shiftStart } : {}), ...(params.shiftEnd ? { $lte: params.shiftEnd } : {}) } }
+        : {}),
+    };
+
+    const ledgerAgg = await CashLedger.aggregate([
+      { $match: ledgerMatch },
+      {
+        $group: {
+          _id: null,
+          cashIn: {
+            $sum: {
+              $cond: [{ $in: ['$type', ['cash_in', 'bank_withdrawal']] }, '$amount', 0],
+            },
+          },
+          cashOut: {
+            $sum: {
+              $cond: [{ $in: ['$type', ['cash_out', 'bank_deposit']] }, { $abs: '$amount' }, 0],
+            },
+          },
+          cashExpenses: {
+            $sum: { $cond: [{ $eq: ['$type', 'expense'] }, { $abs: '$amount' }, 0] },
+          },
+          adjustments: {
+            $sum: { $cond: [{ $eq: ['$type', 'drawer_adjustment'] }, '$amount', 0] },
+          },
+        },
+      },
+    ]).exec();
+
+    const ledger = ledgerAgg[0] || { cashIn: 0, cashOut: 0, cashExpenses: 0, adjustments: 0 };
+
+    // ── Cash refunds from bills ──────────────────────────────────────
+    const refundAgg = await Bill.aggregate([
+      {
+        $match: {
+          ...billMatch,
+          isRefunded: true,
+          $or: [
+            { paymentMethod: 'Cash' },
+            { 'splitDetails.cashAmount': { $gt: 0 } },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $cond: [
+                { $eq: ['$paymentMethod', 'Cash'] },
+                '$refundAmount',
+                { $ifNull: ['$splitDetails.cashAmount', 0] },
+              ],
+            },
+          },
+        },
+      },
+    ]).exec();
+
+    const cashRefunds = Math.round((refundAgg[0]?.total || 0) * 100) / 100;
+
+    const expectedCash = Math.round(
+      (openingCash + cashSales + ledger.cashIn - ledger.cashOut - ledger.cashExpenses - cashRefunds + ledger.adjustments) * 100
+    ) / 100;
+
+    return {
+      openingCash,
+      cashSales,
+      cashIn: Math.round(ledger.cashIn * 100) / 100,
+      cashOut: Math.round(ledger.cashOut * 100) / 100,
+      cashExpenses: Math.round(ledger.cashExpenses * 100) / 100,
+      adjustments: Math.round(ledger.adjustments * 100) / 100,
+      cashRefunds,
+      expectedCash,
+    };
+  }
+
+  /**
+   * Close a shift — expected cash is computed from bills + ledger; over/short =
    * countedCash − expectedCash. Records a shift_closing entry.
    */
   async closeShift(
     restaurantId: string,
-    data: { countedCash: number; date?: string; branchId?: string; note?: string; performedBy?: string }
+    data: { countedCash: number; date?: string; branchId?: string; shiftId?: string; note?: string; performedBy?: string }
   ) {
     const date = data.date || new Date().toISOString().slice(0, 10);
     const query: any = { type: 'shift_closing', date };
@@ -183,7 +339,12 @@ export class CashLedgerService {
     const existing = await cashLedgerRepo.forTenant(restaurantId).findOne(query);
     if (existing) throw new AppError(400, 'Shift already closed for this day');
 
-    const expected = await this.getBalance(restaurantId, data.branchId);
+    const reconciliation = await this.computeExpectedCash(restaurantId, {
+      branchId: data.branchId,
+      date,
+      shiftId: data.shiftId,
+    });
+    const expected = reconciliation.expectedCash;
     const overShort = Math.round((data.countedCash - expected) * 100) / 100;
     const entry = await this.record(restaurantId, {
       type: 'shift_closing',
@@ -203,7 +364,7 @@ export class CashLedgerService {
       performedBy: data.performedBy || 'System',
       details: { date, expected, counted: data.countedCash, overShort },
     } as any);
-    return { ...entry, expectedCash: expected };
+    return { ...entry, expectedCash: expected, variance: overShort, closingCash: data.countedCash };
   }
 
   /** Ledger history (tenant-scoped, paged, filterable). */

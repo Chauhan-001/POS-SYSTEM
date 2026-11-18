@@ -23,7 +23,6 @@ import { campaignService } from './index';
 import { enqueueCampaign } from './campaignQueue';
 import { runDueAutomations } from './automationService';
 import { updateAllSegments } from './segmentEngine';
-import { consolidateRestaurantMemory } from '../ai/memory/memoryLearningService';
 
 const TICK_MS = 60_000; // 1 minute
 const STUCK_AFTER_MS = 15 * 60 * 1000; // re-queue 'sending' campaigns older than this
@@ -86,80 +85,6 @@ async function maybeRefreshSegments(): Promise<void> {
   if (refreshed > 0) console.log(`[MarketingScheduler] refreshed segments for ${refreshed} restaurant(s)`);
 }
 
-// ─── Memory consolidation (nightly) ───────────────────────────────────────
-// PHASE C: `consolidateRestaurantMemory` previously had no production caller,
-// so no campaign outcome ever became RestaurantMemory. It is hosted HERE, in
-// the existing marketing scheduler, rather than in a new scheduler. Runs once
-// per day shortly after 05:00 server-local time (an hour after segment
-// refresh), tenant-by-tenant, bounded and failure-isolated per tenant.
-const MEMORY_CONSOLIDATION_HOUR = 5;
-/** Upper bound on tenants per pass — never an unbounded full-database scan. */
-export const MEMORY_CONSOLIDATION_TENANT_BATCH = 200;
-let lastMemoryConsolidationDate = '';
-let memoryConsolidationInFlight = false;
-
-/**
- * Whether nightly memory consolidation is due for `now`. Pure + exported for
- * unit tests. Same server-local date/hour contract as shouldRunSegmentRefresh.
- */
-export function shouldRunMemoryConsolidation(lastDate: string, now: Date): boolean {
-  const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  return lastDate !== localToday && now.getHours() >= MEMORY_CONSOLIDATION_HOUR;
-}
-
-/**
- * Consolidate validated lifecycle evidence into long-term memory for every
- * active tenant, one at a time. Bounded by MEMORY_CONSOLIDATION_TENANT_BATCH
- * and isolated per tenant: one failing tenant never aborts the pass. Reads and
- * writes are tenant-scoped inside consolidateRestaurantMemory itself.
- */
-export async function consolidateAllRestaurantMemories(now: number = Date.now()): Promise<{
-  tenants: number;
-  written: number;
-  skipped: number;
-  invalidated: number;
-}> {
-  const result = { tenants: 0, written: 0, skipped: 0, invalidated: 0 };
-  if (memoryConsolidationInFlight) return result;
-  memoryConsolidationInFlight = true;
-  try {
-    const restaurants = await Restaurant.find({ isActive: { $ne: false } })
-      .select('_id')
-      .sort({ _id: 1 })
-      .limit(MEMORY_CONSOLIDATION_TENANT_BATCH)
-      .lean()
-      .exec();
-    for (const rest of restaurants) {
-      try {
-        const res = await consolidateRestaurantMemory({ restaurantId: String(rest._id) }, now);
-        result.tenants += 1;
-        result.written += res.written;
-        result.skipped += res.skipped;
-        result.invalidated += res.invalidated;
-      } catch (err: any) {
-        // Never throw: failure isolation per tenant.
-        console.warn(`[MarketingScheduler] memory consolidation failed for ${rest._id}:`, err?.message);
-      }
-    }
-  } finally {
-    memoryConsolidationInFlight = false;
-  }
-  return result;
-}
-
-/** Nightly memory consolidation — no-op until the daily window opens. */
-async function maybeConsolidateMemory(): Promise<void> {
-  const now = new Date();
-  if (!shouldRunMemoryConsolidation(lastMemoryConsolidationDate, now)) return;
-  const res = await consolidateAllRestaurantMemories(now.getTime());
-  lastMemoryConsolidationDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  if (res.tenants > 0) {
-    console.log(
-      `[MarketingScheduler] memory consolidation: ${res.tenants} tenant(s), ${res.written} written, ${res.skipped} skipped, ${res.invalidated} invalidated`,
-    );
-  }
-}
-
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -180,7 +105,6 @@ export async function runMarketingTick(): Promise<void> {
     await recoverStuckCampaigns();
     await runDueAutomations();
     await maybeRefreshSegments();
-    await maybeConsolidateMemory();
   } catch (err: any) {
     console.error('[MarketingScheduler] tick error:', err?.message);
   }

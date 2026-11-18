@@ -22,6 +22,8 @@ export const createBillSchema = z.object({
   time: timeFlexible,
   cashierName: nonEmptyString.max(100),
   cashierRole: nonEmptyString.max(50),
+  /** Register/device identifier — used to attribute the bill to a shift. */
+  registerId: z.string().min(1).optional(),
   items: z.array(cartItemSchema).max(500),
   subtotal: requiredNonNegative,
   discount: optNonNegative,

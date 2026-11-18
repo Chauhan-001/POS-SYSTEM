@@ -406,6 +406,7 @@ export class OrderAdjustmentService {
                 reason: input.reason,
                 refundedBy: ctx.operator || 'System',
                 managerPin: input.managerPin,
+                refundPaymentMethod: (bill as any).paymentMethod || 'Cash',
               },
               { restaurantId: ctx.restaurantId, branchId: ctx.branchId }
             );

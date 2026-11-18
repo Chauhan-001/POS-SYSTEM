@@ -11,8 +11,10 @@
 
 import mongoose from 'mongoose';
 import ProductModel from '../models/catalog/Product';
+import Recipe from '../modules/recipes/models/Recipe';
 import IntelligenceSignalModel, { SignalType, ISignalEvidence } from '../models/intelligence/IntelligenceSignal';
 import { computeProductBaselines, ProductBaseline } from './salesBaselineService';
+import { recipeCostEngine, RecipeCostResult } from '../modules/recipes/services/recipeCostEngine';
 
 export type MenuClassification = 'STAR' | 'PLOWHORSE' | 'PUZZLE' | 'DOG';
 
@@ -22,6 +24,7 @@ export interface MenuEngineeringItem {
   category: string;
   price: number;
   cost: number;
+  recipeCost: number;
   contributionMargin: number;
   contributionMarginPercent: number;
   dailyUnits: number;
@@ -34,6 +37,7 @@ export interface MenuEngineeringItem {
   trendConfidence: number;
   evidence: ISignalEvidence[];
   recommendedActions: string[];
+  missingCost: boolean; // True when no active recipe or missing ingredient costs
 }
 
 export interface MenuEngineeringOptions {
@@ -253,11 +257,39 @@ export async function analyzeMenuEngineering(opts: MenuEngineeringOptions): Prom
     const dailyUnits = unitsBaseline.value;
     const dailyRevenue = revenueBaseline?.value || 0;
     const price = product.price || 0;
-    const cost = product.averageCost || 0;
 
     if (price <= 0) continue;
 
-    const contributionMargin = price - cost;
+    // Resolve the active recipe for this product+variant and compute recipe cost
+    let recipeCost = 0;
+    let missingCost = false;
+    try {
+      const recipe = await Recipe.findOne({
+        restaurantId: objectId(restaurantId),
+        productId: product._id,
+        status: 'active',
+        isDeleted: { $ne: true },
+      }).lean().exec();
+
+      if (recipe) {
+        const costResult = await recipeCostEngine.costRecipe(recipe, {
+          restaurantId,
+          branchId,
+        });
+        recipeCost = costResult.recipeCost;
+        missingCost = costResult.missingCostCount > 0;
+      } else {
+        // No active recipe — fall back to averageCost but flag missing cost
+        recipeCost = product.averageCost || 0;
+        missingCost = true;
+      }
+    } catch (err) {
+      // Recipe costing failed — fall back to averageCost
+      recipeCost = product.averageCost || 0;
+      missingCost = true;
+    }
+
+    const contributionMargin = price - recipeCost;
     const contributionMarginPercent = price > 0 ? Math.round((contributionMargin / price) * 100) : 0;
     const dailyContribution = dailyUnits * contributionMargin;
 
@@ -266,7 +298,8 @@ export async function analyzeMenuEngineering(opts: MenuEngineeringOptions): Prom
       productName: product.name,
       category: product.category || 'Other',
       price,
-      cost,
+      cost: recipeCost,
+      recipeCost,
       contributionMargin,
       contributionMarginPercent,
       dailyUnits,
@@ -279,6 +312,7 @@ export async function analyzeMenuEngineering(opts: MenuEngineeringOptions): Prom
       trendConfidence: 0,
       evidence: [],
       recommendedActions: [],
+      missingCost,
     });
   }
 
@@ -475,6 +509,13 @@ export async function getMenuItemsByClassification(
   const items = await analyzeMenuEngineering({ restaurantId, branchId, lookbackDays });
   return items.filter(i => i.classification === classification);
 }
+
+export const menuEngineeringService = {
+  analyzeMenuEngineering,
+  getMenuEngineeringSummary,
+  persistMenuEngineeringAsSignals,
+  getMenuItemsByClassification,
+};
 
 function getDateRange(days: number): { start: Date; end: Date } {
   const end = new Date();

@@ -147,10 +147,7 @@ async function refreshAccessToken(): Promise<boolean> {
  * On a 401 (expired access token) it refreshes the token once and retries,
  * so an expired session self-heals instead of surfacing fetch errors.
  *
- * NEVER THROWS. For owner-invoked AI endpoints (see `aiFailureReasons`)
- * it also records WHY a call got no result — timeout / network / 429 / auth /
- * server — because those pages turn a bare `null` into specific, actionable
- * copy instead of a generic "couldn't load" message.
+ * NEVER THROWS.
  */
 async function request(
   method: string,
@@ -175,76 +172,14 @@ async function request(
         const refreshed = await refreshAccessToken();
         if (refreshed) continue;
       }
-      if (!res.ok) recordAiFailureReason(path, res.status);
       const json = res.status === 204 ? null : await res.json().catch(() => null);
       return { ok: res.ok, status: res.status, json };
     } catch (err) {
       clearTimeout(timeoutId);
       apiLog(method, path, null, err);
-      recordAiFailureReason(path, isAbortError(err) ? 'timeout' : 'network_error');
       return null;
     }
   }
-}
-
-export type AiFailureKind = 'offline' | 'timeout' | 'network_error' | 'rate_limited' | 'auth_required' | 'server_error' | 'http_error';
-
-/** AbortController timeouts reject with a DOMException named 'AbortError'. */
-function isAbortError(err: unknown): boolean {
-  return (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
-}
-
-/**
- * Canonical owner-invoked AI request paths whose last failure reason is
- * kept for the UI. Only read by the screen that just received a null-value
- * result from one of these — never a general error transport.
- */
-export type AiFailPath =
-  | '/ai/marketing-agent/recommend'
-  | '/ai/marketing-agent/intelligence'
-  | '/ai/marketing-agent/analyze'
-  | '/ai/inventory-agent/recommend'
-  | '/ai/z-report/generate';
-
-/** One entry per canonical AI path: the CURRENT attempt's failure, if any. */
-const aiFailureReasons = new Map<AiFailureKind | string, AiFailureKind>();
-
-/** The canonical AI paths whose failure reason is kept for the UI. */
-const AI_FAIL_PATHS: ReadonlySet<string> = new Set<string>([
-  '/ai/marketing-agent/recommend',
-  '/ai/marketing-agent/intelligence',
-  '/ai/marketing-agent/analyze',
-  '/ai/inventory-agent/recommend',
-  '/ai/z-report/generate',
-] as const);
-
-/** Record why the CURRENT attempt of an AI path got no usable result. */
-function recordAiFailureReason(path: string, kindOrStatus: AiFailureKind | number): void {
-  if (!AI_FAIL_PATHS.has(path)) return;
-  let kind: AiFailureKind = 'http_error';
-  if (typeof kindOrStatus === 'string') {
-    kind = kindOrStatus;
-  } else if (kindOrStatus === 401 || kindOrStatus === 403) {
-    kind = 'auth_required';
-  } else if (kindOrStatus === 429) {
-    kind = 'rate_limited';
-  } else {
-    kind = 'server_error';
-  }
-  aiFailureReasons.set(path, kind);
-}
-
-/**
- * Read the failure reason of the MOST RECENT attempt of one AI path.
- *
- * Consumers call this immediately after a `null`/no-result response from the
- * matching client function. A later SUCCESS on the path clears the entry, so
- * the value always describes the call the consumer just made — never stale
- * advice about an earlier run. Returns undefined when the call never failed
- * (e.g. the request layer was bypassed by a test mock).
- */
-export function getLastAiFailureReason(path: AiFailPath): AiFailureKind | undefined {
-  return aiFailureReasons.get(path) as AiFailureKind | undefined;
 }
 
 // ─── Generic helpers ───────────────────────────────────────────────
@@ -1157,21 +1092,6 @@ export async function fetchFeedbackIssues() {
   return get<any>('/feedback/issues');
 }
 
-/** POST /api/feedback/ask — RAG question over historical feedback */
-export async function askFeedbackQuestion(question: string) {
-  return post<any>('/feedback/ask', { question });
-}
-
-/** GET /api/feedback/insight — latest cached executive AI summary */
-export async function fetchFeedbackInsight() {
-  return get<any>('/feedback/insight');
-}
-
-/** POST /api/feedback/insight — (re)generate the executive AI summary */
-export async function generateFeedbackInsight() {
-  return post<any>('/feedback/insight', {});
-}
-
 // ─── Marketing (Automations) ─────────────────────────────
 // PHASE 3: the /api/ai/* client calls (marketing plan, offer copy,
 // offer recommendations) were removed with the AI layer.
@@ -1337,6 +1257,85 @@ export async function createOrder(order: any): Promise<CreateOrderResult> {
     return { ok: false, status: result.status, code: result.json?.code };
   }
   return { ok: true, data: result.json?.data ?? result.json };
+}
+
+/** POST /api/cash-ledger/opening — Open a shift for a register. */
+export interface ShiftOpenResult {
+  ok: boolean;
+  shiftId?: string;
+  expectedCash?: number;
+  error?: string;
+}
+
+export async function openShift(amount: number, branchId?: string): Promise<ShiftOpenResult> {
+  // BACKEND CALLED — open a shift for a register
+  try {
+    const res = await fetch(`${BASE}/cash-ledger/opening`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({ amount }),
+    });
+    if (!res.ok) {
+      return { ok: false };
+    }
+    const json = await res.json();
+    const data = json.data ?? json;
+    return { ok: true, data, shiftId: data._id, expectedCash: data.expectedCash };
+  } catch (err) {
+    apiLog('POST', '/api/cash-ledger/opening', null, err);
+    return { ok: false };
+  }
+}
+
+/** POST /api/cash-ledger/shift-close — Close a shift. */
+export interface ShiftCloseResult {
+  ok: boolean;
+  expectedCash?: number;
+  actualCash?: number;
+  variance?: number;
+  error?: string;
+}
+
+export async function closeShift(countedCash: number, branchId?: string): Promise<ShiftCloseResult> {
+  // BACKEND CALLED — close a shift
+  try {
+    const res = await fetch(`${BASE}/cash-ledger/shift-close`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({ countedCash }),
+    });
+    if (!res.ok) {
+      return { ok: false };
+    }
+    const json = await res.json();
+    const data = json.data ?? json;
+    return {
+      ok: true,
+      expectedCash: data.expectedCash,
+      actualCash: data.countedCash ?? countedCash,
+      variance: data.overShort,
+    };
+  } catch (err) {
+    apiLog('POST', '/api/cash-ledger/shift-close', null, err);
+    return { ok: false };
+  }
+}
+
+/** GET /api/cash-ledger — Ledger history (for shift reconciliation). */
+export async function fetchCashLedger(params?: { page?: number; limit?: number; type?: string }) {
+  // BACKEND CALLED — fetch cash ledger history
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.type) qs.set('type', params.type);
+  const query = qs.toString();
+  return get<any[]>(`/cash-ledger${query ? '?' + query : ''}`);
+}
+
+/** GET /api/cash-ledger/balance — Current cash balance. */
+export async function getCashBalance() {
+  // BACKEND CALLED — get current cash drawer balance
+  return get<any>(`/cash-ledger/balance`);
 }
 
 /** GET /api/orders/:id — Fetch one order with items/kotRecords/timeline assembled. */
@@ -3077,9 +3076,9 @@ export async function fetchOfferList() {
   return get<any>('/offers');
 }
 
-/** POST /api/offers/recommendations — Generate AI offer recommendations */
+/** POST /api/offers/recommendations — Generate deterministic offer suggestions */
 export async function fetchOfferRecommendations(limit = 10) {
-  // BACKEND CALLED — request AI-powered offer suggestions.
+  // BACKEND CALLED — request rule-based offer suggestions.
   // The engine is designed to produce 10+ distinct suggestions; the limit is
   // just a ceiling the owner can raise.
   const result = await post<any>('/offers/recommendations', { limit });
@@ -3088,572 +3087,6 @@ export async function fetchOfferRecommendations(limit = 10) {
   if (Array.isArray(result.suggestions)) return result;
   if (Array.isArray(result.data?.suggestions)) return { suggestions: result.data.suggestions };
   return result;
-}
-
-// ─── System #2: agentic marketing INSIGHTS ────────────────────────
-// Mirrors backend MarketingInsight (ai/agents/marketingAgent.ts) — the LLM
-// investigates with read-only tools and returns an advisory insight. This is
-// NOT a recommendation: nothing here can be turned into a campaign.
-
-export interface MarketingInsightEvidenceSource {
-  /** Exact tool name that produced the evidence. */
-  ref: string;
-  label: string;
-}
-
-export interface MarketingInsightStep {
-  step: number;
-  tool: string;
-  purpose: string;
-  ok: boolean;
-}
-
-export interface MarketingInsight {
-  id: string;
-  type: 'agentic_insight';
-  title: string;
-  summary: string;
-  priority: 'high' | 'medium' | 'low' | 'normal';
-  /** Advisory next step only — never an executed action. */
-  recommendation: string | null;
-  evidence: MarketingInsightEvidenceSource[];
-  confidence: number;
-  toolsUsed: string[];
-  steps: MarketingInsightStep[];
-  degraded: boolean;
-  degradedReason?: string;
-  /**
-   * Whether the written AI summary exists. `unavailable` means the evidence was
-   * collected and is still reported (see `toolsUsed`), but no AI explanation
-   * was produced — the card says so instead of inventing a conclusion.
-   */
-  summaryStatus?: 'ok' | 'partial' | 'unavailable';
-  /** Internal machine code for a degraded summary. Never rendered to the owner. */
-  reasonCode?: string;
-  generatedAt: string;
-}
-
-export interface MarketingInsightRun {
-  mode: 'agentic_insight';
-  insights: MarketingInsight[];
-  investigation: {
-    runId: string;
-    requestId: string;
-    status: string;
-    stepsUsed: number;
-    toolCallsUsed: number;
-    llmCalls: number;
-    toolNames: string[];
-    rejections: Array<{ ref: string; stage: string }>;
-    errorCode?: string;
-    memory?: { episodes: number; longTerm: number; degraded: boolean };
-    degraded: boolean;
-    summaryStatus?: 'ok' | 'partial' | 'unavailable';
-    reasonCode?: string;
-  };
-  degraded: boolean;
-  degradedReason?: string;
-  reasonCode?: string;
-  generatedAt: string;
-}
-
-export interface AgentProposalOutcome {
-  created: boolean;
-  skipReason?: string;
-  proposalId?: string;
-  proposal?: unknown;
-  readiness?: { canSchedule: boolean; blockers: string[]; audienceCount: number };
-}
-
-/**
- * POST without the offline-queue replay used by writeOfflineAware. Agent
- * endpoints are owner-invoked actions, not optimistic local-first mutations:
- * a queued replay of /ai/marketing-agent/proposal would silently create a
- * CampaignProposal the owner never saw, so failures must surface as null.
- */
-async function postNoQueue<T>(path: string, body: unknown, timeoutMs: number = 15000): Promise<T | null> {
-  if (isBrowserOffline()) {
-    recordAiFailureReason(path, 'offline');
-    apiLog('POST', path, null);
-    return null;
-  }
-  const result = await request('POST', path, body, timeoutMs);
-  if (!result) { apiLog('POST', path, null); return null; }
-  if (!result.ok) { apiLog('POST', path, result.status); return null; }
-  // Clear any failure mark from a previous attempt: the entry stays truthful
-  // about the CURRENT call only.
-  aiFailureReasons.delete(path);
-  return result.json?.data ?? result.json;
-}
-
-/**
- * POST /api/ai/marketing-agent/recommend — System #2: the agentic insight
- * agent. The LLM investigates with read-only tools and returns an advisory
- * insight card (read-only; it never creates offers or campaigns).
- */
-export async function runMarketingInsights(body: { task?: string } = {}) {
-  // BACKEND CALLED — agentic marketing insight. The bounded agent loop makes
-  // SEVERAL sequential LLM calls (one plan per investigation step, with
-  // provider-driven depth, plus the final synthesis), so it can legitimately
-  // run far longer than the generic 15s request window. A broad investigation
-  // deliberately keeps exploring other evidence sources while one area has no
-  // data, so the backend's run budget is 90s; 120s keeps that whole window
-  // reachable instead of aborting the deepest allowed investigation
-  // client-side mid-loop.
-  // After a null result, read `getLastAiFailureReason('/ai/marketing-agent/recommend')`
-  // for the specific cause (last value until the next attempt overwrites it).
-  return postNoQueue<{ success: boolean; result: MarketingInsightRun }>(
-    '/ai/marketing-agent/recommend',
-    body,
-    120_000,
-  );
-}
-
-/**
- * POST /api/ai/marketing-agent/proposal — persist the EXACT ranked
- * recommendation the owner selected as a pending CampaignProposal draft.
- * Agentic insights are advisory and cannot be turned into a proposal.
- */
-export async function createProposalFromRecommendation(
-  recommendation: Pick<IntelligenceRecommendation, 'id' | 'type' | 'title'> & Record<string, unknown>,
-) {
-  // BACKEND CALLED — persist the selected ranked recommendation as a proposal
-  return postNoQueue<{ success: boolean; proposal: AgentProposalOutcome }>('/ai/marketing-agent/proposal', { recommendation });
-}
-
-// ─── Canonical deep analysis (POST /ai/marketing-agent/analyze) ────────────
-// Mirrors backend `ai/marketing/contracts.ts` (`AnalyzeResponse`): the
-// sequential domain-investigation path. Deterministic layers produce the
-// evidence and the validation verdict; an LLM only chooses which DOMAIN to
-// investigate next and reviews the result. READ-ONLY — this creates nothing;
-// owner approval still goes through `/ai/marketing-agent/proposal`.
-//
-// NOTE: there is deliberately NO chain-of-thought / reasoning field in this
-// contract. The backend rejects a model response that carries one (strict
-// zod), so the UI renders structured findings, evidence refs and verdicts
-// only — never hidden reasoning.
-
-export type MarketingDomain =
-  | 'sales'
-  | 'products'
-  | 'inventory'
-  | 'customers'
-  | 'feedback'
-  | 'marketing_history'
-  | 'context'
-  | 'competition'
-  | 'ml';
-
-/** `unavailable` is a first-class, honest result — never rendered as healthy. */
-export type MarketingDomainStatus = 'ok' | 'partial' | 'unavailable';
-
-export interface MarketingSignal {
-  signalId: string;
-  /** Canonical signal code (e.g. `sales_aov_level`) — rendered via agentCopy. */
-  code: string;
-  statement: string;
-  value?: number;
-  unit?: string;
-  changePct?: number;
-  direction?: string;
-  confidence: number;
-  freshness?: string;
-}
-
-/** A fact the run could establish — always tied to evidence refs. */
-export interface AnalyzeSituationFact {
-  statement: string;
-  domain: MarketingDomain;
-  confidence: number;
-  evidenceRefs: string[];
-}
-
-export interface AnalyzeInvestigatedDomain {
-  domain: MarketingDomain;
-  status: MarketingDomainStatus;
-  findingCount: number;
-  signalCount: number;
-  reasonCode?: string;
-  degradedReason?: string;
-  /** FALSE for a declared-only capability (not implemented yet). */
-  implemented: boolean;
-}
-
-export interface AnalyzeCandidateDirection {
-  direction: string;
-  domain: MarketingDomain;
-  objective: string;
-  mechanism: string;
-  target: {
-    productIds: string[];
-    productNames: string[];
-    categoryIds: string[];
-    segmentIds: string[];
-  };
-  evidenceRefs: string[];
-}
-
-export interface AnalyzeSituationModel {
-  objective: string;
-  investigatedDomains: AnalyzeInvestigatedDomain[];
-  unavailableDomains: MarketingDomain[];
-  confirmedFacts: AnalyzeSituationFact[];
-  opportunities: AnalyzeSituationFact[];
-  risks: AnalyzeSituationFact[];
-  /** Unresolved disagreement between domains — surfaced, never resolved. */
-  contradictions: string[];
-  uncertainties: string[];
-  missingEvidence: string[];
-  topSignals: MarketingSignal[];
-  candidateDirections: AnalyzeCandidateDirection[];
-  confidence: number;
-  generatedAt: string;
-}
-
-export interface AnalyzeInvestigationSummary {
-  runId: string;
-  status: string;
-  stepsUsed: number;
-  toolCallsUsed: number;
-  llmCalls: number;
-  domainsInvestigated: MarketingDomain[];
-  domainsUnavailable: MarketingDomain[];
-  domainOrder: MarketingDomain[];
-  stopGuardObjections: string[];
-  rejections: Array<{ ref: string; reason: string; stage: string }>;
-  tokensUsed: number;
-  costUsd: number;
-  errorCode?: string;
-}
-
-export type AnalyzeValidationStatus = 'pass' | 'fail' | 'not_implemented' | 'skipped';
-
-export interface AnalyzeValidationCheck {
-  name: string;
-  status: AnalyzeValidationStatus;
-  detail: string;
-}
-
-/** The AUTHORITATIVE verdict for a candidate — the LLM can never override it. */
-export interface AnalyzeCandidateValidation {
-  candidateId: string;
-  passed: boolean;
-  rejectionCodes: string[];
-  checks: AnalyzeValidationCheck[];
-}
-
-export interface AnalyzeCriticVerdict {
-  candidateId: string;
-  verdict: 'PASS' | 'DOWNGRADE' | 'REJECT';
-  reasons: string[];
-  confidenceDelta: number;
-  /** `deterministic_fallback` when the model was unavailable for the review. */
-  source: 'llm' | 'deterministic_fallback';
-  /** Numbers the critic stated that could NOT be grounded — already stripped. */
-  strippedClaims: string[];
-}
-
-/** The ranked recommendation carried verbatim from the deterministic engine. */
-export interface AnalyzeRecommendation {
-  rank: number;
-  id: string;
-  type: string;
-  strategy: string;
-  strategyLabel: string;
-  title: string;
-  description: string;
-  recommendedAction: string;
-  engineScore: number;
-  confidence: number;
-  priority: string;
-  economics?: IntelligenceRecommendation['economics'] & Record<string, unknown>;
-  target?: IntelligenceRecommendation['target'];
-  risks?: string[];
-  prerequisites?: string[];
-  why?: string[];
-  provenance?: IntelligenceRecommendation['provenance'];
-}
-
-export interface AnalyzedRecommendation {
-  recommendation: AnalyzeRecommendation;
-  validation: AnalyzeCandidateValidation;
-  critic: AnalyzeCriticVerdict;
-}
-
-/** What the investigated directions did to the engine (reported, never hidden). */
-export interface AnalyzeDirectionPolicy {
-  applied: boolean;
-  types: string[];
-  unrepresentableDirections: string[];
-  realisedDirections: string[];
-  unrealisedDirections: string[];
-  fallbackUsed: boolean;
-  note: string;
-}
-
-export type AnalyzeStatus = 'completed' | 'completed_degraded' | 'degraded_no_llm' | 'failed';
-
-export interface MarketingAnalyzeResult {
-  mode: 'marketing_analyze';
-  runId: string;
-  status: AnalyzeStatus;
-  objective: string;
-  situation: AnalyzeSituationModel;
-  investigation: AnalyzeInvestigationSummary;
-  recommendations: AnalyzedRecommendation[];
-  directionPolicy: AnalyzeDirectionPolicy;
-  /** Candidates the deterministic layers rejected, with machine codes. */
-  rejected: Array<{ candidateId: string; title: string; codes: string[] }>;
-  /**
-   * Whether feasibility/overlap was ACTUALLY assessed per product. A `skipped`
-   * check must never read as a pass — this is what makes that visible.
-   */
-  validationSources: {
-    stockout: { status: 'ok' | 'unavailable'; detail: string };
-    activeOffers: { status: 'ok' | 'unavailable'; detail: string };
-  };
-  confidence: number;
-  risk: 'low' | 'medium' | 'high';
-  degradations: string[];
-  memory: { episodes: number; longTerm: number; degraded: boolean };
-  memoryWrite: {
-    attempted: boolean;
-    episodeWritten: boolean;
-    episodeId?: string;
-    recommendationsRecorded: number;
-    reason?: string;
-  };
-  outcomeLearning: {
-    outcomesLinked: number;
-    outcomesPositive: number;
-    outcomesNegative: number;
-    outcomesUnusable: number;
-    causalOutcomes: number;
-    productPatternsWritten: number;
-    productPatternsSkippedFresh: boolean;
-    notes: string[];
-  };
-  approvalRequired: true;
-  generatedAt: string;
-}
-
-/**
- * POST /api/ai/marketing-agent/analyze — the canonical deep analysis.
- *
- * The bounded Marketing Manager loop makes SEVERAL sequential LLM calls (one
- * per investigated domain) and its own wall-clock budget is 120s
- * (`MARKETING_MANAGER_TIMEOUT_MS`), after which deterministic validation, the
- * final critic and the memory write-back still run. 150s keeps that whole
- * window reachable instead of aborting client-side mid-run.
- */
-export async function runMarketingAnalyze(
-  body: { goal?: string; lookbackDays?: number; limit?: number } = {},
-) {
-  // BACKEND CALLED — canonical deep analysis (read-only).
-  // After a null result, read `getLastAiFailureReason('/ai/marketing-agent/analyze')`
-  // for the specific cause (last value until the next attempt overwrites it).
-  return postNoQueue<{ success: boolean; result: MarketingAnalyzeResult }>(
-    '/ai/marketing-agent/analyze',
-    body,
-    150_000,
-  );
-}
-
-// ─── AI Insights investigation replay (read-only observability) ────────────
-
-/** One step of a recorded investigation: what was seen → decided → executed. */
-export interface InsightReplayStep {
-  step: number;
-  /** Evidence summaries the model could see when it made this decision. */
-  seen: Array<{ tool: string; ok: boolean; summary: string }>;
-  /** Tools the model asked for at this step (before the policy check). */
-  requested: string[];
-  reason?: string;
-  needMoreEvidence: boolean;
-  stopObjection?: string;
-  executed: Array<{ tool: string; ok: boolean; code?: string; deduped?: boolean }>;
-}
-
-export interface InsightReplayEpisode {
-  runId: string;
-  agent: string;
-  objective: string;
-  status: string;
-  promptVersion: string;
-  stepsUsed: number;
-  toolCallsUsed: number;
-  llmCalls: number;
-  tokensUsed: number;
-  costUsd: number;
-  degraded: boolean;
-  errorCode: string | null;
-  startedAt: string | null;
-  durationMs: number | null;
-  steps: InsightReplayStep[];
-}
-
-export type InsightReplaySummary = Omit<InsightReplayEpisode, 'steps'>;
-
-/** GET /api/ai/marketing-agent/insight-runs — recent replayable investigations. */
-export async function fetchInsightReplayList(limit = 20) {
-  const res = await get<any>(`/ai/marketing-agent/insight-runs?limit=${limit}`);
-  return (res?.result ?? []) as InsightReplaySummary[];
-}
-
-/** GET /api/ai/marketing-agent/insight-runs/:runId — one full replay episode. */
-export async function fetchInsightReplayEpisode(runId: string) {
-  const res = await get<any>(`/ai/marketing-agent/insight-runs/${encodeURIComponent(runId)}`);
-  return (res?.result ?? null) as InsightReplayEpisode | null;
-}
-
-/**
- * POST /api/intelligence/recommendations/:id/feedback — the EXISTING
- * persistent owner decision on a recommendation (upserted by the backend
- * `recommendationFeedbackService`, so a rejection survives reloads and feeds
- * the learning/feedback loop). Used by the card's Reject action.
- *
- * Owner-invoked decision → no offline replay (a queued reject must never fire
- * after the owner changed their mind).
- */
-export async function recordRecommendationFeedback(
-  recommendationId: string,
-  body: {
-    rating: 'positive' | 'neutral' | 'negative';
-    categories?: string[];
-    comment?: string;
-    would_accept_again?: boolean;
-  },
-) {
-  // BACKEND CALLED — persist the owner's decision on a recommendation
-  return postNoQueue<{ success: boolean; message?: string }>(
-    `/intelligence/recommendations/${encodeURIComponent(recommendationId)}/feedback`,
-    { recommendationId, ...body },
-  );
-}
-
-// ─── Marketing intelligence pipeline (Phases 3–7, read-only) ────────────────
-// Mirrors backend ai/intelligence/marketingIntelligencePipeline.ts — only the
-// fields the owner UI renders. Everything here is DECISION EVIDENCE: no
-// chain-of-thought, no prompt internals, no model names.
-
-export interface IntelligenceRecommendation {
-  rank: number;
-  id: string;
-  type: string;
-  strategyLabel: string;
-  title: string;
-  description: string;
-  recommendedAction: string;
-  engineScore: number;
-  confidence: number;
-  priority: string;
-  economics: {
-    discountPercent: number;
-    projectedContributionMargin: number;
-    incrementalRevenue: number;
-    incrementalUnits: number;
-    breakEvenIncrementalUnits: number;
-    paybackPeriodDays: number;
-    economicallySafe: boolean;
-    /** FALSE when the engine had no authoritative price/cost data. */
-    available: boolean;
-  };
-  risks: string[];
-  prerequisites: string[];
-  why: string[];
-  /**
-   * Authoritative audience this recommendation points at. The intelligence
-   * pipeline passes it through from the candidate engine (`target`), so the
-   * owner sees WHO/WHAT is targeted instead of a fabricated segment.
-   */
-  target?: {
-    productIds?: string[];
-    productNames?: string[];
-    categoryIds?: string[];
-    segmentIds?: string[];
-  };
-  provenance: {
-    /** Product/category-correlated signals (product-specific evidence). */
-    signalCodes: string[];
-    /** Dimension-level themes that exist but are NOT tied to these products. */
-    signalThemes?: string[];
-    mlKinds: string[];
-    memoryRefs: string[];
-  };
-}
-
-export interface IntelligenceExplanation {
-  recommendation: string;
-  evidenceSummary: string[];
-  whyItFits: string;
-  whyAlternatives: string;
-  offerDescription: string;
-  campaignCopy: string;
-}
-
-export interface MarketingIntelligenceResult {
-  ranking: {
-    recommendations: IntelligenceRecommendation[];
-    strategies: string[];
-    considered: number;
-    diversityRelaxed: boolean;
-    notes: string[];
-    generatedAt: string;
-  };
-  investigation?: {
-    summary: {
-      signals: number;
-      usable: boolean;
-      unavailableDimensions: string[];
-      toolErrors: number;
-      freshness: { fresh: number; aging: number; stale: number; unknown: number; expired: number };
-    };
-    topSignalLines: string[];
-    unavailableDimensions: string[];
-  };
-  ml: {
-    degradationLines: string[];
-    summary: { availableKinds: string[]; hasCausalEvidence: boolean };
-  };
-  explanation: {
-    explanation: IntelligenceExplanation;
-    source: 'llm' | 'deterministic';
-    degradedReason?: string;
-  } | null;
-  memory: {
-    episodes: number;
-    longTerm: number;
-    degraded: boolean;
-    statements: Array<{ ref: string; memoryType: string; statement: string; confidence: number }>;
-  };
-  degradations: string[];
-  generatedAt: string;
-}
-
-/**
- * POST /api/ai/marketing-agent/intelligence — run the full intelligence
- * pipeline (business signals → existing candidate engine → ML semantics →
- * deterministic ranking → grounded explanation). Read-only: nothing is
- * created or sent; owner approval stays mandatory.
- */
-export async function runMarketingIntelligence(body: { limit?: number; includeExplanation?: boolean } = {}) {
-  // BACKEND CALLED — read-only marketing intelligence pipeline.
-  //
-  // This endpoint is the HEAVIEST of the three AI surfaces and must not use the
-  // generic 15s window: the backend's signal fan-out alone is budgeted at 12s
-  // (hard cap 20s, `signalBudgetMs` in marketingIntelligencePipeline.ts), and
-  // the grounded explanation leg can add up to `AI_TIMEOUT` (15s default) on
-  // top of the candidate engine, ML enrichment and ranking. Aborting at 15s
-  // killed runs the server was still completing — the caller got `null` and the
-  // page showed "Recommendations couldn't be loaded right now" for no real
-  // failure. 60s covers the backend's worst case with headroom.
-  // After a null result, read `getLastAiFailureReason('/ai/marketing-agent/intelligence')`
-  // for the specific cause (last value until the next attempt overwrites it).
-  return postNoQueue<{ success: boolean; result: MarketingIntelligenceResult }>(
-    '/ai/marketing-agent/intelligence',
-    body,
-    60_000,
-  );
 }
 
 // ─── Campaign Proposal inbox (agent + owner drafts) ───────────────
@@ -3683,7 +3116,24 @@ export interface CampaignProposal {
   expectedImpact?: { expectedReach?: number };
 }
 
-/** GET /api/campaigns/proposals — proposal inbox (agent + owner drafts). */
+/**
+ * POST without the offline-queue replay used by writeOfflineAware. Used by
+ * owner-invoked actions that are not optimistic local-first mutations: a
+ * queued replay would apply a side effect the owner never saw succeed, so
+ * failures surface as null.
+ */
+async function postNoQueue<T>(path: string, body: unknown, timeoutMs: number = 15000): Promise<T | null> {
+  if (isBrowserOffline()) {
+    apiLog('POST', path, null);
+    return null;
+  }
+  const result = await request('POST', path, body, timeoutMs);
+  if (!result) { apiLog('POST', path, null); return null; }
+  if (!result.ok) { apiLog('POST', path, result.status); return null; }
+  return result.json?.data ?? result.json;
+}
+
+/** GET /api/campaigns/proposals — proposal inbox (owner drafts). */
 export async function fetchCampaignProposals(params: { approvalStatus?: string; source?: string; limit?: number } = {}) {
   const qs = new URLSearchParams();
   if (params.approvalStatus) qs.set('approvalStatus', params.approvalStatus);
@@ -3710,242 +3160,6 @@ export async function approveCampaignProposal(id: string) {
 export async function rejectCampaignProposal(id: string, body: { rating?: 'positive' | 'neutral' | 'negative'; comment?: string } = {}) {
   // BACKEND CALLED — reject proposal (owner-invoked, no offline replay)
   return postNoQueue<{ success: boolean }>(`/campaigns/proposals/${id}/reject`, body);
-}
-
-// ─── Inventory Agent (deterministic action plan) ─────────────
-
-// Mirrors backend InventoryAgentResult (ai/agents/inventoryAgent.ts) — keep
-// the two in sync. All fields are evidence-backed or null — never invented.
-export interface InventoryPurchaseRecommendation {
-  item: string;
-  reason: string;
-  suggestedQty: string;
-  urgency: 'low' | 'medium' | 'high';
-  estimatedCost: number | null;
-}
-
-export interface InventoryStockoutPrediction {
-  item: string;
-  daysUntilOut: number;
-  severity: 'warning' | 'critical';
-  currentStock: number;
-  unit: string;
-  suggestedAction: string;
-}
-
-export interface InventoryAgentResult {
-  mode: 'deterministic';
-  status: 'ready' | 'insufficient_data';
-  summary: string;
-  purchaseRecommendations: InventoryPurchaseRecommendation[];
-  stockoutPredictions: InventoryStockoutPrediction[];
-  expiryRisks: Array<{
-    itemId: string;
-    itemName: string;
-    currentStock: number;
-    expiryDate: string | Date;
-    daysUntilExpiry: number;
-    severity: 'warning' | 'critical';
-    canPromote: boolean;
-    recommendedActions: string[];
-  }>;
-  wastageSignals: Array<{ name: string; qty: number; unit?: string; cost: number }>;
-  nextActions: string[];
-  evidenceSources: { inventory: boolean; demandForecast: boolean; expiry: boolean; wastage: boolean };
-  generatedAt: string;
-}
-
-/**
- * POST /api/ai/inventory-agent/recommend — run the deterministic inventory
- * agent (stock levels + stockout forecast + expiry + wastage). Read-only; the
- * agent never writes to inventory.
- */
-export async function runInventoryAgentRecommendation() {
-  // BACKEND CALLED — inventory action plan
-  return postNoQueue<{ success: boolean; result: InventoryAgentResult }>('/ai/inventory-agent/recommend', {});
-}
-
-// ─── Inventory Agent (agentic AI insights) ────────────────────
-
-export type InventoryAiSeverity = 'critical' | 'high' | 'medium' | 'low' | 'normal';
-
-/** Mirrors backend InventoryIssue (ai/agents/inventoryAgentic.ts). */
-export interface InventoryAiIssue {
-  type: string;
-  itemId?: string;
-  itemName?: string;
-  severity: InventoryAiSeverity;
-  evidenceRefs: string[];
-  explanation: string;
-}
-
-/** One investigation step the agent actually executed (server-side truth). */
-export interface InventoryAiInvestigationStep {
-  tool: string;
-  ok: boolean;
-  purpose: string;
-  durationMs: number;
-}
-
-/**
- * Mirrors backend InventoryAgenticResult — the agentic inventory insight.
- * Numbers the owner sees live in `assessment`/`issues`/`nextActions`, which the
- * server grounds against the deterministic evidence before returning.
- */
-export interface InventoryAgentInsightResult {
-  mode: 'agentic' | 'deterministic_fallback';
-  status: 'ready' | 'insufficient_data';
-  task: string;
-  summary: string;
-  assessment: { title: string; summary: string; priority: InventoryAiSeverity } | null;
-  issues: InventoryAiIssue[];
-  recommendations: Array<{
-    actionType: string;
-    itemName?: string;
-    rationale: string;
-    evidenceRefs: string[];
-    requiresApproval: true;
-    authoritative: Record<string, unknown> | null;
-  }>;
-  confidence: number;
-  /** Tool names that ACTUALLY ran — server truth, never the model's claim. */
-  toolsUsed: string[];
-  /**
-   * Per-tool data availability from the tools' own available/unavailable
-   * contract (a tool can execute successfully and still report no data).
-   * Drives the honest "checked but unavailable" chips. Absent on older
-   * payloads — the UI then falls back to evidenceSources.
-   */
-  toolAvailability?: Record<string, boolean>;
-  investigation: {
-    runId: string;
-    requestId: string;
-    status: string;
-    stepsUsed: number;
-    toolCallsUsed: number;
-    llmCalls: number;
-    toolNames: string[];
-    steps: InventoryAiInvestigationStep[];
-    dedupedCalls: number;
-    rejections: Array<{ ref: string; stage: string }>;
-    degraded: boolean;
-  };
-  degraded: boolean;
-  degradedReason?: string;
-  nextActions: string[];
-  evidenceSources: { inventory: boolean; demandForecast: boolean; expiry: boolean; wastage: boolean };
-  purchaseRecommendations: InventoryPurchaseRecommendation[];
-  expiryRisks: InventoryAgentResult['expiryRisks'];
-  wastageSignals: InventoryAgentResult['wastageSignals'];
-  generatedAt: string;
-}
-
-/**
- * POST /api/ai/inventory-agent/recommend (agentic) — the same endpoint as the
- * deterministic plan, with `agentic: true`: the agent investigates with its
- * read-only tools, chooses which sources to inspect, and answers with a
- * server-validated, evidence-grounded insight. Read-only; it never writes to
- * inventory. Tenant identity comes from the authenticated session only.
- */
-export async function runInventoryAgentInsight(body: { task?: string } = {}) {
-  // BACKEND CALLED — agentic inventory insight. The bounded agent loop makes
-  // several LLM calls (planning + synthesis, with provider failover), so it
-  // can legitimately take longer than the generic 15s request window — the
-  // backend's own budget is the real cap. 60s keeps the analysis reachable
-  // without hanging the UI.
-  // After a null result, read `getLastAiFailureReason('/ai/inventory-agent/recommend')`
-  // for the specific cause (last value until the next attempt overwrites it).
-  return postNoQueue<{ success: boolean; result: InventoryAgentInsightResult }>(
-    '/ai/inventory-agent/recommend',
-    { agentic: true, ...body },
-    60_000,
-  );
-}
-
-// ─── Daily Summary / Z-Report Intelligence ────────────────────────
-
-/** The owner-facing daily report sections (server-grounded; never client-computed). */
-export interface DailySummaryNarrative {
-  headline: string;
-  whatHappened: string[];
-  whatMattered: string[];
-  needsAttention: string[];
-  focusNext: string[];
-  caveats: string[];
-}
-
-/** Honest picture of the evidence a run actually had. */
-export interface DailySummaryIntelligenceResult {
-  runId: string;
-  agent: 'z_report';
-  businessDate: string;
-  branchId?: string;
-  branchName?: string;
-  report: DailySummaryNarrative;
-  /** 'deterministic' = the server's own evidence-only report (no AI wording). */
-  reportSource: 'llm' | 'deterministic';
-  reportDegradedReason?: string;
-  confidence: number;
-  degraded: boolean;
-  degradations: string[];
-  evidence: {
-    signals: number;
-    freshness: Record<string, number>;
-    conflicts: string[];
-    unavailable: string[];
-    toolErrors: Array<{ tool: string; code: string; message: string }>;
-    caveats: string[];
-    usable: boolean;
-    batch3Reason: string;
-    followUpReason: string | null;
-    ml?: {
-      availableKinds: string[];
-      missingKinds: string[];
-      degradations: string[];
-      hasCausalEvidence: boolean;
-    };
-  };
-  generation: {
-    durationMs: number;
-    batch1Ms: number;
-    batch2Ms: number;
-    batch3Ms: number;
-    followUpMs: number;
-    llmMs: number;
-    toolCalls: number;
-    toolFailures: number;
-    llmTokens: number;
-    llmCostUsd: number;
-    conflictsDetected: number;
-    followUpRounds: number;
-    validationStatus: string;
-    criticIssues: string[];
-  };
-  persisted: boolean;
-  generatedAt: string;
-}
-
-/**
- * POST /api/ai/z-report/generate — Generate Daily Summary.
- *
- * Read-only intelligence on top of the SAME deterministic closing report the
- * owner already sees (GET /reports/closing/z is untouched). Tenant identity
- * comes from the authenticated session only; a branchId is validated
- * server-side against that tenant.
- *
- * The run does a bounded evidence fan-out plus one AI synthesis, so it can
- * exceed the generic 15s request window — 60s keeps it reachable without
- * hanging the UI. After a null result, read
- * `getLastAiFailureReason('/ai/z-report/generate')` for the specific cause.
- */
-export async function generateZReportIntelligence(
-  body: { date?: string; branchId?: string; includeBatch3?: boolean | 'auto' } = {},
-) {
-  return postNoQueue<{ success: boolean; result: DailySummaryIntelligenceResult }>(
-    '/ai/z-report/generate',
-    body,
-    60_000,
-  );
 }
 
 // ─── Recipe Manager (Cost Intelligence) ───────────────────────────
@@ -4679,172 +3893,3 @@ export async function fetchWhatsAppStatus() {
   return get<any>('/integrations/whatsapp/status');
 }
 
-// ─── ML Insights (ml-pipeline: Demand · Basket · Uplit) ──────────
-// One authenticated Node surface (/api/ml-pipeline/*) fronts all three ML
-// services; tenant identity is always server-derived from the JWT.
-
-export interface MlServiceStatus {
-  configured: boolean;
-  baseUrl: string | null;
-  serviceTokenSet: boolean;
-  timeoutMs: number | null;
-}
-
-export interface MlPipelineStatus {
-  success: boolean;
-  demandModel: MlServiceStatus;
-  basketModel: MlServiceStatus;
-  uplitModel: MlServiceStatus;
-  segmentModel?: MlServiceStatus;
-}
-
-export interface StoredDemandPrediction {
-  entityId: string;
-  predictionFor: string;
-  expected: number;
-  lower: number | null;
-  upper: number | null;
-  modelVersion: string;
-  dataMode: string | null;
-  confidenceLevel: string | null;
-  generatedAt: string;
-}
-
-export interface StoredComboPrediction {
-  entityId: string;
-  predictionFor: string;
-  productAId: string;
-  productBId: string;
-  expectedPurchases7d: number | null;
-  estimatedFutureProfit: number | null;
-  modelVersion: string;
-  generatedAt: string;
-}
-
-export interface UpliftCustomerRow {
-  customer_id: string;
-  uplift_score: number;
-  uplift_percentage_points: number;
-  status?: string;
-}
-
-/** GET /api/ml-pipeline/status — which ML services are configured. */
-export async function fetchMlPipelineStatus(): Promise<MlPipelineStatus | null> {
-  const res = await get<MlPipelineStatus>('/ml-pipeline/status');
-  // `get` already unwraps `{ data }` — res.data never exists on the typed result.
-  return res ?? null;
-}
-
-// ── Demand model ──
-
-/** GET /api/ml-pipeline/demand/predictions — stored forecasts (ml_predictions). */
-export async function fetchDemandPredictions(params: { productId?: string; fromDate?: string; toDate?: string; limit?: number } = {}) {
-  const qs = new URLSearchParams();
-  if (params.productId) qs.set('productId', params.productId);
-  if (params.fromDate) qs.set('fromDate', params.fromDate);
-  if (params.toDate) qs.set('toDate', params.toDate);
-  if (params.limit) qs.set('limit', String(params.limit));
-  const res = await get<any>(`/ml-pipeline/demand/predictions?${qs.toString()}`);
-  return res?.data || res;
-}
-
-/** POST /api/ml-pipeline/demand/predictions/pull — refresh from the Demand model. */
-export async function pullDemandPredictions(productIds: string[], horizonDays = 7) {
-  return post<any>('/ml-pipeline/demand/predictions/pull', { productIds, horizonDays });
-}
-
-/** POST /api/ml-pipeline/demand/sync — push bills to the Demand model. */
-export async function syncDemandModel(params: { fromDate?: string; toDate?: string; limitBills?: number } = {}) {
-  return post<any>('/ml-pipeline/demand/sync', params);
-}
-
-/** GET /api/ml-pipeline/demand/preview — extraction preview (no push). */
-export async function previewDemandExtraction(limitBills = 500) {
-  const res = await get<any>(`/ml-pipeline/demand/preview?limitBills=${limitBills}`);
-  return res?.data || res;
-}
-
-// ── Basket model (combo intelligence) ──
-
-/** GET /api/ml-pipeline/basket/predictions — stored combo predictions. */
-export async function fetchComboPredictions(limit = 100) {
-  const res = await get<any>(`/ml-pipeline/basket/predictions?limit=${limit}`);
-  return res?.data || res;
-}
-
-/** POST /api/ml-pipeline/basket/predictions/pull — refresh combos. */
-export async function pullComboPredictions() {
-  return post<any>('/ml-pipeline/basket/predictions/pull', {});
-}
-
-/** POST /api/ml-pipeline/basket/sync — push bills as transactions. */
-export async function syncBasketModel(params: { fromDate?: string; toDate?: string; limitBills?: number } = {}) {
-  return post<any>('/ml-pipeline/basket/sync', params);
-}
-
-/** POST /api/ml-pipeline/basket/train — per-tenant training trigger (gated). */
-export async function trainBasketModel() {
-  return post<any>('/ml-pipeline/basket/train', {});
-}
-
-/** GET /api/ml-pipeline/basket/preview — extraction preview (no push). */
-export async function previewBasketExtraction(limitBills = 500) {
-  const res = await get<any>(`/ml-pipeline/basket/preview?limitBills=${limitBills}`);
-  return res?.data || res;
-}
-
-// ── Uplit model (customer uplift) ──
-
-/** GET /api/ml-pipeline/uplift/customers — ranked uplift customers (proxy). */
-export async function fetchUpliftCustomers(limit = 50): Promise<{ success: boolean; total_eligible?: number; customers?: UpliftCustomerRow[] } | null> {
-  const res = await get<any>(`/ml-pipeline/uplift/customers?limit=${limit}`);
-  return res?.data || res || null;
-}
-
-/** POST /api/ml-pipeline/experiments/push — export ledger to Uplit. */
-export async function pushUpliftExperiments() {
-  return post<any>('/ml-pipeline/experiments/push', {});
-}
-
-/**
- * POST /api/ml-pipeline/experiments/assign — record a treatment assignment.
- * postNoQueue: the uplift ledger is append-style — a queued replay would
- * double-record the assignment and corrupt experiment data.
- */
-export async function recordOfferAssignment(customerId: string, offerId?: string) {
-  return postNoQueue<any>('/ml-pipeline/experiments/assign', { customerId, offerId });
-}
-
-/**
- * POST /api/ml-pipeline/experiments/convert — record a redemption outcome.
- * postNoQueue (see recordOfferAssignment): replay would double-record the
- * conversion in the uplift experiment ledger.
- */
-export async function recordOfferConversion(customerId: string, offerId?: string, redeemedBillId?: string) {
-  return postNoQueue<any>('/ml-pipeline/experiments/convert', { customerId, offerId, redeemedBillId });
-}
-
-// ── Customer segmentation (4th model) ──
-
-export interface StoredSegmentRow {
-  entityId: string;
-  segment: string;
-  method: string;
-  isTrained: boolean;
-  recencyDays: number | null;
-  frequency: number | null;
-  monetary: number | null;
-  modelVersion: string;
-  generatedAt: string;
-}
-
-/** GET /api/ml-pipeline/segments — stored customer segments. */
-export async function fetchStoredSegments(limit = 500) {
-  const res = await get<any>(`/ml-pipeline/segments?limit=${limit}`);
-  return res?.data || res;
-}
-
-/** POST /api/ml-pipeline/segments/sync — extract → push → gated train → store. */
-export async function syncCustomerSegments() {
-  return post<any>('/ml-pipeline/segments/sync', {});
-}

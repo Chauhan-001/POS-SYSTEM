@@ -188,30 +188,6 @@ export const config = {
   // SECTION 5a-bis: ML PIPELINE (P0 data bridge)
   // ===========================================================================
 
-  /**
-   * ML data bridge — pushes tenant-scoped Bills/BillItems to the
-   * Demand_forcasting_model service (MLmodels/Demand_forcasting_model).
-   * Unset ML_DEMAND_BASE_URL disables the bridge entirely (no outbound calls).
-   */
-  mlPipeline: {
-    /** Base URL of the Demand model service (e.g. http://localhost:3000). */
-    demandBaseUrl: (process.env.ML_DEMAND_BASE_URL || '').trim(),
-    /** Base URL of the Basket (combo intelligence) service (e.g. http://localhost:8000). */
-    basketBaseUrl: (process.env.ML_BASKET_BASE_URL || '').trim(),
-    /** Base URL of the Uplit (customer uplift) service (e.g. http://localhost:8001). */
-    uplitBaseUrl: (process.env.ML_UPLIT_BASE_URL || '').trim(),
-    /** Internal shared secret sent as x-service-token (recommended). */
-    serviceToken: (process.env.ML_SERVICE_TOKEN || '').trim(),
-    /** Per-request timeout for ingestion pushes (ms). */
-    demandTimeoutMs: parseInt(process.env.ML_DEMAND_TIMEOUT_MS || '30000', 10),
-    /** Daily sync scheduler master switch ('on' to enable). */
-    syncEnabled: (process.env.ML_SYNC_ENABLED || '').trim().toLowerCase() === 'on',
-    /** Sync cadence in minutes (default 1440 = daily). */
-    syncIntervalMinutes: parseInt(process.env.ML_SYNC_INTERVAL_MINUTES || '1440', 10),
-    /** Run one sync cycle immediately at boot. */
-    syncRunOnStartup: (process.env.ML_SYNC_RUN_ON_STARTUP || '').trim().toLowerCase() === 'on',
-  },
-
   // ===========================================================================
   // SECTION 5a-ter: CRICKET CONTEXT PROVIDER (CricAPI)
   // ===========================================================================
@@ -258,45 +234,6 @@ export const config = {
     marketingWindowHours: parseInt(process.env.CRICKET_MARKETING_WINDOW_HOURS || '24', 10),
     /** Preparation-window look-ahead (hours) — CRICKET_PREPARATION_WINDOW_HOURS=36 → MATCH_PREPARATION_WINDOW fires 24–36h ahead. */
     preparationWindowHours: parseInt(process.env.CRICKET_PREPARATION_WINDOW_HOURS || '36', 10),
-  },
-
-  // ===========================================================================
-  // SECTION 5a-quater: NEARBY COMPETITION PROVIDER (Google Places — New)
-  // ===========================================================================
-
-  /**
-   * Competition context (Phase 1) — backend-only Google Places Nearby Search
-   * feeding getNearbyCompetition. API key is server-only, never logged.
-   * NOTE: module build PAUSED mid-implementation (types + provider written);
-   * config kept so the tree compiles. Unset key = integration off.
-   */
-  competition: {
-    /** Master switch (default true, but requires an API key to run). */
-    enabled: (process.env.COMPETITION_ENABLED || 'true').trim().toLowerCase() !== 'false',
-    /** Google Maps API key — BACKEND ONLY. Never expose to clients or logs. */
-    apiKey: (process.env.GOOGLE_MAPS_API_KEY || '').trim(),
-    /** Places API (New) base URL. */
-    baseUrl: (process.env.GOOGLE_PLACES_BASE_URL || 'https://places.googleapis.com/v1').trim(),
-    /** Nearby search radius (meters). */
-    searchRadiusMeters: parseInt(process.env.COMPETITION_SEARCH_RADIUS_METERS || '2000', 10),
-    /** Max results (Places New caps at 20). */
-    maxResults: parseInt(process.env.COMPETITION_MAX_RESULTS || '20', 10),
-    /** Refresh window (days) — cache freshness strategy. */
-    refreshDays: parseInt(process.env.COMPETITION_REFRESH_DAYS || '30', 10),
-    /** Per-request timeout (ms). */
-    timeoutMs: parseInt(process.env.COMPETITION_TIMEOUT_MS || '10000', 10),
-    /**
-     * Density = competitors / circular search area (km²) — π·r² with radius in
-     * km. Thresholds are explicit and env-configurable (spec §5): below low →
-     * 'low', at/above high → 'high', else 'medium'.
-     */
-    densityLowThreshold: parseFloat(process.env.COMPETITION_DENSITY_LOW_THRESHOLD || '5'),
-    densityHighThreshold: parseFloat(process.env.COMPETITION_DENSITY_HIGH_THRESHOLD || '15'),
-    /** CLOSE_CATEGORY_COMPETITION proximity bound (meters, spec §10). */
-    closeProximityMeters: parseInt(process.env.COMPETITION_CLOSE_PROXIMITY_METERS || '500', 10),
-    /** LOCAL_COMPETITION_CONCENTRATION share thresholds (0–1, Phase 3 §3). */
-    concentrationLowThreshold: parseFloat(process.env.COMPETITION_CONCENTRATION_LOW_THRESHOLD || '0.1'),
-    concentrationHighThreshold: parseFloat(process.env.COMPETITION_CONCENTRATION_HIGH_THRESHOLD || '0.4'),
   },
 
   // ===========================================================================

@@ -32,6 +32,23 @@ export interface IRefundRecord extends Document {
   restaurantId: mongoose.Types.ObjectId;
   branchId?: mongoose.Types.ObjectId | null;
   amount: number;
+  /** GST portion reversed with this refund. */
+  gstReversed: number;
+  /** Actual refund payment method tendered (Cash, UPI, Card, Wallet). */
+  refundPaymentMethod: string;
+  /** Discount allocated to this refund. */
+  allocatedDiscount: number;
+  /** Line-item level refund details with original price, tax rate, and quantity snapshots. */
+  refundItems: Array<{
+    menuItemId?: string;
+    itemName: string;
+    quantity: number;
+    priceAtSale: number;
+    gstRateAtSale: number;
+    discountAtSale: number;
+    amount: number;
+    gstReversed: number;
+  }>;
   status: RefundStatus;
   gateway: RefundGateway;
   /** Provider payment id the refund was issued against (Razorpay payment_id). */
@@ -42,6 +59,8 @@ export interface IRefundRecord extends Document {
   performedBy: string;
   performedById?: string;
   error?: string;
+  /** Timestamp when the refund reached SUCCEEDED or FAILED. */
+  completedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,6 +73,22 @@ const RefundRecordSchema = new Schema<IRefundRecord>(
     restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true, index: true },
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null },
     amount: { type: Number, required: true, min: 0 },
+    gstReversed: { type: Number, default: 0, min: 0 },
+    refundPaymentMethod: { type: String, trim: true, default: '' },
+    allocatedDiscount: { type: Number, default: 0, min: 0 },
+    refundItems: {
+      type: [{
+        menuItemId: { type: String, trim: true },
+        itemName: { type: String, required: true, trim: true },
+        quantity: { type: Number, required: true, min: 0 },
+        priceAtSale: { type: Number, required: true, min: 0 },
+        gstRateAtSale: { type: Number, required: true, min: 0, max: 100 },
+        discountAtSale: { type: Number, default: 0, min: 0 },
+        amount: { type: Number, required: true, min: 0 },
+        gstReversed: { type: Number, default: 0, min: 0 },
+      }],
+      default: [],
+    },
     status: {
       type: String,
       enum: ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED'],
@@ -61,12 +96,16 @@ const RefundRecordSchema = new Schema<IRefundRecord>(
       index: true,
     },
     gateway: { type: String, enum: ['ledger', 'razorpay', 'manual'], default: 'ledger' },
+    /** Provider payment id the refund was issued against (Razorpay payment_id). */
     paymentRef: { type: String, trim: true },
+    /** Provider-confirmed refund id (Razorpay refund_id). */
     providerRefundId: { type: String, trim: true },
     reason: { type: String, required: true, trim: true, maxlength: 500 },
     performedBy: { type: String, required: true, trim: true },
     performedById: { type: String, trim: true },
     error: { type: String, trim: true },
+    /** Timestamp when the refund reached SUCCEEDED or FAILED. */
+    completedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

@@ -195,6 +195,7 @@ const SettingsManager = safeLazy(() => import('./components/settings/SettingsMan
 const BranchManager = safeLazy(() => import('./components/settings/BranchManager'));
 const ReceiptHistory = safeLazy(() => import('./components/receipts/ReceiptHistory'));
 const ExpenseManager = safeLazy(() => import('./components/finance/ExpenseManager'));
+const ShiftManager = safeLazy(() => import('./components/finance/ShiftManager'));
 const ReservationWorkspace = safeLazy(() => import('./components/orders/ReservationWorkspace'));
 const AnalyticsWorkspace = safeLazy(() => import('./components/insights/AnalyticsWorkspace'));
 const FinanceWorkspace = safeLazy(() => import('./components/finance/FinanceWorkspace'));
@@ -952,6 +953,7 @@ export default function App() {
     Offers: { manager: 'managerCanManageOffers', cashier: 'cashierCanManageOffers' },
     Reports: { manager: 'managerCanAccessReports', cashier: 'cashierCanAccessReports' },
     Staff: { manager: 'managerCanManageStaff', cashier: 'cashierCanManageStaff' },
+    Shift: { manager: 'managerCanManageShifts', cashier: 'cashierCanManageShifts' },
     Branches: { manager: 'managerCanAccessBranches', cashier: 'cashierCanAccessBranches' },
     Settings: { manager: 'managerCanAccessSettings', cashier: 'cashierCanAccessSettings' },
     Expenses: { manager: 'managerCanManageExpenses', cashier: 'cashierCanManageExpenses' },

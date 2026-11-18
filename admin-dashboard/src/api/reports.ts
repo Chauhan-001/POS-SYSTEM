@@ -206,8 +206,60 @@ export async function getAdminProductAbc(
   restaurantId: string,
   params: { startDate?: string; endDate?: string } = {},
 ): Promise<ProductReportRow[]> {
-  const { data } = await apiClient.get(`/api/admin/restaurants/${restaurantId}/reports/products-abc`, { params })
+  const { data } = await apiClient.get(`/api/admin/restaurants/${restaurantId}/reports/products/abc`, { params })
   return data.data
+}
+
+export interface MenuEngineeringItem {
+  productId: string
+  productName: string
+  category: string
+  price: number
+  cost: number
+  recipeCost: number
+  contributionMargin: number
+  contributionMarginPercent: number
+  dailyUnits: number
+  dailyRevenue: number
+  dailyContribution: number
+  popularityPercentile: number
+  marginPercentile: number
+  classification: 'STAR' | 'PLOWHORSE' | 'PUZZLE' | 'DOG'
+  trend: 'rising' | 'stable' | 'declining'
+  trendConfidence: number
+  recommendedActions: string[]
+  missingCost: boolean
+}
+
+export async function getAdminMenuEngineering(
+  restaurantId: string,
+  params: { startDate?: string; endDate?: string } = {},
+): Promise<MenuEngineeringItem[]> {
+  const { data } = await apiClient.get(`/api/admin/restaurants/${restaurantId}/reports/products/menu-engineering`, { params })
+  return data.data || []
+}
+
+export interface ProductProfitabilityRow {
+  productId: string;
+  productName: string;
+  variantName?: string;
+  recipeId: string;
+  sellingPrice: number;
+  recipeCost: number;
+  foodCostPercent: number;
+  contribution: number;
+  contributionMarginPercent: number;
+  unitsSold: number;
+  revenue: number;
+  totalContribution: number;
+}
+
+export async function getAdminProductProfitability(
+  restaurantId: string,
+  params: { startDate?: string; endDate?: string } = {},
+): Promise<ProductProfitabilityRow[]> {
+  const { data } = await apiClient.get(`/api/admin/restaurants/${restaurantId}/reports/profitability/products`, { params })
+  return data.data || []
 }
 
 export async function getAdminInventoryStock(

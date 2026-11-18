@@ -87,10 +87,8 @@ export { availabilityService } from './availabilityService';
 export type { AvailabilityState, AvailabilityUpsertItem } from './availabilityService';
 export { orderAdjustmentService } from './orderAdjustmentService';
 export { refundService } from './refundService';
-
-// Learning / intelligence services (used by intelligenceController)
-export { recordOwnerFeedback, getFeedbackSummary, shouldSuppressStrategy, getStrategyPreferenceTrends } from './recommendationFeedbackService';
-export { runWeeklyLearningCycle, getRestaurantsNeedingProcessing, getLearningSummary } from './learningScheduler';
+export { shiftService } from './shiftService';
+export { menuEngineeringService } from './menuEngineeringService';
 
 // Value re-export (not `export type`) so consumers can instantiate classes
 // imported from the barrel — e.g. `new CampaignService()` in tests.

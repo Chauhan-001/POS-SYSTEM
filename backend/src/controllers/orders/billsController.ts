@@ -58,6 +58,8 @@ export async function createBill(req: Request, res: Response): Promise<void> {
       restaurantId: auth?.restaurantId,
       branchId: req.body?.branchId,
       operator: req.body?.cashierName || auth?.name,
+      operatorId: String(auth?.employeeId || ''),
+      operatorRole: String(auth?.role || ''),
     });
     res.status(201).json({ data: bill });
   } catch (error) {

@@ -30,7 +30,6 @@ import {
   getGrowthReport,
   getRevenueReport,
   getSubscriptionReport,
-  getAiRevenueReport,
   getSupportReport,
   getDeviceReport,
   getUsageReport,
@@ -253,41 +252,6 @@ function SubscriptionsProps({ query }: { query: ReportQuery }) {
   )
 }
 
-function AiRevenueProps({ query }: { query: ReportQuery }) {
-  const { data, isLoading, error, refetch } = useQuery({ queryKey: ['report-ai-revenue', query], queryFn: () => getAiRevenueReport(query) })
-  if (error) return <ErrorPage message={(error as any).message} onRetry={() => refetch()} />
-  if (isLoading || !data) return <SectionSkeleton />
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="AI Cost" value={formatCurrency(data.summary.totalCost)} icon={Cpu} tone="text-danger bg-danger/10" />
-        <KpiCard label="AI Revenue" value={formatCurrency(data.summary.totalRevenue)} icon={DollarSign} tone="text-success bg-success/10" />
-        <KpiCard label="Profit" value={formatCurrency(data.summary.totalProfit)} sub={`${data.summary.profitMargin ?? 0}% margin`} icon={TrendingUp} tone="text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" />
-        <KpiCard label="Requests" value={formatNumber(data.summary.requests)} icon={Activity} tone="text-primary-600 bg-primary-50 dark:bg-primary-900/20" />
-      </div>
-      <Card>
-        <CardHeader><CardTitle>AI revenue vs cost</CardTitle></CardHeader>
-        <div className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data.summary.series || []}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="key" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <Tooltip />
-              <Area type="monotone" dataKey="cost" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.15} />
-              <Area type="monotone" dataKey="revenue" stroke="#22c55e" fill="#22c55e" fillOpacity={0.15} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <SimpleTable title="By feature" rows={data.summary.byFeature || []} format={(k: string, v: any) => (k.includes('revenue') || k === 'cost' || k === 'profit' ? formatCurrency(Number(v) || 0) : String(v ?? '-'))} />
-        <SimpleTable title="By model" rows={data.summary.byModel || []} format={(k: string, v: any) => (k === 'revenue' || k === 'cost' || k === 'profit' ? formatCurrency(Number(v) || 0) : String(v ?? '-'))} />
-      </div>
-    </div>
-  )
-}
-
 function SupportProps({ query }: { query: ReportQuery }) {
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ['report-support', query], queryFn: () => getSupportReport(query) })
   if (error) return <ErrorPage message={(error as any).message} onRetry={() => refetch()} />
@@ -455,7 +419,6 @@ const TABS = [
   { id: 'growth', label: 'Growth', icon: TrendingUp },
   { id: 'revenue', label: 'Revenue', icon: DollarSign },
   { id: 'subscriptions', label: 'Subscriptions', icon: Users },
-  { id: 'ai-revenue', label: 'AI Revenue', icon: Cpu },
   { id: 'support', label: 'Support', icon: Headphones },
   { id: 'devices', label: 'Devices', icon: Server },
   { id: 'usage', label: 'Usage', icon: Activity },
@@ -512,7 +475,6 @@ export default function AdminReports() {
       {tab === 'growth' && <GrowthProps query={query} />}
       {tab === 'revenue' && <RevenueProps query={query} />}
       {tab === 'subscriptions' && <SubscriptionsProps query={query} />}
-      {tab === 'ai-revenue' && <AiRevenueProps query={query} />}
       {tab === 'support' && <SupportProps query={query} />}
       {tab === 'devices' && <DevicesProps query={query} />}
       {tab === 'usage' && <UsageProps query={query} />}
@@ -532,7 +494,6 @@ function OverviewPeriod({ query }: { query: ReportQuery }) {
     { label: 'New Restaurants', value: () => formatNumber(data.growth.newRestaurants ?? 0), icon: TrendingUp as any, tone: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20' },
     { label: 'MRR', value: () => formatCurrency(data.revenue.mrr ?? 0), icon: DollarSign, tone: 'text-success bg-success/10' },
     { label: 'Active Subscriptions', value: () => formatNumber(data.subscriptions.activeCount ?? 0), icon: Users, tone: 'text-primary-600 bg-primary-50 dark:bg-primary-900/20' },
-    { label: 'AI Revenue', value: () => formatCurrency(data.aiRevenue.totalRevenue ?? 0), icon: Cpu, tone: 'text-amber-600 bg-amber-50 dark:bg-amber-900/20' },
     { label: 'Open Tickets', value: () => formatNumber(data.support.openCount ?? 0), icon: Headphones, tone: 'text-danger bg-danger/10' },
     { label: 'Online Devices', value: () => formatNumber(data.devices.online ?? 0), icon: Server, tone: 'text-cyan-600 bg-cyan-50 dark:bg-cyan-900/20' },
     { label: 'Platform Events', value: () => formatNumber(data.usage.totalEvents ?? 0), icon: Activity, tone: 'text-violet-600 bg-violet-50 dark:bg-violet-900/20' },

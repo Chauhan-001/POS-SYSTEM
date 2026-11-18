@@ -23,9 +23,9 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import { billRepo, billItemRepo, customerRepo, employeeRepo, auditLogRepo, dailySummaryRepo } from '../repositories';
-import { InvoiceCounter, DailySummary, MonthlySummary, YearlySummary, Customer, Product } from '../models';
+import { InvoiceCounter, DailySummary, MonthlySummary, YearlySummary, Customer, Product, RefundRecord } from '../models';
 import { stockMovementService } from './stockMovementService';
-import { loyaltyService, customerService } from './index';
+import { loyaltyService, customerService, cashLedgerService } from './index';
 import { verifyPin } from '../utils/bcrypt';
 import { AppError } from '../utils/AppError';
 import { config } from '../config';
@@ -622,12 +622,43 @@ export class BillService {
    * Deducts stock for each item via the centralized stock engine, upserts the
    * daily summary, and writes an audit log. Returns the created bill with items.
    */
-  async create(data: any, ctx: { restaurantId?: string; branchId?: string; operator?: string } = {}) {
+  async create(
+    data: any,
+    ctx: { restaurantId?: string; branchId?: string; operator?: string; operatorId?: string; operatorRole?: string } = {}
+  ) {
     const { items, ...billData } = data;
 
     // Tenant isolation — always stamp the restaurant on the immutable record.
     if (ctx.restaurantId) billData.restaurantId = ctx.restaurantId;
     if (ctx.branchId) billData.branchId = ctx.branchId;
+
+    // ── Shift attribution (Phase 2) ────────────────────────────────
+    // Capture the active shift for the register so every bill is attributable
+    // to a specific shift and cashier. If no shift is open, shiftId is null
+    // (historical bills without shift association remain valid).
+    if (billData.registerId && ctx.restaurantId) {
+      try {
+        const Shift = (await import('../models/finance/Shift')).default;
+        const activeShift = await Shift.findOne({
+          restaurantId: ctx.restaurantId,
+          ...(billData.branchId ? { branchId: billData.branchId } : {}),
+          registerId: billData.registerId,
+          status: 'open',
+          isDeleted: { $ne: true },
+        }).lean().exec();
+        if (activeShift) {
+          billData.shiftId = activeShift._id;
+        }
+      } catch (err: any) {
+        // Shift lookup must never block billing.
+        console.warn('[BillService] shift lookup skipped:', err.message);
+      }
+    }
+
+    // Cashier identification: prefer the authenticated employee id.
+    if (ctx.operatorId && mongoose.Types.ObjectId.isValid(ctx.operatorId)) {
+      billData.cashierId = ctx.operatorId;
+    }
 
     // Source order link (online ordering adjustments resolve the bill via orderId).
     if (billData.orderId && !mongoose.Types.ObjectId.isValid(billData.orderId)) {
@@ -1084,7 +1115,7 @@ export class BillService {
    * refund is accountable. Restores stock for refunded quantities, reverses
    * earned loyalty points, decrements the daily summary, and audits the action.
    */
-  async refundBill(id: string, data: { items?: Array<{ menuItemId?: string; itemName?: string; quantity?: number }>; reason: string; refundedBy: string; managerPin: string }, ctx: { restaurantId?: string; branchId?: string } = {}) {
+  async refundBill(id: string, data: { items?: Array<{ menuItemId?: string; itemName?: string; quantity?: number }>; reason: string; refundedBy: string; managerPin: string; refundPaymentMethod: string }, ctx: { restaurantId?: string; branchId?: string } = {}) {
     const bill = await billRepo.findById(id);
     if (!bill) throw new AppError(404, 'Bill not found');
     // Tenant isolation.
@@ -1092,11 +1123,26 @@ export class BillService {
       throw new AppError(404, 'Bill not found');
     }
     if ((bill as any).isVoided) throw new AppError(400, 'Cannot refund a voided bill');
-    if ((bill as any).isRefunded) throw new AppError(400, 'Bill is already refunded');
+    const billGrandTotal = Math.max(0, Number((bill as any).grandTotal) || 0);
+    // Cumulative refund check: allow multiple partial refunds, but total
+    // successful refunds must not exceed the grand total.
+    const existingRefunds = await RefundRecord.find({
+      billId: new mongoose.Types.ObjectId(id),
+      status: 'SUCCEEDED',
+    }).lean().exec();
+    const cumulativeRefunded = existingRefunds.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
+    if (cumulativeRefunded >= billGrandTotal - 0.01) {
+      throw new AppError(400, 'Bill is already fully refunded');
+    }
 
     // Manager PIN authorization.
     const ok = await this.verifyManagerPin(ctx.restaurantId, data.managerPin);
     if (!ok) throw new AppError(403, 'Invalid manager PIN — refund denied');
+
+    // Refund tender is mandatory.
+    if (!data.refundPaymentMethod || !['Cash', 'UPI', 'Card', 'Wallet'].includes(data.refundPaymentMethod)) {
+      throw new AppError(400, 'Refund payment method is required (Cash, UPI, Card, or Wallet)');
+    }
 
     // Load original line items (historical snapshots).
     let originalItems: any[] = [];
@@ -1105,37 +1151,69 @@ export class BillService {
       originalItems = found.data;
     } catch { /* non-fatal */ }
 
+    // Cumulative refunded quantity per item check: cannot refund more than
+    // the original sold quantity across all successful refunds.
+    const allRefundLines = existingRefunds.flatMap((r: any) => (r.refundItems || []).map((li: any) => ({
+      menuItemId: li.menuItemId,
+      quantity: Number(li.quantity) || 0,
+    })));
+    const itemRefundedQtyMap = new Map<string, number>();
+    for (const item of originalItems) {
+      const itemRefundedQty = allRefundLines
+        .filter((rl) => rl.menuItemId === item.menuItemId)
+        .reduce((s, rl) => s + rl.quantity, 0);
+      itemRefundedQtyMap.set(item.menuItemId || item.itemName, itemRefundedQty);
+    }
+
     // Resolve which quantities to refund: full bill when no subset given.
-    // Phase 4 — refund the AMOUNT ACTUALLY PAID, never the raw pre-tax
-    // pre-discount subtotal. The customer paid grandTotal = subtotal −
-    // discount + gst; handing back the raw subtotal would over-refund when
-    // discount > gst and under-refund (withholding tax) when discount < gst,
-    // and would also break the daily-summary reversal (revenue is recorded as
-    // grandTotal). Each refunded line is scaled by paidRatio = grandTotal /
-    // subtotal so a full refund always equals grandTotal and a partial refund
-    // never exceeds it.
+    // Line-item exact: each refunded line value = priceAtSale × qty − allocated
+    // discount; GST reversal = line value × gstRateAtSale / 100. Discounts are
+    // already inside grandTotal; never subtract a second time.
     const requested = data.items && data.items.length > 0 ? data.items : undefined;
-    const billSubtotal = Math.max(0, Number((bill as any).subtotal) || 0);
-    const billGrandTotal = Math.max(0, Number((bill as any).grandTotal) || 0);
-    const paidRatio = billSubtotal > 0 ? billGrandTotal / billSubtotal : 1;
-    const scale = (amount: number) => Math.round(amount * paidRatio * 100) / 100;
-    const refundLines: Array<{ menuItemId?: string; itemName: string; quantity: number; amount: number }> = [];
+    const refundLines: Array<{
+      menuItemId?: string;
+      itemName: string;
+      quantity: number;
+      priceAtSale: number;
+      gstRateAtSale: number;
+      discountAtSale: number;
+      amount: number;
+      gstReversed: number;
+    }> = [];
     const restoreTargets: any[] = [];
-    let refundAmount = 0;
+    let refundAmountExGST = 0;
+    let refundGstReversed = 0;
+    let refundAmountTotal = 0;
 
     if (!requested) {
       // Full refund of every line.
       for (const item of originalItems) {
         const qty = Number(item.quantity) || 0;
-        const amount = scale((Number(item.priceAtSale) || 0) * qty);
-        if (amount <= 0 && qty <= 0) continue;
-        refundLines.push({ menuItemId: item.menuItemId, itemName: item.itemName || 'Item', quantity: qty, amount });
-        refundAmount += amount;
+        const price = Number(item.priceAtSale) || 0;
+        const gstRate = Number(item.gstRateAtSale) || 0;
+        const lineDiscount = Number(item.discountAtSale) || 0;
+        const lineValue = price * qty;
+        const lineExGST = Math.max(0, lineValue - lineDiscount);
+        const lineGst = Math.round(lineExGST * gstRate / 100 * 100) / 100;
+        if (lineExGST <= 0 && qty <= 0) continue;
+        refundLines.push({
+          menuItemId: item.menuItemId,
+          itemName: item.itemName || 'Item',
+          quantity: qty,
+          priceAtSale: price,
+          gstRateAtSale: gstRate,
+          discountAtSale: lineDiscount,
+          amount: Math.round((lineExGST + lineGst) * 100) / 100,
+          gstReversed: lineGst,
+        });
+        refundAmountExGST += lineExGST;
+        refundGstReversed += lineGst;
+        refundAmountTotal += lineExGST + lineGst;
         restoreTargets.push({ menuItemId: item.menuItemId || item.product?.id, quantity: qty, variantName: item.variantName || undefined });
       }
     } else {
-      // Partial refund — match requested items to original lines (by menuItemId
-      // or itemName), never refunding more than the original quantity.
+      // Partial refund — match requested items to original lines, never
+      // refunding more than the original quantity or cumulative refund limit.
       for (const req of requested) {
         const qty = Math.max(0, Number(req.quantity) || 0);
         if (qty <= 0) continue;
@@ -1144,24 +1222,45 @@ export class BillService {
           (!req.menuItemId && req.itemName && o.itemName?.toLowerCase() === req.itemName?.toLowerCase())
         );
         if (!original) continue;
-        const refundQty = Math.min(qty, Number(original.quantity) || 0);
-        if (refundQty <= 0) continue;
-        const amount = scale((Number(original.priceAtSale) || 0) * refundQty);
-        refundLines.push({ menuItemId: original.menuItemId, itemName: original.itemName || 'Item', quantity: refundQty, amount });
-        refundAmount += amount;
+        const itemRefundedQty = itemRefundedQtyMap.get(original.menuItemId || original.itemName) || 0;
+        const remainingQty = Number(original.quantity) - itemRefundedQty;
+        if (remainingQty <= 0) continue;
+        const refundQty = Math.min(qty, remainingQty);
+        if (refundQty < qty) {
+          throw new AppError(400, `Cannot refund ${qty} of "${original.itemName || original.itemId}" - only ${remainingQty} remaining`);
+        }
+        const price = Number(original.priceAtSale) || 0;
+        const gstRate = Number(original.gstRateAtSale) || 0;
+        const lineDiscount = Number(original.discountAtSale) || 0;
+        // Allocate line discount proportionally to refunded quantity.
+        const originalQty = Number(original.quantity) || 1;
+        const allocatedDiscount = Math.round(lineDiscount * (refundQty / originalQty) * 100) / 100;
+        const lineValue = price * refundQty;
+        const lineExGST = Math.max(0, lineValue - allocatedDiscount);
+        const lineGst = Math.round(lineExGST * gstRate / 100 * 100) / 100;
+        const lineTotal = Math.round((lineExGST + lineGst) * 100) / 100;
+        refundLines.push({
+          menuItemId: original.menuItemId,
+          itemName: original.itemName || 'Item',
+          quantity: refundQty,
+          priceAtSale: price,
+          gstRateAtSale: gstRate,
+          discountAtSale: allocatedDiscount,
+          amount: lineTotal,
+          gstReversed: lineGst,
+        });
+        refundAmountExGST += lineExGST;
+        refundGstReversed += lineGst;
+        refundAmountTotal += lineTotal;
         restoreTargets.push({ menuItemId: original.menuItemId, quantity: refundQty, variantName: original.variantName || undefined });
       }
       if (refundLines.length === 0) throw new AppError(400, 'No matching bill items found for the requested refund');
     }
 
-    // Phase 4 — invariant: a refund can never exceed the amount actually paid.
-    // Guards floating-point drift in the proportional scaling above.
-    if (refundAmount > billGrandTotal + 0.01) {
-      const excess = refundAmount - billGrandTotal;
-      refundAmount = billGrandTotal;
-      // Trim the excess from the LAST line so per-line amounts stay consistent.
-      const last = refundLines[refundLines.length - 1];
-      if (last) last.amount = Math.max(0, Math.round((last.amount - excess) * 100) / 100);
+    // Cumulative refund cap: total successful refunds must not exceed grandTotal.
+    const refundableRemaining = Math.max(0, billGrandTotal - cumulativeRefunded);
+    if (refundAmountTotal > refundableRemaining + 0.01) {
+      throw new AppError(400, `Cannot refund ₹${refundAmountTotal} - only ₹${refundableRemaining} remaining`);
     }
 
     // ── Phase A — Refund recipe reversal ──────────────────────────
@@ -1228,11 +1327,11 @@ export class BillService {
     // Reverse earned loyalty points proportionally (best-effort, Phase 1.6).
     // Resolves the customer tenant-scoped via customerId (or phone fallback)
     // and reverses through the loyalty ledger so the balance stays consistent.
-    if (refundAmount > 0 && (bill as any).pointsEarned > 0 && (bill as any).customerId) {
+    if (refundAmountTotal > 0 && (bill as any).pointsEarned > 0 && (bill as any).customerId) {
       try {
         const reversal = Math.min(
           (bill as any).pointsEarned || 0,
-          Math.round(((bill as any).pointsEarned || 0) * (refundAmount / Math.max(1, (bill as any).grandTotal || 1)))
+          Math.round(((bill as any).pointsEarned || 0) * (refundAmountTotal / Math.max(1, (bill as any).grandTotal || 1)))
         );
         await loyaltyService.reverseBillPoints(ctx.restaurantId || '', (bill as any).customerId.toString(), reversal, {
           refundedBy: data.refundedBy,
@@ -1241,7 +1340,7 @@ export class BillService {
       } catch (err: any) {
         console.warn('[BillService] refund loyalty reversal skipped:', err.message);
       }
-    } else if (refundAmount > 0 && (bill as any).pointsEarned > 0 && (bill as any).customerPhone) {
+    } else if (refundAmountTotal > 0 && (bill as any).pointsEarned > 0 && (bill as any).customerPhone) {
       // Legacy bills without customerId — resolve by phone (tenant-scoped).
       try {
         const cust = ctx.restaurantId
@@ -1250,7 +1349,7 @@ export class BillService {
         if (cust) {
           const reversal = Math.min(
             (bill as any).pointsEarned || 0,
-            Math.round(((bill as any).pointsEarned || 0) * (refundAmount / Math.max(1, (bill as any).grandTotal || 1)))
+            Math.round(((bill as any).pointsEarned || 0) * (refundAmountTotal / Math.max(1, (bill as any).grandTotal || 1)))
           );
           await loyaltyService.reverseBillPoints(ctx.restaurantId || '', (cust as any)._id.toString(), reversal, {
             refundedBy: data.refundedBy,
@@ -1262,19 +1361,74 @@ export class BillService {
       }
     }
 
-    // Mark the bill as refunded.
-    const updated = await billRepo.update(id, {
-      isRefunded: true,
+    // Create RefundRecord as the authoritative refund transaction (SUCCEEDED for
+    // ledger gateway — synchronous through BillService). Bill.isRefunded /
+    // refundAmount / refundedItems are kept as denormalized cache for backward
+    // compatibility.
+    const refundRecord = await RefundRecord.create({
+      refundId: `rfd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+      orderId: (bill as any).orderId ? new mongoose.Types.ObjectId((bill as any).orderId) : new mongoose.Types.ObjectId(),
+      billId: new mongoose.Types.ObjectId(id),
+      restaurantId: new mongoose.Types.ObjectId((bill as any).restaurantId || ctx.restaurantId || ''),
+      branchId: ctx.branchId ? new mongoose.Types.ObjectId(ctx.branchId) : (bill as any).branchId ? new mongoose.Types.ObjectId((bill as any).branchId) : null,
+      amount: Math.round(refundAmountTotal * 100) / 100,
+      gstReversed: Math.round(refundGstReversed * 100) / 100,
+      refundPaymentMethod: (bill as any).paymentMethod || 'Cash',
+      allocatedDiscount: Math.round(
+        refundLines.reduce((s, l) => s + (Number(l.discountAtSale) || 0), 0) * 100
+      ) / 100,
+      refundItems: refundLines.map((l) => ({
+        menuItemId: l.menuItemId,
+        itemName: l.itemName,
+        quantity: l.quantity,
+        priceAtSale: l.priceAtSale,
+        gstRateAtSale: l.gstRateAtSale,
+        discountAtSale: l.discountAtSale,
+        amount: l.amount,
+        gstReversed: l.gstReversed,
+      })),
+      status: 'SUCCEEDED',
+      gateway: 'ledger',
+      reason: data.reason,
+      performedBy: data.refundedBy,
+      performedById: undefined,
+      completedAt: new Date(),
+    } as any);
+
+    // Update Bill denormalized cache (backward-compatible fields).
+    const newRefundAmount = Math.round((cumulativeRefunded + refundAmountTotal) * 100) / 100;
+    const allRefundItems = [
+      ...((bill as any).refundedItems || []),
+      ...refundLines.map((l) => ({ menuItemId: l.menuItemId, itemName: l.itemName, quantity: l.quantity, amount: l.amount })),
+    ];
+    await billRepo.update(id, {
+      isRefunded: newRefundAmount >= billGrandTotal - 0.01,
       refundedAt: new Date(),
       refundedBy: data.refundedBy,
       refundReason: data.reason,
-      refundAmount: Math.round(refundAmount * 100) / 100,
-      refundedItems: refundLines,
+      refundAmount: newRefundAmount,
+      refundedItems: allRefundItems,
     } as any);
 
-    // Decrement daily summary (best-effort). Same integrity rules as the void
-    // path: tenant-scoped like the creation bump and valid for branch-less
-    // bills, so a refund always reverses exactly what was added.
+    // Cash ledger entry for cash refunds (Phase 4): cash refunds reduce
+    // expected cash in shift reconciliation.
+    if (data.refundPaymentMethod === 'Cash' && refundAmountTotal > 0) {
+      try {
+        await cashLedgerService.addEntry(String(ctx.restaurantId), {
+          type: 'cash_out',
+          amount: Math.round(refundAmountTotal * 100) / 100,
+          date: (bill as any).date || new Date().toISOString().slice(0, 10),
+          branchId: ctx.branchId ? String(ctx.branchId) : ((bill as any).branchId ? String((bill as any).branchId) : undefined),
+          note: `Cash refund: ${data.reason}`,
+          performedBy: data.refundedBy,
+        });
+      } catch (err: any) {
+        console.warn('[BillService] cash refund ledger entry skipped:', err.message);
+      }
+    }
+
+    // Decrement daily summary (best-effort). Use ex-GST refund amount for
+    // revenue reversal so P&L stays consistent with tax-exclusive accounting.
     if ((bill as any).date) {
       try {
         const refundFilter: Record<string, any> = { date: (bill as any).date, branchId: (bill as any).branchId ?? null };
@@ -1283,8 +1437,8 @@ export class BillService {
           refundFilter,
           {
             $inc: {
-              totalRevenue: -Math.round(refundAmount * 100) / 100,
-              totalOrders: refundAmount >= ((bill as any).grandTotal || 0) - 0.01 ? -1 : 0,
+              totalRevenue: -Math.round(refundAmountExGST * 100) / 100,
+              totalOrders: newRefundAmount >= ((bill as any).grandTotal || 0) - 0.01 ? -1 : 0,
               totalItemsSold: -refundLines.reduce((s, l) => s + l.quantity, 0),
             },
           },
@@ -1300,7 +1454,7 @@ export class BillService {
       entityType: 'bill',
       entityId: id,
       performedBy: data.refundedBy,
-      details: { reason: data.reason, amount: refundAmount, items: refundLines.length },
+      details: { reason: data.reason, amount: refundAmountTotal, items: refundLines.length },
     } as any);
 
     return this.getById(id, ctx);

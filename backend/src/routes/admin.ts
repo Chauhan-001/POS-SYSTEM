@@ -29,8 +29,7 @@ import { Router } from 'express';
 // existing route wiring unchanged.
 import { requireAdminAuth as requireAuth } from '../middleware/authMiddleware';
 import { requireCollectionAccess } from '../middleware/authorizationMiddleware';
-import { authIpLimiter, accountBackoff } from '../middleware/rateLimiter';
-import { adminLogin, adminProfile, adminUpdateProfile, adminChangePassword } from '../controllers/admin/adminAuthController';
+import { registerAdminAuthRoutes } from './adminAuth';
 import { cached, invalidateCache } from '../utils/ResponseCache';
 import {
   getRestaurants, getRestaurant, createRestaurant, updateRestaurant,
@@ -148,7 +147,6 @@ import {
 } from '../controllers/admin/adminReportsController';
 import { validate } from '../middleware/validate';
 import {
-  adminLoginSchema,
   planIdParamsSchema, planCreateSchema, planUpdateSchema, planCloneSchema,
   planStatusSchema, planAssignSchema, planRollbackSchema, planListQuerySchema,
 } from '../validation';
@@ -162,11 +160,7 @@ import {
 
 const router = Router();
 
-router.post('/auth/admin/login', validate({ body: adminLoginSchema }), authIpLimiter, accountBackoff, adminLogin);
-
-router.get('/auth/admin/profile', requireAuth, requireCollectionAccess('User', 'read'), adminProfile);
-router.put('/auth/admin/profile', requireAuth, requireCollectionAccess('User', 'update'), adminUpdateProfile);
-router.put('/auth/admin/change-password', requireAuth, requireCollectionAccess('User', 'update'), adminChangePassword);
+registerAdminAuthRoutes(router);
 
 router.get('/admin/restaurants', requireAuth, requireCollectionAccess('Restaurant', 'read'), validate({ query: restaurantListQuerySchema }), cached({ ttlMs: 30_000, tags: ['restaurants'] }), getRestaurants);
 router.get('/admin/restaurants/:id/subscription', requireAuth, requireCollectionAccess('Subscription', 'read'), validate({ params: restaurantIdParamsSchema }), getSubscriptionByRestaurant);

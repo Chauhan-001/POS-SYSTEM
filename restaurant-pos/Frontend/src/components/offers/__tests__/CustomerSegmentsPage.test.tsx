@@ -1,25 +1,17 @@
 /**
- * CustomerSegmentsPage — proves the Marketing module's segmentation surface
- * shows BOTH segment sources together and distinctly labelled:
- *
- *   Rule-based  — the existing deterministic engine (refreshable)
- *   ML detected — model-backed segments, shown read-only (no train/sync UI)
- *
- * and that an unreachable / empty ML pipeline is reported honestly instead of
- * silently rendering as if everything were healthy.
+ * CustomerSegmentsPage — proves the segmentation surface renders the
+ * deterministic, rule-based segments and refreshes them from the API.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import CustomerSegmentsPage from '../CustomerSegmentsPage';
 
 const fetchOfferSegments = vi.fn();
 const refreshOfferSegments = vi.fn();
-const fetchStoredSegments = vi.fn();
 
 vi.mock('../../../api/client', () => ({
   fetchOfferSegments: (...a: unknown[]) => fetchOfferSegments(...a),
   refreshOfferSegments: (...a: unknown[]) => refreshOfferSegments(...a),
-  fetchStoredSegments: (...a: unknown[]) => fetchStoredSegments(...a),
 }));
 
 const deterministicSegments = {
@@ -37,64 +29,37 @@ const deterministicSegments = {
   ],
 };
 
-const storedSegments = {
-  segments: [
-    { entityId: 'c1', segment: 'Champions', method: 'kmeans', isTrained: true, recencyDays: 2, frequency: 5, monetary: 1200, modelVersion: 'v1', generatedAt: '2026-01-01' },
-    { entityId: 'c2', segment: 'Champions', method: 'kmeans', isTrained: true, recencyDays: 4, frequency: 4, monetary: 1200, modelVersion: 'v1', generatedAt: '2026-01-01' },
-    { entityId: 'c3', segment: 'Dormant', method: 'rules', isTrained: false, recencyDays: 80, frequency: 1, monetary: 100, modelVersion: 'v1', generatedAt: '2026-01-01' },
-  ],
-};
-
 beforeEach(() => {
   vi.clearAllMocks();
   fetchOfferSegments.mockResolvedValue(deterministicSegments);
   refreshOfferSegments.mockResolvedValue(deterministicSegments);
-  fetchStoredSegments.mockResolvedValue(storedSegments);
 });
 
-describe('CustomerSegmentsPage — deterministic + ML view', () => {
-  it('renders rule-based and model-detected segments together, clearly labelled', async () => {
+describe('CustomerSegmentsPage — rule-based segments', () => {
+  it('renders deterministic segments', async () => {
     render(<CustomerSegmentsPage />);
 
-    // Deterministic (existing) surface is preserved.
     expect(await screen.findByText('VIP Customers')).toBeTruthy();
     expect(screen.getByText('Rule-based')).toBeTruthy();
-
-    // ML surface sits alongside it.
-    expect(await screen.findByText('Smart segments')).toBeTruthy();
-    expect(screen.getByText('ML detected')).toBeTruthy();
-    expect(await screen.findByText('Champions')).toBeTruthy();
-    expect(screen.getByText('Dormant')).toBeTruthy();
-    expect(screen.getByText('3 customers')).toBeTruthy();
-
-    // No train/sync controls are exposed to end users.
-    expect(screen.queryByText(/train/i)).toBeNull();
-    expect(screen.queryByText(/sync/i)).toBeNull();
+    expect(screen.getByText('Top spenders')).toBeTruthy();
+    expect(screen.getByText('12')).toBeTruthy();
   });
 
-  it('aggregates model customers per segment with average spend', async () => {
+  it('refreshes segments when the refresh button is clicked', async () => {
     render(<CustomerSegmentsPage />);
+    await screen.findByText('VIP Customers');
 
-    // Champions: 2 customers, avg spend (1200 + 1200) / 2 = ₹1,200.00.
-    expect(await screen.findByText('₹1,200.00')).toBeTruthy();
-    expect(screen.getByText('Model')).toBeTruthy();
-    expect(screen.getByText('Model + rules')).toBeTruthy();
+    fireEvent.click(screen.getByText('Refresh'));
+
+    expect(refreshOfferSegments).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('VIP Customers')).toBeTruthy();
   });
 
-  it('reports an unreachable ML pipeline honestly while keeping rule-based segments', async () => {
-    fetchStoredSegments.mockRejectedValue(new Error('boom'));
+  it('shows an error and retry action when loading fails', async () => {
+    fetchOfferSegments.mockRejectedValue(new Error('boom'));
     render(<CustomerSegmentsPage />);
 
-    expect(await screen.findByText('ML segmentation service unavailable')).toBeTruthy();
-    // Deterministic data must still render — ML failure is not fatal.
-    expect(screen.getByText('VIP Customers')).toBeTruthy();
-  });
-
-  it('reports an empty ML pipeline instead of showing a healthy-looking blank', async () => {
-    fetchStoredSegments.mockResolvedValue({ segments: [] });
-    render(<CustomerSegmentsPage />);
-
-    expect(await screen.findByText('No model-detected segments synced yet')).toBeTruthy();
-    await waitFor(() => expect(screen.getByText('VIP Customers')).toBeTruthy());
+    expect(await screen.findByText('boom')).toBeTruthy();
+    expect(screen.getByText('Retry')).toBeTruthy();
   });
 });

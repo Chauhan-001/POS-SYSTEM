@@ -44,59 +44,6 @@ import { buildRecommendationContext, deriveSurplusItems } from './recommendation
 import type { RecommendationContext, OfferSuggestion } from './offerEngine';
 import { generateRecommendations } from './offerEngine';
 import { getUpcomingFestivals } from './festivalService';
-import {
-  recordRecommendationLifecycleEvent,
-  type RecommendationLifecycleAction,
-} from '../ai/memory/memoryLearningService';
-
-// ─── PHASE B: real owner decision → existing learning lifecycle ────────────
-// The advisor path (advisorService → AdvisorRecommendation) is the ONLY real
-// owner-decision store. Previously the Phase-8 lifecycle hooks lived in
-// recommendationCandidateService, which has no production importers, so no
-// owner action ever reached memory. These helpers connect the REAL path to the
-// EXISTING recorder — no second owner-action system is introduced.
-
-/** Advisor status → lifecycle vocabulary (dismissed === the owner said no). */
-const LIFECYCLE_FOR_ADVISOR_ACTION: Record<string, RecommendationLifecycleAction> = {
-  accepted: 'accepted',
-  rejected: 'rejected',
-  dismissed: 'rejected',
-  converted: 'converted',
-};
-
-/**
- * Fire-and-forget lifecycle emission. Learning MUST NOT block or fail the
- * owner action: `recordRecommendationLifecycleEvent` has a never-throw
- * contract and we intentionally do not await it.
- */
-function emitRecommendationLifecycle(
-  restaurantId: string,
-  action: RecommendationLifecycleAction,
-  recommendation: { id?: string; type?: string; title?: string; campaignId?: string | null },
-): void {
-  void recordRecommendationLifecycleEvent({
-    tenant: { restaurantId },
-    action,
-    recommendationId: recommendation.id,
-    strategy: recommendation.type,
-    title: recommendation.title,
-    campaignRef: recommendation.campaignId ?? undefined,
-  }).catch(() => undefined);
-}
-
-/**
- * Classify an owner-reported outcome without inventing a polarity. Only an
- * explicit word marker counts; anything ambiguous is recorded as 'implemented'
- * (the recommendation was carried out) — never as a fabricated success/failure.
- */
-function outcomeLifecycleAction(outcome: string): RecommendationLifecycleAction {
-  const t = outcome.toLowerCase();
-  const positive = ['increas', 'improve', 'success', 'positive', 'better', 'good', 'up ', 'grew', 'growth'];
-  const negative = ['decreas', 'declin', 'fail', 'negative', 'worse', 'bad', 'down ', 'drop', 'no effect'];
-  if (negative.some((m) => t.includes(m))) return 'outcome_negative';
-  if (positive.some((m) => t.includes(m))) return 'outcome_positive';
-  return 'implemented';
-}
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -1000,14 +947,6 @@ export async function recordAdvisorAction(
       },
     },
   ).exec();
-  if (prior.status !== status) {
-    emitRecommendationLifecycle(restaurantId, LIFECYCLE_FOR_ADVISOR_ACTION[status] ?? 'accepted', {
-      id: String(prior._id),
-      type: String(prior.recommendationType ?? ''),
-      title: String(prior.title ?? ''),
-      campaignId: prior.campaignId ? String(prior.campaignId) : null,
-    });
-  }
   return res.modifiedCount > 0;
 }
 
@@ -1027,15 +966,6 @@ export async function recordAdvisorOutcome(
     { _id: recommendationId, restaurantId: oid },
     { $set: { outcome, status: 'accepted', resolvedAt: new Date() } },
   ).exec();
-  // Idempotent: only a NEW outcome value produces a learning event.
-  if (String(prior.outcome ?? '') !== outcome) {
-    emitRecommendationLifecycle(restaurantId, outcomeLifecycleAction(outcome), {
-      id: String(prior._id),
-      type: String(prior.recommendationType ?? ''),
-      title: String(prior.title ?? ''),
-      campaignId: prior.campaignId ? String(prior.campaignId) : null,
-    });
-  }
   return res.modifiedCount > 0;
 }
 
@@ -1124,14 +1054,6 @@ export async function markRecommendationConverted(
     { _id: recommendationId, restaurantId: oid },
     update,
   ).exec();
-  if (prior && prior.status !== 'converted') {
-    emitRecommendationLifecycle(restaurantId, 'converted', {
-      id: String(prior._id),
-      type: String(prior.recommendationType ?? ''),
-      title: String(prior.title ?? ''),
-      campaignId: campaignId ?? null,
-    });
-  }
   return res.modifiedCount > 0;
 }
 

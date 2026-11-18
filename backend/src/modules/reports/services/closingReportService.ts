@@ -95,16 +95,22 @@ export class ClosingReportService {
   async zReport(scope: ReportScope, date?: string) {
     const day = date || new Date().toISOString().slice(0, 10);
     const sales = await this.dailySales(scope, day);
-    const ledger = await cashLedgerService.history(scope.restaurantId, { branchId: scope.branchId, startDate: day, endDate: day, limit: 5000 } as any);
-    const entries = (ledger as any).data || [];
-    const balance = await cashLedgerService.getBalance(scope.restaurantId, scope.branchId);
 
-    const opening = entries.find((e: any) => e.type === 'opening')?.amount || 0;
-    const cashIn = entries.filter((e: any) => ['cash_in', 'shift_open', 'deposit'].includes(e.type)).reduce((s: number, e: any) => s + e.amount, 0);
-    const cashOut = entries.filter((e: any) => ['cash_out', 'withdrawal', 'bank_deposit'].includes(e.type)).reduce((s: number, e: any) => s + Math.abs(e.amount), 0);
-    const expenses = entries.filter((e: any) => e.type === 'expense').reduce((s: number, e: any) => s + Math.abs(e.amount), 0);
-    const adjustments = entries.filter((e: any) => e.type === 'adjustment').reduce((s: number, e: any) => s + e.amount, 0);
-    const expectedCash = opening + sales.cash + cashIn - cashOut - expenses + adjustments;
+    // Use the shared expected-cash calculation so Z-report and shift close
+    // always produce identical figures.
+    const reconciliation = await cashLedgerService.computeExpectedCash(scope.restaurantId, {
+      branchId: scope.branchId,
+      date: day,
+    });
+
+    const opening = reconciliation.openingCash;
+    const cashIn = reconciliation.cashIn;
+    const cashOut = reconciliation.cashOut;
+    const expenses = reconciliation.cashExpenses;
+    const adjustments = reconciliation.adjustments;
+
+    const expectedCash = reconciliation.expectedCash;
+    const balance = await cashLedgerService.getBalance(scope.restaurantId, scope.branchId);
     const overShort = Math.round((balance - expectedCash) * 100) / 100;
 
     return {
@@ -122,7 +128,7 @@ export class ClosingReportService {
       },
       cash: {
         openingCash: Math.round(opening * 100) / 100,
-        cashSales: Math.round(sales.cash * 100) / 100,
+        cashSales: Math.round(reconciliation.cashSales * 100) / 100,
         cashIn: Math.round(cashIn * 100) / 100,
         cashOut: Math.round(cashOut * 100) / 100,
         expenses: Math.round(expenses * 100) / 100,
@@ -130,6 +136,7 @@ export class ClosingReportService {
         expectedCash: Math.round(expectedCash * 100) / 100,
         actualCash: balance,
         overShort,
+        variance: overShort,
       },
       requiresManagerApproval: Math.abs(overShort) > 0.5,
     };

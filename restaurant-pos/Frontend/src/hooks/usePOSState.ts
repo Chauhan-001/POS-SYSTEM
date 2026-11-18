@@ -26,71 +26,14 @@ import { syncEngine } from '../lib/syncEngine';
 import * as api from '../api/client';
 import { mergeOrdersWithServer } from '../utils/orderMerge';
 import { WORKSPACE_PATHS } from '../routes';
+import {
+  ALL_FEATURES,
+  CACHE_KEYS,
+  MODULE_FEATURE_MAP,
+  VOID_REASONS,
+} from '../core/posStateConfig';
 
-const voidReasons = [
-  { id: 'wrong_item', label: 'Wrong item ordered' },
-  { id: 'customer_changed', label: 'Customer changed mind' },
-  { id: 'prep_error', label: 'Preparation error' },
-  { id: 'duplicate', label: 'Duplicate entry' },
-  { id: 'quality_issue', label: 'Quality issue' },
-  { id: 'order_cancelled', label: 'Order cancelled' },
-  { id: 'other', label: 'Other' },
-];
-
-/**
- * All subscription feature keys.
- * The 7-day free trial unlocks ALL of them — feature restrictions apply
- * only after a paid plan is selected.
- */
-const ALL_FEATURES = [
-  'core_pos', 'table_service', 'takeaway', 'delivery', 'online_ordering',
-  'qr_ordering', 'waiter_management', 'kitchen_display', 'products', 'staff',
-  'discounts', 'guest_checkout', 'order_notes', 'offers', 'loyalty', 'crm',
-  'reservations', 'inventory', 'expense_tracking', 'finance', 'analytics',
-  'basic_reports', 'advanced_reports', 'multi_branch', 'multi_device',
-  'ai', 'voice_ordering', 'offline_mode', 'customer_display', 'marketing',
-  'integrations', 'api_access', 'custom_branding', 'priority_support',
-];
-
-/**
- * Maps each module toggle (Settings → Modules) to the subscription-plan
- * feature keys that enable it (OR semantics — any one unlocks the module).
- * Single source of truth shared by the POS runtime clamp (usePOSState) and
- * the Settings Modules tab (which disables toggles the plan excludes).
- */
-export const MODULE_FEATURE_MAP: Record<string, string[]> = {
-  enableOnlineOrders: ['online_ordering'],
-  enableQROrdering: ['qr_ordering'],
-  enableMenuAvailability: ['online_ordering', 'qr_ordering'],
-  autoMarkSoldOutFromOrder: ['online_ordering', 'qr_ordering'],
-  enableTakeawayModule: ['takeaway'],
-  enableDeliveryModule: ['delivery'],
-  enableTableService: ['table_service'],
-  enableDineInModule: ['table_service'],
-  enableWaiterManagement: ['waiter_management'],
-  enableDiscountOnBilling: ['discounts'],
-  enableGuestCheckout: ['guest_checkout'],
-  enableOrderNotes: ['order_notes'],
-  enableKitchenDisplay: ['kitchen_display'],
-  enableLoyalty: ['loyalty'],
-  enableReservations: ['reservations'],
-  enableMultiBranch: ['multi_branch'],
-  enableExpenseManagement: ['expense_tracking'],
-  enableOffers: ['offers', 'marketing'],
-  enableOffersPopup: ['offers', 'marketing'],
-  enableProducts: ['products'],
-  enableStaff: ['staff'],
-  // PHASE 3/4: AI-only module flags (enableAISummary, enableAIVoiceEntry,
-  // enableAIWeather, enableAIClosingAssistant) removed — their features no
-  // longer exist. Kept: enableAIInventoryHealth / enableAIPurchaseRecs /
-  // enableAILowStock / enableAIWasteAnalysis — the cards now run on the
-  // deterministic core engine and their toggles still apply.
-  enableAIInventoryHealth: ['ai'],
-  enableAIPurchaseRecs: ['ai'],
-  enableAILowStock: ['ai'],
-  enableAIWasteAnalysis: ['ai'],
-  enableInventory: ['inventory'],
-};
+export { MODULE_FEATURE_MAP } from '../core/posStateConfig';
 
 /** Fetch data from API and update state + timestamped cache. Returns true if API was reachable. */
 async function fetchAndCache<T>(
@@ -123,23 +66,9 @@ async function fetchIfStale<T>(
   }
 }
 
-/** Cache keys used across the hook */
-const CK = {
-  PRODUCTS: 'pos_products',
-  CUSTOMERS: 'pos_customers',
-  EMPLOYEES: 'pos_employees',
-  BILLS: 'pos_bills',
-  EXPENSES: 'pos_expenses',
-  BRANCHES: 'pos_branches',
-  SETTINGS: 'pos_settings',
-  REWARDS: 'pos_rewards',
-  ORDERS: 'pos_orders',
-  TABLES: 'pos_tables',
-  TAKEAWAY: 'pos_takeaway_orders',
-  RESERVATIONS: 'pos_reservations',
-  WAITING: 'pos_waiting_list',
-  FLOORS: 'pos_floors',
-} as const;
+/** Cache keys used across the hook (kept as CK for concise state logic). */
+const CK = CACHE_KEYS;
+const voidReasons = VOID_REASONS;
 
 /**
  * Merge backend tables into the local floor plan.

@@ -23,7 +23,7 @@ import {
   LoyaltyTier, LoyaltySettings, LoyaltyTransaction, OtpRequest,
   CouponRedemption, CustomerActivity, Referral, Campaign,
   ExpenseCategory, Vendor, RecurringExpense, CashLedger, FinanceSettings,
-  MenuAvailability, OrderAdjustment, RefundRecord,
+  MenuAvailability, OrderAdjustment, RefundRecord, Shift,
 } from '../models';
 
 // ─── Repository instances ──────────────────────────────────────────
@@ -47,6 +47,7 @@ export const expenseCategoryRepo = new TenantRepository(ExpenseCategory);
 export const vendorRepo = new TenantRepository(Vendor);
 export const recurringExpenseRepo = new TenantRepository(RecurringExpense);
 export const cashLedgerRepo = new TenantRepository(CashLedger);
+export const shiftRepo = new TenantRepository(Shift);
 export const financeSettingsRepo = new TenantRepository(FinanceSettings);
 export const reservationRepo = new BaseRepository(Reservation);
 export const waitingEntryRepo = new BaseRepository(WaitingEntry);

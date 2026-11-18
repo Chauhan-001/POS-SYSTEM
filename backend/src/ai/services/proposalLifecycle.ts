@@ -28,7 +28,6 @@ import CampaignProposal from '../../models/marketing/CampaignProposal';
 import { canApproveTransition, canExecuteTransition } from '../../models/marketing/CampaignProposal';
 import { campaignService } from '../../services';
 import { auditLogRepo } from '../../repositories';
-import { recordOwnerFeedback } from '../../services/recommendationFeedbackService';
 import { AppError } from '../../utils/AppError';
 import IRecommendationOutcome from '../../models/intelligence/RecommendationOutcome';
 
@@ -338,16 +337,6 @@ export async function measureProposal(
   if (canExecuteTransition('completed' as any, 'measured' as any)) {
     proposal.executionStatus = 'measured';
     await proposal.save();
-  }
-
-  if (proposal.get('ownerFeedback')?.recordedAt) {
-    await recordOwnerFeedback(
-      `proposal:${proposalId}`,
-      restaurantId,
-      proposal.get('ownerFeedback').rating,
-      proposal.get('ownerFeedback').categories ?? [],
-      proposal.get('ownerFeedback').comment,
-    ).catch(() => undefined);
   }
 
   await audit(restaurantId, 'PROPOSAL_MEASURED', proposalId, ctx.operator, summary);

@@ -2,14 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * FeedbackPanel — customer feedback workspace (FeedRag-style intelligence).
+ * FeedbackPanel � customer feedback workspace.
  *
  * Tabs:
- *   Reviews   — feedback collected via the receipt QR code (rating + comment),
+ *   Reviews   � feedback collected via the receipt QR code (rating + comment),
+ *               enriched with deterministic aspect chips.
  *               enriched with AI aspect chips when analysis has run.
- *   Analytics — aspect breakdown, sentiment trend, executive AI insight.
+ *   Analytics � aspect breakdown and sentiment trend.
  *   Issues    — recurring problem categories with severity + trend.
- *   Ask AI    — RAG question-answering over historical feedback.
  *
  * The Reviews tab is the original read-only panel; AI analysis is lazy — the
  * backend analyzes pending rows on first view and degrades to rating-derived
@@ -21,7 +21,7 @@ import { Star, MessageSquare, Calendar, Filter, Search, Loader2, ChevronLeft, Ch
 import * as api from '../../api/client';
 import { debugWarn } from '../../utils/debugLog';
 import { EmptyState, fmtNumber } from './shared';
-import { FeedbackAnalyticsTab, FeedbackIssuesTab, FeedbackAskTab } from './FeedbackIntelligence';
+import { FeedbackAnalyticsTab, FeedbackIssuesTab } from './FeedbackIntelligence';
 
 interface FeedbackAspectChip { aspect: string; sentiment: string; score: number }
 
@@ -46,13 +46,12 @@ interface FeedbackStats {
   distribution: number[]; // index 0 = 1-star, index 4 = 5-star
 }
 
-type FeedbackTab = 'reviews' | 'analytics' | 'issues' | 'ask';
+type FeedbackTab = 'reviews' | 'analytics' | 'issues';
 
 const TABS: { id: FeedbackTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'reviews', label: 'Reviews', icon: MessageSquare },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'issues', label: 'Issues', icon: AlertTriangle },
-  { id: 'ask', label: 'Ask AI', icon: Sparkles },
 ];
 
 const SENTIMENT_STYLES: Record<string, string> = {
@@ -135,7 +134,6 @@ export default function FeedbackPanel() {
       {tab === 'reviews' && <ReviewsTab />}
       {tab === 'analytics' && <FeedbackAnalyticsTab />}
       {tab === 'issues' && <FeedbackIssuesTab />}
-      {tab === 'ask' && <FeedbackAskTab />}
     </div>
   );
 }

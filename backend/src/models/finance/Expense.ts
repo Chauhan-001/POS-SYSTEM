@@ -38,6 +38,12 @@ export interface IExpense extends Document {
   notes?: string;
   /** Part of COGS (ingredients/raw materials) — used by the real profit engine. */
   isCogs: boolean;
+  /** When true, this expense represents an inventory-managed purchase whose
+   *  cost is already captured through inventory consumption (FIFO events).
+   *  Excluded from P&L COGS to prevent double counting with inventory
+   *  consumption. When false and isCogs is true, the expense is a legitimate
+   *  direct cost not managed through inventory. */
+  isInventoryTracked: boolean;
   // ── GST breakdown ─────────────────────────────────────────
   gst?: {
     cgst: number;
@@ -100,6 +106,10 @@ const ExpenseSchema = new Schema<IExpense>(
     vendorId: { type: Schema.Types.ObjectId, ref: 'Vendor', default: null, index: true },
     notes: { type: String, trim: true, maxlength: 2000 },
     isCogs: { type: Boolean, default: false },
+    /** When true, this expense represents an inventory-managed purchase whose
+     *  cost is already captured through inventory consumption (FIFO events).
+     *  Excluded from P&L COGS to prevent double counting. */
+    isInventoryTracked: { type: Boolean, default: false },
     gst: {
       type: new Schema({
         cgst: { type: Number, default: 0, min: 0 },

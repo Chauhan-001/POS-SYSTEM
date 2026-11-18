@@ -3,6 +3,7 @@ import { ShieldCheck, Eye, EyeOff, Lock, User, RefreshCw, AlertTriangle, Crown, 
 import { useAuth } from '../../hooks/useAuth';
 import { normalizeRole, type Employee } from '../../types';
 import { getSavedAccounts, removeAccount, type SavedAccount } from '../../savedAccounts';
+import { hasLegalConsent, recordLegalConsent } from '../../core/legalConsent';
 import brandLogo from '../../assets/brand-logo.png';
 
 export type LoginMethod = 'password' | 'role_pin' | 'pin' | 'tap_only';
@@ -58,33 +59,19 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
   // convenience that hides the checkbox when the same user has previously
   // accepted on this device. The REAL enforcement is server-side.
   //
-  // Per-account: stored as JSON { [userId]: true } so Account A's
-  // acceptance does NOT satisfy Account B.
-  const getConsentMap = (): Record<string, boolean> => {
-    try {
-      const raw = localStorage.getItem('pos_legal_consent');
-      if (!raw) return {};
-      if (raw === '1') return { __legacy__: true }; // migrate old single-flag format
-      return JSON.parse(raw);
-    } catch { return {}; }
-  };
-  const isConsentedFor = (uid: string): boolean => {
-    const map = getConsentMap();
-    return !!map[uid] || !!map.__legacy__;
-  };
-  // Start with consent pending — will be resolved when username is entered
-  const [consentPersisted, setConsentPersisted] = useState<boolean>(false);
-  const [acceptedTerms, setAcceptedTerms] = useState<boolean>(false);
+  // JSON account maps from older builds remain readable; the legacy device
+  // marker is retained for compatibility with existing terminals.
+  const [consentPersisted, setConsentPersisted] = useState<boolean>(() => hasLegalConsent());
+  const [acceptedTerms, setAcceptedTerms] = useState<boolean>(() => hasLegalConsent());
   const [consentError, setConsentError] = useState(false);
 
   // When username changes, re-evaluate consent state for that account
   const checkConsentForUsername = (u: string) => {
-    if (u.trim() && isConsentedFor(u.trim().toLowerCase())) {
+    if (u.trim() && hasLegalConsent(u)) {
       setConsentPersisted(true);
       setAcceptedTerms(true);
     } else {
       setConsentPersisted(false);
-      setAcceptedTerms(false);
     }
   };
 
@@ -93,13 +80,9 @@ export default function LoginScreen({ onLoginSuccess, settings, employees = [], 
     setConsentError(false);
   };
 
-  /** Persist per-account consent — called only once a sign-in actually succeeds. */
+  /** Persist device consent only once a sign-in actually succeeds. */
   const recordConsent = (uid: string) => {
-    try {
-      const map = getConsentMap();
-      map[uid.toLowerCase()] = true;
-      localStorage.setItem('pos_legal_consent', JSON.stringify(map));
-    } catch { /* ignore */ }
+    recordLegalConsent(uid);
     setConsentPersisted(true);
   };
 

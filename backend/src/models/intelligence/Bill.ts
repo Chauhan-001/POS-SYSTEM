@@ -24,6 +24,10 @@ export interface IBill extends Document {
   time: string;
   cashierName: string;
   cashierRole: string;
+  /** Employee who processed the bill (links to Employee model). */
+  cashierId?: mongoose.Types.ObjectId;
+  /** Shift during which this bill was created (nullable for historical bills). */
+  shiftId?: mongoose.Types.ObjectId;
   subtotal: number;
   discount: number;
   gst: number;
@@ -87,6 +91,8 @@ const BillSchema = new Schema<IBill>(
     time: { type: String, required: true, trim: true },
     cashierName: { type: String, required: true, trim: true },
     cashierRole: { type: String, required: true, trim: true },
+    cashierId: { type: Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },
+    shiftId: { type: Schema.Types.ObjectId, ref: 'Shift', default: null, index: true },
     subtotal: { type: Number, required: true, min: 0 },
     discount: { type: Number, default: 0, min: 0 },
     gst: { type: Number, default: 0, min: 0 },
@@ -157,5 +163,7 @@ BillSchema.index({ customerId: 1, date: -1 });
 BillSchema.index({ paymentMethod: 1 });
 BillSchema.index({ customerPhone: 1 });
 BillSchema.index({ cashierName: 1, date: -1 });
+BillSchema.index({ shiftId: 1, date: -1 });
+BillSchema.index({ cashierId: 1, date: -1 });
 
 export default mongoose.model<IBill>('Bill', BillSchema);

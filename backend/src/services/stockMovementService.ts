@@ -368,6 +368,16 @@ export class StockMovementService {
       // still drive FIFO cost and expiry.)
       after = round4(before + effectiveDelta);
 
+      // Compute moving weighted average stock value for atomic CAS update.
+      let newStockValue = Number(product.stockValue) || 0;
+      if (effectiveDelta > 0 && input.purchasePrice != null) {
+        newStockValue = Math.round((newStockValue + effectiveDelta * Number(input.purchasePrice)) * 100) / 100;
+      } else if (effectiveDelta < 0 && before > 0) {
+        const currentAvgCost = newStockValue / before;
+        const qtyReduction = Math.abs(effectiveDelta);
+        newStockValue = Math.round(Math.max(0, newStockValue - qtyReduction * currentAvgCost) * 100) / 100;
+      }
+
       // ── Atomic stock update ───────────────────────────────────────
       // Store the rounded target (not `$inc` of a float delta) so the persisted
       // currentStock is always rounded to 4 decimals.
@@ -379,7 +389,7 @@ export class StockMovementService {
           currentStock: storedBefore,
         } as any,
         {
-          $set: { currentStock: after, batches, expiryDate } as any,
+          $set: { currentStock: after, stockValue: newStockValue, batches, expiryDate } as any,
         },
         { upsert: false }
       );
@@ -387,20 +397,15 @@ export class StockMovementService {
         throw new AppError(409, 'Stock changed concurrently — please retry');
       }
 
-    // ── Rolling purchase-price average (last 10 purchases) ───────────
-    // The old all-time weighted average could never shake off a single old
-    // price and made stock value swing with every purchase. Now the item's
-    // averageCost is the mean of its LAST 10 purchase prices (per unit), so it
-    // tracks recent market prices without distorting the stock value.
-    if (input.type === 'purchase' && input.purchasePrice != null && effectiveDelta > 0) {
-      const prev = Array.isArray((product as any).lastPurchasePrices)
-        ? (product as any).lastPurchasePrices.map((n: any) => Number(n) || 0).filter((n: number) => n > 0)
-        : [];
-      const next = [...prev, Number(input.purchasePrice) || 0].slice(-10);
-      const avg = next.length > 0 ? Math.round((next.reduce((s: number, n: number) => s + n, 0) / next.length) * 100) / 100 : 0;
+    // ── Moving weighted average cost ─────────────────────────────────
+    // averageCost = total stock value / total stock quantity. Maintained as a
+    // recipe-costing summary; FIFO batches remain authoritative for actual
+    // consumption COGS and inventory balance valuation.
+    // stockValue was already updated atomically in the CAS above.
+    const newAvgCost = after > 0 ? Math.round((newStockValue / after) * 100) / 100 : 0;
+    if (newAvgCost !== (Number(product.averageCost) || 0)) {
       await productRepo.update(product._id.toString(), {
-        averageCost: avg,
-        lastPurchasePrices: next,
+        averageCost: newAvgCost,
       } as any);
     }
 

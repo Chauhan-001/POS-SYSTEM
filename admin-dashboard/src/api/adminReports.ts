@@ -25,7 +25,6 @@ export type ReportKey =
   | 'growth'
   | 'revenue'
   | 'subscriptions'
-  | 'ai-revenue'
   | 'support'
   | 'devices'
   | 'usage'
@@ -56,7 +55,6 @@ export interface ReportSummary {
   growth: Record<string, number>
   revenue: Record<string, number>
   subscriptions: Record<string, number>
-  aiRevenue: Record<string, number>
   support: Record<string, number>
   devices: Record<string, number>
   usage: Record<string, number>
@@ -69,7 +67,6 @@ export const getReportSummary = (query?: ReportQuery) => get<ReportSummary>('/su
 export const getGrowthReport = (query?: ReportQuery) => get<any>('/growth', query)
 export const getRevenueReport = (query?: ReportQuery) => get<any>('/revenue', query)
 export const getSubscriptionReport = (query?: ReportQuery) => get<any>('/subscriptions', query)
-export const getAiRevenueReport = (query?: ReportQuery) => get<any>('/ai-revenue', query)
 export const getSupportReport = (query?: ReportQuery) => get<any>('/support', query)
 export const getDeviceReport = (query?: ReportQuery) => get<any>('/devices', query)
 export const getUsageReport = (query?: ReportQuery) => get<any>('/usage', query)

@@ -140,6 +140,9 @@ export interface IProduct extends Document {
   reorderLevel: number;
   /** Weighted average cost per unit (updated on every purchase) */
   averageCost: number;
+  /** Current total value of stock on hand (currentStock × averageCost).
+   *  Maintained by StockMovementService for moving weighted average costing. */
+  stockValue: number;
   /** Last purchase prices (per unit, max 10) — averageCost = their rolling
    *  average, so the value reflects recent purchase prices instead of an
    *  all-time weighted average that can never shake off old prices. */
@@ -278,6 +281,9 @@ const ProductSchema = new Schema<IProduct>(
     maxStock: { type: Number, default: 1000, min: 0 },
     reorderLevel: { type: Number, default: 0, min: 0 },
     averageCost: { type: Number, default: 0, min: 0 },
+    /** Current total value of stock on hand (currentStock × averageCost).
+     *  Maintained by StockMovementService for moving weighted average costing. */
+    stockValue: { type: Number, default: 0, min: 0 },
     lastPurchasePrices: { type: [Number], default: [] },
     supplier: { type: String, trim: true, default: '' },
     storageLocation: { type: String, trim: true, default: '' },

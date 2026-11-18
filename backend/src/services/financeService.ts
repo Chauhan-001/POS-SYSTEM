@@ -159,10 +159,11 @@ export class FinanceService {
         {
           $group: {
             _id: null,
-            revenue: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, { $subtract: ['$grandTotal', '$refundAmount'] }, '$grandTotal'] } },
-            refunds: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, '$refundAmount', 0] } },
+            grossSales: { $sum: '$grandTotal' },
+            taxableNetSales: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, { $subtract: ['$grandTotal', { $add: ['$gst', { $min: ['$refundAmount', { $subtract: ['$grandTotal', '$gst'] }] }] }] }, { $subtract: ['$grandTotal', '$gst'] }] } },
             discounts: { $sum: '$discount' },
             gstCollected: { $sum: '$gst' },
+            refunds: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, '$refundAmount', 0] } },
             orders: { $sum: 1 },
           },
         },
@@ -185,10 +186,13 @@ export class FinanceService {
             // ('auto' by category name, 'category' by explicit isCogs) work.
             // isSystemGenerated separates purchase-generated expenses (cash
             // view) from manual entries (period expense view).
+            // isInventoryTracked separates inventory-managed purchases (excluded
+            // from COGS, captured via consumption) from direct costs.
             _id: {
               category: '$category',
               isCogs: { $ifNull: ['$isCogs', false] },
               isSystemGenerated: { $ifNull: ['$isSystemGenerated', false] },
+              isInventoryTracked: { $ifNull: ['$isInventoryTracked', false] },
             },
             amount: { $sum: '$amount' },
             count: { $sum: 1 },
@@ -198,8 +202,8 @@ export class FinanceService {
       this.getSettings(restaurantId),
     ]);
 
-    const totals = billAgg[0] || { revenue: 0, refunds: 0, discounts: 0, gstCollected: 0, orders: 0 };
-    const revenue = Math.round(totals.revenue * 100) / 100;
+    const totals = billAgg[0] || { grossSales: 0, taxableNetSales: 0, discounts: 0, gstCollected: 0, orders: 0 };
+    const revenue = Math.round(totals.taxableNetSales * 100) / 100;
 
     // Line items for THIS period's bills only (recipe/inventory COGS input).
     const idSet = new Set(billIds.map((b: any) => b._id.toString()));
@@ -240,7 +244,10 @@ export class FinanceService {
       const isCogsRow = cogsMode === 'auto'
         ? category === cogsCategoryName
         : row._id?.isCogs === true;
-      if (isCogsRow) {
+      // Inventory-tracked manual expenses are excluded from P&L COGS because
+      // their cost is already captured through inventory consumption (FIFO
+      // events). Including them here would double count the same purchase.
+      if (isCogsRow && row._id?.isInventoryTracked !== true) {
         cogs += row.amount;
         expenseLedgerCogs += row.amount;
       }
@@ -333,15 +340,19 @@ export class FinanceService {
       period,
       startDate: start,
       endDate: end,
-      revenue,
-      refunds: Math.round(totals.refunds * 100) / 100,
+      grossSales: Math.round(totals.grossSales * 100) / 100,
+      revenue: revenue, // taxable net sales (ex-GST), preserved for backward compatibility
+      taxableNetSales: revenue,
       discounts: Math.round(totals.discounts * 100) / 100,
       gstCollected: Math.round(totals.gstCollected * 100) / 100,
+      refunds: Math.round(totals.refunds * 100) / 100,
       orders: totals.orders,
       cogs,
       grossProfit,
+      grossMargin: revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0,
       operatingExpenses,
       netProfit,
+      netMargin: revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0,
       totalExpenses,
       expenseByCategory,
       ingredientPurchases,
@@ -375,10 +386,17 @@ export class FinanceService {
       endDate: pnl.endDate,
       pnl: {
         revenue: pnl.revenue,
+        grossSales: pnl.grossSales,
+        taxableNetSales: pnl.taxableNetSales,
+        discounts: pnl.discounts,
+        gstCollected: pnl.gstCollected,
+        refunds: pnl.refunds,
         expenses: pnl.totalExpenses,
         cogs: pnl.cogs,
         grossProfit: pnl.grossProfit,
+        grossMargin: pnl.grossMargin,
         netProfit: pnl.netProfit,
+        netMargin: pnl.netMargin,
         margin: pnl.margin,
         orders: pnl.orders,
       },
@@ -572,7 +590,7 @@ export class FinanceService {
         {
           $group: {
             _id: { $substr: ['$date', 0, 7] },
-            revenue: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, { $subtract: ['$grandTotal', '$refundAmount'] }, '$grandTotal'] } },
+            revenue: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, { $subtract: ['$grandTotal', { $add: ['$gst', { $min: ['$refundAmount', { $subtract: ['$grandTotal', '$gst'] }] }] }] }, { $subtract: ['$grandTotal', '$gst'] }] } },
             discounts: { $sum: '$discount' },
             gst: { $sum: '$gst' },
             orders: { $sum: 1 },
@@ -592,7 +610,7 @@ export class FinanceService {
         },
         {
           $group: {
-            _id: { month: { $substr: ['$date', 0, 7] }, isCogs: '$isCogs', category: '$category' },
+            _id: { month: { $substr: ['$date', 0, 7] }, isCogs: '$isCogs', isInventoryTracked: '$isInventoryTracked', category: '$category' },
             amount: { $sum: '$amount' },
           },
         },
@@ -612,7 +630,13 @@ export class FinanceService {
       const isCogsRow = cogsMode === 'auto'
         ? r._id.category === cogsCategoryName
         : r._id.isCogs === true;
-      if (isCogsRow) entry.cogs += r.amount; else entry.ops += r.amount;
+      // Inventory-tracked manual expenses are excluded from P&L COGS because
+      // their cost is already captured through inventory consumption.
+      if (isCogsRow && r._id.isInventoryTracked !== true) {
+        entry.cogs += r.amount;
+      } else {
+        entry.ops += r.amount;
+      }
       expenseByMonth.set(r._id.month, entry);
     }
 
@@ -725,7 +749,7 @@ export class FinanceService {
         {
           $group: {
             _id: '$branchId',
-            revenue: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, { $subtract: ['$grandTotal', '$refundAmount'] }, '$grandTotal'] } },
+            revenue: { $sum: { $cond: [{ $eq: ['$isRefunded', true] }, { $subtract: ['$grandTotal', { $add: ['$gst', { $min: ['$refundAmount', { $subtract: ['$grandTotal', '$gst'] }] }] }] }, { $subtract: ['$grandTotal', '$gst'] }] } },
             discounts: { $sum: '$discount' },
             orders: { $sum: 1 },
           },
@@ -741,7 +765,7 @@ export class FinanceService {
             isSystemGenerated: { $ne: true },
           },
         },
-        { $group: { _id: '$branchId', amount: { $sum: '$amount' }, cogs: { $sum: { $cond: ['$isCogs', '$amount', 0] } } } },
+        { $group: { _id: '$branchId', amount: { $sum: '$amount' }, cogs: { $sum: { $cond: [{ $and: [{ $eq: ['$isCogs', true] }, { $ne: ['$isInventoryTracked', true] }] }, '$amount', 0] } } } },
       ]).exec(),
     ]);
 
